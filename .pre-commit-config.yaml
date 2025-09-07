@@ -1,0 +1,24 @@
+repos:
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+    - id: trailing-whitespace
+    - id: end-of-file-fixer
+    - id: check-yaml
+    - id: check-added-large-files
+
+-   repo: local
+    hooks:
+      - id: ruff-check
+        name: Ruff (check with pyproject.toml)
+        entry: poetry run python -m ruff check aiogram_bot_template --config pyproject.toml
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+-   repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.8
+    hooks:
+    - id: ruff-format
+      args:
+        [ "--config", "pyproject.toml"]

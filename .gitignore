@@ -1,0 +1,36 @@
+# Файлы окружения
+.env
+.env.*
+!.env.example
+
+# Директории Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+.idea/
+.vscode/
+*.egg-info/
+dist/
+build/
+
+# Логи
+*.log
+logs/
+
+# Poetry
+.pypoetry.virtualenvs/
+
+repo_for_upload/
+*.zip
+
+google-credentials.json
+aider_keys.sh
+
+models/
+ollama_data/
+
+bento_flux_service/bentos/
+.aider*
+scripts/

@@ -1,0 +1,190 @@
+[project]
+name = "aiogram-bot-template"
+description = "Template for creating scalable bots with aiogram"
+license = "MIT"
+requires-python = ">=3.10,<3.14"
+authors = [
+    { name = "Forden", email = "24463229+Forden@users.noreply.github.com" }
+]
+maintainers = [
+    { name = "Forden", email = "24463229+Forden@users.noreply.github.com" }
+]
+readme = "README.md"
+packages = [{ include = "aiogram_bot_template" }]
+dynamic = ["version", "dependencies"]
+
+[project.urls]
+homepage = "https://github.com/Forden/aiogram-bot-template"
+repository = "https://github.com/Forden/aiogram-bot-template"
+
+[project.scripts]
+aiogram_bot_template = "aiogram_bot_template.bot:main"
+
+[tool.poetry]
+requires-poetry = ">=2.0"
+package-mode = false
+version = "1.0"
+
+[tool.poetry.requires-plugins]
+poetry-plugin-export = ">=1.8"
+
+[[tool.poetry.source]]
+name = "pytorch-nightly"
+url = "https://download.pytorch.org/whl/nightly"
+priority = "supplemental"
+
+
+[tool.poetry.dependencies]
+python = { version = ">=3.10,<3.14" }
+
+# ────────── Основные библиотеки бота ──────────
+aiogram = { version = "^3.5.0", extras = ["i18n"] }
+environs = "^11.0.0"
+redis = "^5.0.4"
+asyncpg = "^0.30.0"
+pydantic = "^2.7.1"
+structlog = "^24.1.0"
+aiojobs = "^1.2.1"
+orjson = "^3.10.3"
+tenacity = "^8.3.0"
+alembic = "^1.16.4"
+sqlalchemy = "^2.0.41"
+fast-langdetect = "^0.3.2"
+pydantic-settings = "^2.10.1"
+watchdog = {extras = ["watchmedo"], version = "^4.0.0"}
+
+# --- Облачные клиенты ---
+together = "^1.2.1"
+openai = "^1.25.1"
+fal-client = "^0.7.0"
+
+# --- ЗАВИСИМОСТИ ДЛЯ ОБРАБОТКИ ЛИЦ (теперь они основные) ---
+Pillow = "10.3.0"
+numpy = "^1.26.4" # Pillow и face-recognition зависят от него
+opencv-python-headless = "^4.9.0"
+python-dotenv = "^1.1.1"
+google-genai = "^1.31.0"
+google-api-core = "^2.25.1"
+gspread-asyncio = "^2.0.0"
+mediapipe = "^0.10.21"
+
+
+[tool.poetry.group.local-ml]
+# --- ОПЦИОНАЛЬНАЯ ГРУППА ДЛЯ ЛОКАЛЬНЫХ МОДЕЛЕЙ ---
+# Эти зависимости будут устанавливаться только при полной сборке
+optional = true
+
+[tool.poetry.group.local-ml.dependencies]
+# ────────── Зависимости для ML, которые нужны bentoml build ЛОКАЛЬНО ──────────
+torch = { version = "2.9.0.dev20250803+cu126", source = "pytorch-nightly" }
+torchvision = { version = "0.24.0.dev20250803+cu126", source = "pytorch-nightly" }
+
+# diffusers из main-ветки
+diffusers = { git = "https://github.com/huggingface/diffusers.git", branch = "main" }
+transformers = { git = "https://github.com/huggingface/transformers.git", branch = "main" }
+accelerate = "0.31.0"
+gguf = "^0.17.1"
+
+# ────────── служебные и низкоуровневые зависимости ──────────
+protobuf         = ">=3.20,<5.0"
+sentencepiece    = "^0.2.0"
+networkx         = "<3.3"
+dfloat11 = {version = "^0.3.2", extras = ["cuda12"]}
+bentoml = { version = "^1.2.10", extras = ["io-json"] }
+
+[tool.poetry.group.dev]
+optional = false
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.12"
+isort = "~6"
+types-pytz = "^2025"
+deptry = "0.23.0"
+pip-audit = "^2"
+pre-commit = "^4.2.0"
+python-dotenv = "^1.1.1"
+
+
+[tool.black]
+target-version = ["py310"]
+
+[tool.isort]
+profile = "black"
+py_version = 310
+force_alphabetical_sort_within_sections = true
+group_by_package = true
+
+[tool.mypy]
+python_version = "3.10"
+files = "bot.py"
+plugins = "pydantic.mypy"
+warn_unused_configs = true
+ignore_missing_imports = false
+follow_imports_for_stubs = true
+disallow_any_generics = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+warn_unreachable = true
+strict_equality = true
+strict_bytes = true
+extra_checks = true
+show_error_context = true
+show_error_code_links = true
+show_error_end = true
+show_error_codes = true
+pretty = true
+namespace_packages = true
+show_absolute_path = true
+
+[[tool.mypy.overrides]]
+module = "asyncpg.*"
+ignore_missing_imports = true
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+preview = true
+extend-exclude = [
+    "script.py",
+    "easyedit-main",
+    "repo_for_upload"
+]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "E501", # line too long, controlled by black
+    "ANN401", # attempt to replace mypy, ignored in favor of mypy
+    "RET504", # opinionated
+    "PLC0414", # breaks mypy unused imports
+    "SIM108", # forces to use ternary operator
+    "D", # unnecessary
+    "I", # unnecessary
+    "CPY001",# unnecessary
+    "COM812",
+    "RUF001",
+    "RUF002",
+    "RUF003"
+]
+extend-ignore = ["RUF006"]
+unfixable = ["B"]
+
+[tool.ruff.lint.per-file-ignores]
+"infra/scripts/init_project.py" = ["S603"]
+"aiogram_bot_template/data/config.py" = ["S603"]
+
+[tool.ruff.format]
+line-ending = "lf"
+quote-style = "double"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

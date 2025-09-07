@@ -1,0 +1,43 @@
+# Dockerfile.bot
+
+# --- Stage 1: Build stage with Poetry ---
+FROM python:3.11-slim AS builder
+
+# Устанавливаем корректные и минимальные зависимости для headless OpenCV
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install poetry
+
+ENV POETRY_VIRTUALENVS_IN_PROJECT=true
+
+WORKDIR /app
+
+COPY poetry.lock pyproject.toml ./
+
+ARG INSTALL_MODE=full
+
+RUN poetry install --no-root $(if [ "$INSTALL_MODE" = "cloud" ]; then echo "--without local-ml"; fi)
+
+
+# --- Stage 2: Final image ---
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY --from=builder /app/.venv ./.venv
+ENV PATH="/app/.venv/bin:$PATH"
+
+COPY ./aiogram_bot_template /app/aiogram_bot_template
+COPY ./entrypoint.sh /app/entrypoint.sh
+COPY ./alembic.ini /app/alembic.ini
+COPY ./alembic /app/alembic
+
+RUN chmod +x /app/entrypoint.sh
+
+CMD ["/app/entrypoint.sh"]

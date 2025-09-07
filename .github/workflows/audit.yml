@@ -1,0 +1,56 @@
+name: Audit
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    branches:
+      - 'main'
+      - 'master'
+  push:
+    branches:
+      - 'main'
+      - 'master'
+
+run-name: audit - ${{ github.sha }}
+
+jobs:
+  build:
+    defaults:
+      run:
+        shell: bash
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install poetry
+        run: pipx install poetry
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'poetry'
+          cache-dependency-path: poetry.lock
+
+      - name: Check pyproject.toml
+        id: check_pyproject
+        run: |
+          poetry check --lock --strict
+
+      - name: Install dependencies
+        id: install_deps
+        run: |
+          poetry sync --with dev
+
+      - name: Ruff check
+        run: poetry run python -m ruff check aiogram_bot_template --config pyproject.toml --output-format=github
+
+      - name: Audit dependencies PyPI
+        id: audit_deps_pypi
+        run: poetry run pip-audit -r <(poetry export -f requirements.txt --with dev --without-hashes) --vulnerability-service pypi --progress-spinner on
+
+      - name: Audit dependencies OSV
+        id: audit_deps_osv
+        run: poetry run pip-audit -r <(poetry export -f requirements.txt --with dev --without-hashes) --vulnerability-service osv --progress-spinner on

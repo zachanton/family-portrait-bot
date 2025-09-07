@@ -1,0 +1,25 @@
+# Исключаем служебные папки и файлы
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+/env/
+/venv/
+.venv/
+/.git/
+/.idea/
+/.vscode/
+
+# Исключаем файлы окружения и кеши
+.env
+.env.example
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Исключаем папки с данными и тяжелыми моделями
+/pgdata/
+/redis_data/
+/ollama_data/
+/models/
