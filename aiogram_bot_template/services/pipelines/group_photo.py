@@ -1,28 +1,33 @@
 # aiogram_bot_template/services/pipelines/group_photo.py
-from aiogram.utils.i18n import gettext as _
 import random
 
-from .base import BasePipeline, PipelineOutput
-from aiogram_bot_template.data.constants import ImageRole
+from aiogram.utils.i18n import gettext as _
+
 from aiogram_bot_template.services import image_cache
 from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.services.prompting.factory import get_prompt_strategy
+from .base import BasePipeline, PipelineOutput
+
 
 class GroupPhotoPipeline(BasePipeline):
-    
     async def prepare_data(self) -> PipelineOutput:
         await self.update_status_func("Preparing your group portrait... 👨‍👩‍👧")
-        
-        source_images_map = {img["role"]: img for img in self.gen_data.get("source_images", [])}
-        photo1_uid = source_images_map.get(ImageRole.PHOTO_1, {}).get("file_unique_id")
-        photo2_uid = source_images_map.get(ImageRole.PHOTO_2, {}).get("file_unique_id")
 
-        if not photo1_uid or not photo2_uid:
+        # This data comes from the FSM state and contains the processed IDs
+        photos_collected = self.gen_data.get("photos_collected", [])
+
+        if len(photos_collected) < 2:
             raise ValueError("Missing one or both source images for group photo.")
 
+        photo1_processed_uid = photos_collected[0].get("processed_file_unique_id")
+        photo2_processed_uid = photos_collected[1].get("processed_file_unique_id")
+
+        if not photo1_processed_uid or not photo2_processed_uid:
+            raise ValueError("Missing processed file unique ID for one or both images.")
+
         image_urls = [
-            image_cache.get_cached_image_proxy_url(photo1_uid),
-            image_cache.get_cached_image_proxy_url(photo2_uid),
+            image_cache.get_cached_image_proxy_url(photo1_processed_uid),
+            image_cache.get_cached_image_proxy_url(photo2_processed_uid),
         ]
 
         quality_level = self.gen_data.get("quality_level", 1)

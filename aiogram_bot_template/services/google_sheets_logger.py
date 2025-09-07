@@ -25,7 +25,7 @@ SHEET_TITLE_MAP = {
 IMAGE_MODE = 1
 IMG_COL_WIDTH_PX = 320
 IMG_ROW_HEIGHT_PX = 320
-IMAGE_COL_INDEXES = (4, 5, 6) # E, F, G (Input 1, Input 2, Output)
+IMAGE_COL_INDEXES = (3, 4, 5, 6) # E, F, G (Input 1, Input 2, Output)
 
 class GoogleSheetsLogger:
     def __init__(self):
@@ -228,12 +228,19 @@ class GoogleSheetsLogger:
                 return
 
             input_image_formulas: List[str] = []
-            if source_images := gen_data.get("source_images"):
-                for img in source_images:
-                    base_url = image_cache.get_cached_image_proxy_url(img["file_unique_id"])
-                    cache_busting_url = f"{base_url}?v={int(time.time())}"
-                    input_image_formulas.append(f'=IMAGE("{cache_busting_url}"; {IMAGE_MODE})')
-            # --- ИЗМЕНЕНИЕ: Дополняем до 2-х, а не 3-х ---
+            
+            # --- ИЗМЕНЕНИЕ: Используем photos_collected с ID обработанных фото ---
+            if photos_collected := gen_data.get("photos_collected"):
+                for img_data in photos_collected:
+                    # Мы берем ID обработанного изображения для лога
+                    processed_uid = img_data.get("processed_file_unique_id")
+                    if processed_uid:
+                        base_url = image_cache.get_cached_image_proxy_url(processed_uid)
+                        cache_busting_url = f"{base_url}?v={int(time.time())}"
+                        input_image_formulas.append(f'=IMAGE("{cache_busting_url}"; {IMAGE_MODE})')
+            # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
+            # Дополняем до 2-х, если было меньше
             input_image_formulas.extend(["-"] * (2 - len(input_image_formulas)))
 
             base_output_url = image_cache.get_cached_image_proxy_url(output_image_unique_id)

@@ -1,24 +1,25 @@
 # aiogram_bot_template/handlers/photo_handler.py
-from redis.asyncio import Redis
 import mimetypes
+
 import asyncpg
 import structlog
-
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from aiogram.utils.i18n import gettext as _
+from redis.asyncio import Redis
 
 from aiogram_bot_template.data.constants import ImageRole
-# --- ИЗМЕНЕНИЕ: Импортируем settings для доступа к whitelist ---
 from aiogram_bot_template.data.settings import settings
-from aiogram_bot_template.services import image_cache
-from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.db.db_api.storages import PostgresConnection
-from aiogram_bot_template.db.repo import generations as generations_repo, users as users_repo
+from aiogram_bot_template.db.repo import generations as generations_repo
+from aiogram_bot_template.db.repo import users as users_repo
 from aiogram_bot_template.keyboards.inline.quality import quality_kb
+from aiogram_bot_template.services import image_cache, photo_processing
+from aiogram_bot_template.states.user import Generation
 
 router = Router(name="photo-handler")
+
 
 async def proceed_to_quality_selection(
     message: Message,
@@ -28,13 +29,14 @@ async def proceed_to_quality_selection(
 ) -> None:
     user_data = await state.get_data()
     db = PostgresConnection(db_pool, logger=business_logger)
-    user_id = message.from_user.id # Получаем ID пользователя
+    user_id = message.from_user.id
 
     photos = user_data.get("photos_collected", [])
     roles = [ImageRole.PHOTO_1, ImageRole.PHOTO_2]
-    
+
+    # For DB logging, we store the original, user-provided image details
     source_images_dto = [
-        (p["file_unique_id"], p["file_id"], role)
+        (p["original_file_unique_id"], p["original_file_id"], role)
         for p, role in zip(photos, roles)
     ]
 
@@ -46,7 +48,6 @@ async def proceed_to_quality_selection(
     request_id = await generations_repo.create_generation_request(db, draft)
     await state.update_data(request_id=request_id)
 
-    # --- ИЗМЕНЕНИЕ: Правильная логика проверки доступности бесплатной попытки ---
     is_in_whitelist = user_id in settings.free_trial_whitelist
     has_used_trial = await users_repo.get_user_trial_status(db, user_id)
     is_trial_available = is_in_whitelist or not has_used_trial
@@ -67,31 +68,62 @@ async def process_photo_input(
     db_pool: asyncpg.Pool,
     business_logger: structlog.typing.FilteringBoundLogger,
 ) -> None:
-    # Этот хэндлер остается без изменений
     photo = message.photo[-1]
-    
-    file_info = await bot.get_file(photo.file_id)
-    if not file_info.file_path:
-        await message.answer(_("I couldn't process this image. Please try again."))
-        return
+    status_msg = await message.answer(_("Processing your photo... ⏳"))
 
-    file_io = await bot.download_file(file_info.file_path)
-    image_bytes = file_io.read()
-    content_type = mimetypes.guess_type(file_info.file_path)[0] or "image/jpeg"
+    try:
+        # 1. Get file path from Telegram
+        file_info = await bot.get_file(photo.file_id)
+        if not file_info.file_path:
+            await status_msg.edit_text(_("I couldn't get file information. Please try sending the photo again."))
+            return
 
-    await image_cache.cache_image_bytes(photo.file_unique_id, image_bytes, content_type, cache_pool)
+        # 2. Download original photo bytes using the file_path
+        file_io = await bot.download_file(file_info.file_path)
+        original_image_bytes = file_io.read()
 
-    data = await state.get_data()
-    photos_collected = data.get("photos_collected", [])
+        # 3. Run preprocessing
+        processed_image_bytes = photo_processing.preprocess_image(original_image_bytes)
+        if not processed_image_bytes:
+            await status_msg.edit_text(_("I couldn't detect a face in this photo. Please send another one."))
+            return
 
-    if any(p["file_unique_id"] == photo.file_unique_id for p in photos_collected):
-        await message.answer(_("You've already sent this photo. Please send a different one."))
-        return
+        # 4. Cache both original and processed images
+        processed_unique_id = f"{photo.file_unique_id}_processed"
+        await image_cache.cache_image_bytes(
+            photo.file_unique_id, original_image_bytes, "image/jpeg", cache_pool
+        )
+        await image_cache.cache_image_bytes(
+            processed_unique_id, processed_image_bytes, "image/jpeg", cache_pool
+        )
+        business_logger.info(
+            "Cached original and processed images",
+            original_id=photo.file_unique_id,
+            processed_id=processed_unique_id,
+        )
 
-    photos_collected.append({"file_id": photo.file_id, "file_unique_id": photo.file_unique_id})
-    await state.update_data(photos_collected=photos_collected)
+        # 5. Update FSM state with details for both versions
+        data = await state.get_data()
+        photos_collected = data.get("photos_collected", [])
 
-    if len(photos_collected) < 2:
-        await message.answer(_("Perfect! Now, please send the photo of the second person."))
-    else:
-        await proceed_to_quality_selection(message, state, db_pool, business_logger)
+        if any(p["original_file_unique_id"] == photo.file_unique_id for p in photos_collected):
+            await status_msg.edit_text(_("You've already sent this photo. Please send a different one."))
+            return
+
+        photos_collected.append({
+            "original_file_id": photo.file_id,
+            "original_file_unique_id": photo.file_unique_id,
+            "processed_file_unique_id": processed_unique_id,
+        })
+        await state.update_data(photos_collected=photos_collected)
+
+        # 6. Guide the user to the next step
+        if len(photos_collected) < 2:
+            await status_msg.edit_text(_("Perfect! Now, please send the photo of the second person."))
+        else:
+            await status_msg.delete()
+            await proceed_to_quality_selection(message, state, db_pool, business_logger)
+
+    except Exception:
+        business_logger.exception("Failed to process photo")
+        await status_msg.edit_text(_("I couldn't process this image. Please try another one or /cancel."))
