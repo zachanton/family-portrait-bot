@@ -44,7 +44,6 @@ class GenerationRequest(Base):
     source_images = relationship("GenerationSourceImage", back_populates="request", cascade="all, delete-orphan")
     payment = relationship("Payment", back_populates="request", uselist=False)
 
-
 class Generation(Base):
     """Stores the result of a single AI generation attempt."""
     __tablename__ = "generations"
@@ -52,16 +51,14 @@ class Generation(Base):
     request_id = Column(Integer, ForeignKey("generation_requests.id"), nullable=False, index=True)
     type = Column(String(50), nullable=False, index=True)
     status = Column(String(50), nullable=False, index=True)
-    prompt_payload = Column(JSON, nullable=True)
     quality_level = Column(Integer, nullable=True)
-    trial_type = Column(String(50), nullable=True, index=True) 
+    trial_type = Column(String(50), nullable=True, index=True)
     seed = Column(BigInteger, nullable=True)
     result_image_unique_id = Column(String, nullable=True)
     result_message_id = Column(BigInteger, nullable=True)
     result_file_id = Column(String, nullable=True)
     caption = Column(Text, nullable=True)
     control_message_id = Column(BigInteger, nullable=True)
-    context_metadata = Column(JSON, nullable=True)
     error_message = Column(Text, nullable=True)
     generation_time_ms = Column(Integer, nullable=True)
     api_request_payload = Column(JSON, nullable=True)
@@ -70,7 +67,6 @@ class Generation(Base):
 
     request = relationship("GenerationRequest", back_populates="generations")
     feedback = relationship("Feedback", back_populates="generation", uselist=False, cascade="all, delete-orphan")
-
 
 class GenerationSourceImage(Base):
     """Stores a source image for a specific generation request."""

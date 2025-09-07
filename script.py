@@ -31,7 +31,7 @@ def is_hidden_path(path, root_path):
     return any(part.startswith(".") for part in parts)
 
 
-def collect_files(root_path, output_dir="repo_for_upload"):
+def collect_files(root_path, output_dir="family_bot"):
     os.makedirs(output_dir, exist_ok=True)
     output_dir_abs = os.path.abspath(output_dir)
     saved_files = []
@@ -87,5 +87,5 @@ if __name__ == "__main__":
     print("\n📄 Extracting files for upload...")
     files = collect_files(REPO_PATH)
     print(
-        f"✅ {len(files)} files saved to 'repo_for_upload'. Загрузите их сюда по одному.",
+        f"✅ {len(files)} files saved to 'family_bot'. Загрузите их сюда по одному.",
     )

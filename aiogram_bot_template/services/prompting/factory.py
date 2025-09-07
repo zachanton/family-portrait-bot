@@ -1,46 +1,23 @@
 # aiogram_bot_template/services/prompting/factory.py
-
 from .base_strategy import PromptStrategy
-from .common_base import BasePromptStrategy, MockStrategy
-from .cloud import FalFluxStrategy, FalGeminiStrategy, FalRecraftStrategy
+from .fal_strategy import FalStrategy
+from .mock_strategy import MockStrategy
 
-STRATEGY_MATRIX: dict[str, dict[str, type[PromptStrategy]]] = {
-    "fal": {
-        "flux": FalFluxStrategy,
-        "gemini": FalGeminiStrategy,
-        "recraft": FalRecraftStrategy,
-        "default": FalFluxStrategy,
-    },
-    "mock": {
-        "default": MockStrategy
-    },
-    "default": {
-        "default": BasePromptStrategy
-    }
+# Карта, которая сопоставляет имя клиента с классом его стратегии
+STRATEGY_MAP: dict[str, type[PromptStrategy]] = {
+    "fal": FalStrategy,
+    "mock": MockStrategy,
+    "google": FalStrategy, # Можно использовать Fal как стратегию по умолчанию
+    # Добавьте сюда другие, например: "openai": OpenAIStrategy
 }
 
-
-def get_prompt_strategy(client_name: str, model_name: str) -> PromptStrategy:
+def get_prompt_strategy(client_name: str) -> PromptStrategy:
     """
-    Returns the most specific prompt strategy available for the given client and model.
+    Returns the appropriate prompt strategy for the given client name.
     """
     client_lower = client_name.lower()
-    model_lower = model_name.lower()
-
-    model_family = "flux"  # Default assumption
-    if "gemini" in model_lower:
-        model_family = "gemini"
-    elif "recraft" in model_lower:
-        model_family = "recraft"
-
-    provider_strategies = STRATEGY_MATRIX.get(client_lower, STRATEGY_MATRIX["default"])
-
-    strategy_class = provider_strategies.get(model_family)
-
-    if not strategy_class:
-        strategy_class = provider_strategies.get("default")
-
-    if not strategy_class:
-        strategy_class = STRATEGY_MATRIX["default"]["default"]
-
+    
+    # Ищем стратегию в карте, если не находим - используем FalStrategy как запасной вариант
+    strategy_class = STRATEGY_MAP.get(client_lower, FalStrategy)
+    
     return strategy_class()

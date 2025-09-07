@@ -16,47 +16,45 @@ async def global_error_handler(
     update: ErrorEvent,
     i18n: I18n,
 ) -> bool:
-    """Handle all uncaught exceptions."""
+    """
+    Handles all uncaught exceptions.
+    Logs the error and notifies the user gracefully.
+    """
     exception = update.exception
     actual_update: Update = update.update
 
-    # Immediately acknowledge the callback to prevent timeout errors for the user
+    # Немедленно отвечаем на колбэк, чтобы у пользователя не "зависали" часы
     if actual_update.callback_query:
         with suppress(TelegramBadRequest):
             await actual_update.callback_query.answer()
 
+    # Определяем язык пользователя для корректного ответа
     user = getattr(actual_update, "from_user", None)
     locale = user.language_code if user and user.language_code in i18n.available_locales else i18n.default_locale
 
     with i18n.context(), i18n.use_locale(locale):
-        if isinstance(exception, TelegramBadRequest):
-            if "message to delete not found" in str(exception).lower():
-                logger.warning("Tried to delete a message that was already deleted.")
-                return True
-            if "message is not modified" in str(exception).lower():
-                logger.warning("Tried to edit a message with the same content.")
-                return True
-
-        update_details = f'{{"update_id": {actual_update.update_id}}}'
+        # Логируем полную информацию об ошибке
         try:
             update_details = actual_update.model_dump_json(exclude_none=True)
-        except Exception as e:
-            logger.warning("Could not serialize update object for logging.", error=str(e), update_id=actual_update.update_id)
+        except Exception:
+            update_details = f"Could not serialize update object for update_id={actual_update.update_id}"
 
-        logger.error("An unhandled exception occurred", exc_info=exception, extra={"update": update_details})
+        logger.error(
+            "An unhandled exception occurred in dispatcher",
+            exc_info=exception,
+            extra={"update": update_details}
+        )
 
+        # Формируем и отправляем вежливое сообщение пользователю
         error_message = _(
             "😔 Oops! Something went wrong on our end. "
-            "Our team has been notified.\n\nPlease try your request again in a few moments."
+            "Our team has been notified.\n\nPlease try again in a few moments or use /start to begin over."
         )
 
         target_message = actual_update.callback_query.message if actual_update.callback_query else actual_update.message
 
         if target_message:
             with suppress(TelegramBadRequest):
-                if target_message.photo or target_message.document:
-                    await target_message.edit_caption(caption=error_message, reply_markup=None)
-                else:
-                    await target_message.edit_text(error_message, reply_markup=None)
+                await target_message.answer(error_message)
 
     return True

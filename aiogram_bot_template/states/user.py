@@ -7,21 +7,10 @@ class Language(StatesGroup):
 
 
 class Generation(StatesGroup):
-    """A single flow for all types of generations."""
+    """A simplified flow for group photo generation."""
 
-    collecting_inputs = State()  # State for collecting photos
-
-    # States specific to image_edit
-    waiting_for_prompt = State()
-    waiting_for_caption_confirm = State()
-    waiting_for_user_prompt_confirm = State()
+    collecting_photos = State()
     waiting_for_quality = State()
-    waiting_for_trial_confirm = State()
-
-    # States specific to child_generation
-    waiting_for_options = State()  # Waiting for selection (age, gender, etc.)
-
-    # Common state
     waiting_for_payment = State()
     waiting_for_feedback = State()
     waiting_for_next_action = State()

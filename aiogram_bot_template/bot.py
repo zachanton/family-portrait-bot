@@ -9,14 +9,13 @@ import orjson
 import tenacity
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
-from aiogram.client.telegram import TelegramAPIServer
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.utils.i18n import I18n
 from aiohttp import web
 from redis.asyncio import Redis
 
 from aiogram_bot_template import utils
-from aiogram_bot_template.data import config_helpers
+# Это правильный импорт объекта настроек
 from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.middlewares.i18n import I18nMiddleware
 from aiogram_bot_template.middlewares import StructLoggingMiddleware
@@ -26,35 +25,32 @@ from aiogram_bot_template.web_handlers.file_cache_server import (
 )
 from aiogram_bot_template.web_handlers.tg_updates import tg_webhook_handler
 
+# --- ИЗМЕНЕНИЕ 1: Импортируем модуль `settings` с псевдонимом `settings_handler` ---
 from aiogram_bot_template.handlers import (
     error,
-    menu,
-    payment_handler,
-    utility,
-    photo_handler,
-    options_handler,
-    prompt_handler,
-    quality_handler,
-    next_step_handler,
-    settings as settings_handler,
     feedback_handler,
+    menu,
+    next_step_handler,
+    payment_handler,
+    photo_handler,
+    quality_handler,
+    settings as settings_handler, # <--- ВОТ ИСПРАВЛЕНИЕ
+    utility,
 )
-from aiogram_bot_template.services.clients import local_ai_client
+
 
 if TYPE_CHECKING:
     import asyncpg
     import structlog
 
 
-async def setup_aiohttp_app(bot: Bot, dp: Dispatcher) -> web.Application:  # noqa: RUF029
+async def setup_aiohttp_app(bot: Bot, dp: Dispatcher) -> web.Application:
     scheduler = aiojobs.Scheduler()
     app = web.Application()
 
-    # Parse the URL from settings to guarantee a path starting with "/"
     webhook_url_from_settings = str(settings.webhook.address)
     webhook_path_from_url = urlparse(webhook_url_from_settings).path
 
-    # Assemble the full path for the handler
     full_webhook_path = f"{webhook_path_from_url.rstrip('/')}/bot/{{bot_id}}"
 
     app.router.add_post(full_webhook_path, tg_webhook_handler)
@@ -105,18 +101,12 @@ async def close_db_connections(dp: Dispatcher) -> None:
 
 
 def setup_handlers(dp: Dispatcher) -> None:
-    # Global error handler should be first
     dp.include_router(error.router)
-
-    # Routers with global commands that should work in any state
-    dp.include_router(menu.router)         # Handles /start, /menu
-    dp.include_router(settings_handler.router)  # Handles /language
-    dp.include_router(utility.router)      # Handles /help, /privacy, etc.
-
-    # Routers for the main generation FSM flow, now registered after global commands
+    dp.include_router(menu.router)
+    # --- ИЗМЕНЕНИЕ 2: Используем новое имя `settings_handler` для регистрации роутера ---
+    dp.include_router(settings_handler.router) # <--- И ВОТ ИСПРАВЛЕНИЕ
+    dp.include_router(utility.router)
     dp.include_router(photo_handler.router)
-    dp.include_router(prompt_handler.router)
-    dp.include_router(options_handler.router)
     dp.include_router(quality_handler.router)
     dp.include_router(payment_handler.router)
     dp.include_router(next_step_handler.router)
@@ -151,15 +141,6 @@ async def aiohttp_on_startup(app: web.Application) -> None:
     app["proxy_runner"] = await start_proxy_server(bot, dp)
     workflow_data = {"app": app, "dispatcher": dp, "bot": bot}
     await dp.emit_startup(**workflow_data)
-    if config_helpers.is_local_generation_enabled():
-        logger = dp.get("business_logger", utils.logging.setup_logger())
-        logger.info("Local generation is enabled, starting warmup...")
-        try:
-            await local_ai_client.warmup(getattr(logger, "_logger", None))
-        except Exception:  # noqa: BLE001
-            dp["aiogram_logger"].warning(
-                "Bento warmup failed during startup", exc_info=True
-            )
 
 
 async def aiohttp_on_shutdown(app: web.Application) -> None:
@@ -174,16 +155,13 @@ async def aiohttp_on_shutdown(app: web.Application) -> None:
 
 async def aiogram_on_startup(dispatcher: Dispatcher, bot: Bot) -> None:
     await setup_aiogram(dispatcher)
-
     webhook_logger = dispatcher["aiogram_logger"].bind(
         webhook_url=str(settings.webhook.address),
     )
     webhook_logger.debug("Configuring webhook")
-
     webhook_url_for_telegram = (
         f"{str(settings.webhook.address).rstrip('/')}/bot/{settings.bot.id}"
     )
-
     await bot.set_webhook(
         url=webhook_url_for_telegram,
         allowed_updates=dispatcher.resolve_used_update_types(),
@@ -223,26 +201,16 @@ async def start_proxy_server(bot: Bot, dp: Dispatcher) -> web.AppRunner:
 
 def main() -> None:
     aiogram_session_logger = utils.logging.setup_logger().bind(type="aiogram_session")
-
-    api_server = TelegramAPIServer.from_base("https://api.telegram.org")
-    if settings.use_custom_api_server and settings.custom_api_server:
-        api_server = TelegramAPIServer(
-            base=settings.custom_api_server.base,
-            file=settings.custom_api_server.file,
-        )
-
     session = utils.smart_session.SmartAiogramAiohttpSession(
-        api=api_server,
         json_loads=orjson.loads,
         logger=aiogram_session_logger,
     )
-
     bot = Bot(
+        # Теперь эта строка будет работать, так как `settings` - это объект конфигурации
         token=settings.bot.token.get_secret_value(),
         session=session,
         default=DefaultBotProperties(parse_mode="HTML"),
     )
-
     fsm_redis = Redis(
         host=settings.redis.host,
         port=settings.redis.port,
@@ -253,22 +221,17 @@ def main() -> None:
         else None,
     )
     storage = RedisStorage(redis=fsm_redis)
-
     dp = Dispatcher(storage=storage)
     dp["storage"] = storage
-
     i18n = I18n(
         path="aiogram_bot_template/locales", default_locale="en", domain="messages"
     )
     dp.update.outer_middleware(I18nMiddleware(i18n))
     dp["i18n"] = i18n
-
     setup_logging(dp)
     dp["aiogram_session_logger"] = aiogram_session_logger
-
     dp.startup.register(aiogram_on_startup)
     dp.shutdown.register(aiogram_on_shutdown)
-
     web.run_app(
         asyncio.run(setup_aiohttp_app(bot, dp)),
         handle_signals=True,

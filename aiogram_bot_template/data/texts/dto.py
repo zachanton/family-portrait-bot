@@ -17,7 +17,7 @@ class BotInfo(BaseModel):
 
 class LocaleTexts(BaseModel):
     """A collection of all texts for a specific locale."""
-    privacy_policy: List[str]  # Changed to List[str]
-    terms_of_service: List[str] # Changed to List[str]
     commands: List[BotCommandInfo]
     bot_info: BotInfo
+    privacy_policy: List[str]
+    terms_of_service: List[str]

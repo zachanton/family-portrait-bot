@@ -17,30 +17,17 @@ from aiogram_bot_template.services.image_generation_service import GenerationRes
 
 logger = structlog.get_logger(__name__)
 
-# Map generation types to sheet tab titles
+# --- ИЗМЕНЕНИЕ: Оставлен только один тип генерации ---
 SHEET_TITLE_MAP = {
-    GenerationType.CHILD_GENERATION: "Child Generation",
-    GenerationType.IMAGE_EDIT: "Image Edit",
-    GenerationType.UPSCALE: "Upscale",
-    GenerationType.GROUP_PHOTO: "Group Photo",
-    GenerationType.GROUP_PHOTO_EDIT: "Group Photo Edit",
+    GenerationType.GROUP_PHOTO: "Group Photo Log",
 }
 
-# ===== Image display settings (keep aspect ratio with IMAGE(...; 1)) =====
-IMAGE_MODE = 1  # fit to cell, keep aspect ratio
-
-# Make cells big so images in mode 1 render large
-IMG_COL_WIDTH_PX = 320      # width for E, F, G, I (increase if you want bigger)
-IMG_ROW_HEIGHT_PX = 320     # height for data rows (visual row 2+)
-
-# 0-based indexes of the image columns: A=0, B=1, ...
-IMAGE_COL_INDEXES = (4, 5, 6, 8)  # E, F, G, I
-# ========================================================================
-
+IMAGE_MODE = 1
+IMG_COL_WIDTH_PX = 320
+IMG_ROW_HEIGHT_PX = 320
+IMAGE_COL_INDEXES = (4, 5, 6) # E, F, G (Input 1, Input 2, Output)
 
 class GoogleSheetsLogger:
-    """Async logger that writes generation data to Google Sheets."""
-
     def __init__(self):
         self._agcm = None
         if (
@@ -228,14 +215,12 @@ class GoogleSheetsLogger:
             gen_type = GenerationType(gen_data.get("type"))
             sheet_title = SHEET_TITLE_MAP.get(gen_type)
             if not sheet_title:
-                logger.warning("No sheet title mapping for generation type", type=str(gen_type))
                 return
 
-            # --- UPDATED CALL ---
-            # Now we pass the correct headers for this specific sheet
+            # --- ИЗМЕНЕНИЕ: Убрана колонка для 3-го изображения ---
             headers = [
-                "Timestamp", "Generation Type", "Quality", "Trial Type",
-                "Input Image 1", "Input Image 2", "Input Image 3",
+                "Timestamp", "Generation Type", "Quality",
+                "Input Image 1", "Input Image 2",
                 "API Request Payload", "Output Image", "Generation Time (ms)"
             ]
             spreadsheet, worksheet = await self._get_worksheet(sheet_title, headers)
@@ -248,7 +233,8 @@ class GoogleSheetsLogger:
                     base_url = image_cache.get_cached_image_proxy_url(img["file_unique_id"])
                     cache_busting_url = f"{base_url}?v={int(time.time())}"
                     input_image_formulas.append(f'=IMAGE("{cache_busting_url}"; {IMAGE_MODE})')
-            input_image_formulas.extend(["-"] * (3 - len(input_image_formulas)))
+            # --- ИЗМЕНЕНИЕ: Дополняем до 2-х, а не 3-х ---
+            input_image_formulas.extend(["-"] * (2 - len(input_image_formulas)))
 
             base_output_url = image_cache.get_cached_image_proxy_url(output_image_unique_id)
             cache_busting_output_url = f"{base_output_url}?v={int(time.time())}"
@@ -258,7 +244,6 @@ class GoogleSheetsLogger:
                 datetime.now().isoformat(),
                 gen_type.value,
                 gen_data.get("quality_level", "N/A"),
-                gen_data.get("trial_type", "-"),
                 *input_image_formulas,
                 json.dumps(result.request_payload, indent=2, ensure_ascii=False),
                 output_image_formula,
@@ -266,8 +251,6 @@ class GoogleSheetsLogger:
             ]
 
             await worksheet.append_row(row_data, value_input_option="USER_ENTERED")
-            logger.info("Logged generation row", sheet=sheet_title, gid=worksheet.id, image_mode=IMAGE_MODE)
-
             await self._apply_dimension_sizes(spreadsheet, worksheet)
 
         except Exception:

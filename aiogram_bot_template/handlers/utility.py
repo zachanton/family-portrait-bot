@@ -19,7 +19,7 @@ router = Router(name="utility-handlers")
 @router.message(Command("help"))
 async def help_cmd(msg: Message) -> None:
     await msg.answer(
-        _("Hello! If you have any questions or need assistance, please contact our support team at: {email}").format(
+        _("If you have any questions or need assistance, please contact our support team at: {email}").format(
             email=settings.bot.support_email
         )
     )
@@ -51,7 +51,6 @@ async def terms(msg: Message, locale: str) -> None:
 
 @router.message(
     StateFilter(
-        Generation.waiting_for_options,
         Generation.waiting_for_quality,
         Generation.waiting_for_next_action,
         Generation.waiting_for_feedback,
@@ -90,15 +89,8 @@ async def get_stats(msg: Message, db_pool: asyncpg.Pool) -> None:
             return f"({rate:.1f}%)"
 
         funnel = s.funnel
-        total_started = funnel.photos_collected
-        free_usage = s.free_usage
-        feature_usage = s.feature_usage
-        paid_tier_usage = s.paid_tier_usage
+        total_paid_generations = s.paid_tier_usage.quality_1 + s.paid_tier_usage.quality_2 + s.paid_tier_usage.quality_3
 
-        referrals_text = "\n".join([f"    - `{r.source}`: {r.count}" for r in s.top_referrals]) or "    No paid referrals"
-        prev_for_quality = funnel.options_selected or funnel.photos_collected
-        total_paid_generations = paid_tier_usage.quality_1 + paid_tier_usage.quality_2 + paid_tier_usage.quality_3
-        
         def get_tier_percent(tier_count: int) -> str:
             if total_paid_generations == 0: return "(0%)"
             return f"({(tier_count / total_paid_generations) * 100:.1f}%)"
@@ -108,25 +100,18 @@ async def get_stats(msg: Message, db_pool: asyncpg.Pool) -> None:
             f"👤 <b>New Users:</b> {s.new_users}\n\n"
             f"<b>--- 🚀 Funnel ---</b>\n"
             f"<b>1. Photos Uploaded:</b> {funnel.photos_collected}\n"
-            f"<b>2. Options Selected:</b> {funnel.options_selected} {get_conv(funnel.options_selected, funnel.photos_collected)}\n"
-            f"<b>3. Quality Selected:</b> {funnel.quality_selected} {get_conv(funnel.quality_selected, prev_for_quality)}\n"
-            f"<b>4. Reached Payment:</b> {funnel.awaiting_payment} {get_conv(funnel.awaiting_payment, funnel.quality_selected)}\n"
-            f"<b>5. Paid:</b> {funnel.paid} {get_conv(funnel.paid, funnel.awaiting_payment)}\n"
-            f"<b>6. Completed:</b> {funnel.completed} {get_conv(funnel.completed, funnel.paid)}\n\n"
-            f"💳 <b>Overall Conversion (Paid/Started):</b> {get_conv(funnel.paid, total_started)}\n\n"
-            f"<b>--- 🎁 Free Usage ---</b>\n"
-            f"<b>Free Trials Used:</b> {free_usage.free_trials_used}\n"
-            f"<b>Whitelist Uses:</b> {free_usage.whitelist_uses}\n\n"
+            f"<b>2. Quality Selected:</b> {funnel.quality_selected} {get_conv(funnel.quality_selected, funnel.photos_collected)}\n"
+            f"<b>3. Reached Payment:</b> {funnel.awaiting_payment} {get_conv(funnel.awaiting_payment, funnel.quality_selected)}\n"
+            f"<b>4. Paid:</b> {funnel.paid} {get_conv(funnel.paid, funnel.awaiting_payment)}\n"
+            f"<b>5. Completed:</b> {funnel.completed} {get_conv(funnel.completed, funnel.paid)}\n\n"
+            f"💳 <b>Overall Conversion (Paid/Started):</b> {get_conv(funnel.paid, funnel.photos_collected)}\n\n"
             f"<b>--- 🛠️ Feature Usage (Completed) ---</b>\n"
-            f"<b>Child Generations:</b> {feature_usage.child_generation}\n"
-            f"<b>Image Edits:</b> {feature_usage.image_edit}\n"
-            f"<b>Upscales:</b> {feature_usage.upscale}\n\n"
+            f"<b>Group Photos:</b> {s.feature_usage.group_photo}\n\n"
             f"<b>--- 💎 Paid Tier Usage ---</b>\n"
-            f"<b>Good (Tier 1):</b> {paid_tier_usage.quality_1} {get_tier_percent(paid_tier_usage.quality_1)}\n"
-            f"<b>Excellent (Tier 2):</b> {paid_tier_usage.quality_2} {get_tier_percent(paid_tier_usage.quality_2)}\n"
-            f"<b>Premium (Tier 3):</b> {paid_tier_usage.quality_3} {get_tier_percent(paid_tier_usage.quality_3)}\n\n"
-            f"💰 <b>Revenue:</b> {s.revenue.total_stars} ⭐\n\n"
-            f"📈 <b>Top Referrals (Paid):</b>\n{referrals_text}"
+            f"<b>Standard (Tier 1):</b> {s.paid_tier_usage.quality_1} {get_tier_percent(s.paid_tier_usage.quality_1)}\n"
+            f"<b>Enhanced (Tier 2):</b> {s.paid_tier_usage.quality_2} {get_tier_percent(s.paid_tier_usage.quality_2)}\n"
+            f"<b>Premium (Tier 3):</b> {s.paid_tier_usage.quality_3} {get_tier_percent(s.paid_tier_usage.quality_3)}\n\n"
+            f"💰 <b>Revenue:</b> {s.revenue.total_stars} ⭐"
         )
 
     report_24h = format_section("Last 24 Hours", stats_24h)

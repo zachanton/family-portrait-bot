@@ -1,8 +1,8 @@
 """Initial database schema
 
-Revision ID: 8430cdfbc2a6
+Revision ID: a66e2d50cff2
 Revises: 
-Create Date: 2025-09-04 11:28:58.139529
+Create Date: 2025-09-07 16:49:07.601603
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '8430cdfbc2a6'
+revision: str = 'a66e2d50cff2'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -64,7 +64,6 @@ def upgrade() -> None:
     sa.Column('request_id', sa.Integer(), nullable=False),
     sa.Column('type', sa.String(length=50), nullable=False),
     sa.Column('status', sa.String(length=50), nullable=False),
-    sa.Column('prompt_payload', sa.JSON(), nullable=True),
     sa.Column('quality_level', sa.Integer(), nullable=True),
     sa.Column('trial_type', sa.String(length=50), nullable=True),
     sa.Column('seed', sa.BigInteger(), nullable=True),
@@ -73,7 +72,6 @@ def upgrade() -> None:
     sa.Column('result_file_id', sa.String(), nullable=True),
     sa.Column('caption', sa.Text(), nullable=True),
     sa.Column('control_message_id', sa.BigInteger(), nullable=True),
-    sa.Column('context_metadata', sa.JSON(), nullable=True),
     sa.Column('error_message', sa.Text(), nullable=True),
     sa.Column('generation_time_ms', sa.Integer(), nullable=True),
     sa.Column('api_request_payload', sa.JSON(), nullable=True),

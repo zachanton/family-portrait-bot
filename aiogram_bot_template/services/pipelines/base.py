@@ -1,4 +1,4 @@
-# File: aiogram_bot_template/services/pipelines/base.py
+# aiogram_bot_template/services/pipelines/base.py
 from abc import ABC, abstractmethod
 from typing import Any
 import structlog
@@ -65,19 +65,9 @@ class BasePipeline(ABC):
         generation_ai_client, model_name = ai_client_factory.get_ai_client_and_model(
             generation_type=gen_type_enum, quality=quality_level
         )
-
+        
         payload = pipeline_output.request_payload.copy()
-        image_key = tier_config.image_payload_key
-
-        # If the pipeline prepared an 'image_url' but the config demands a different key
-        if "image_url" in payload and image_key != "image_url":
-            image_value = payload.pop("image_url")
-            # If the target key is 'image_urls', wrap the value in a list
-            if image_key == "image_urls":
-                payload[image_key] = [image_value]
-            else:
-                payload[image_key] = image_value
-
+        
         result, error_meta = await ai_service.generate_image_with_reference(
             payload,
             generation_ai_client,

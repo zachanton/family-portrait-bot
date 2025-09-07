@@ -1,5 +1,4 @@
 # aiogram_bot_template/data/settings.py
-
 from pydantic import BaseModel, Field, SecretStr, AnyHttpUrl, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -56,43 +55,11 @@ class QualityTierConfig(BaseModel):
     client: str
     model: str
     price: int
-    # Defines the key used for the main image payload. Defaults to 'image_url'.
-    # For models expecting a list (like Gemini), this should be 'image_urls'.
-    image_payload_key: str = "image_url"
-
-
-class ImageEditConfig(BaseModel):
-    tiers: dict[int, QualityTierConfig]
+    image_payload_key: str = "image_urls"
 
 
 class GenerationConfig(BaseModel):
     tiers: dict[int, QualityTierConfig]
-
-
-class UpscaleConfig(BaseModel):
-    tiers: dict[int, QualityTierConfig]
-
-
-class AiFeatureConfig(BaseModel):
-    client: str
-    model: str
-    fallback_model: str | None = None
-
-
-class CustomApiServerConfig(BaseModel):
-    is_local: bool = False
-    base: str
-    file: str
-
-
-class FluxConfig(BaseModel):
-    model_id: str
-    gguf_ckpt_path: str
-
-
-class QwenConfig(BaseModel):
-    model_id: str
-    gguf_ckpt_path: str
 
 
 class GoogleConfig(BaseModel):
@@ -114,27 +81,14 @@ class Settings(BaseSettings):
     proxy: ProxyConfig
     api_urls: ApiUrls = Field(default_factory=ApiUrls)
 
-    local_model_provider: str = Field(default="flux", pattern="^(flux|qwen)$")
-    flux: FluxConfig | None = None
-    qwen: QwenConfig | None = None
-
-    child_generation: GenerationConfig
-    image_edit: ImageEditConfig
-    upscale: UpscaleConfig
     group_photo: GenerationConfig
-    group_photo_edit: ImageEditConfig
 
-    ai_features: dict[str, AiFeatureConfig]
-
+    # --- ВОТ ИСПРАВЛЕНИЕ: Возвращаем поле free_trial_whitelist ---
     free_trial_whitelist: list[int] = Field(default_factory=list)
 
     logging_level: int = 20
-    moderation_threshold: float = 0.8
-    collect_feedback: bool = False
+    collect_feedback: bool = True
     google: GoogleConfig | None = None
-
-    use_custom_api_server: bool = False
-    custom_api_server: CustomApiServerConfig | None = None
 
 
 settings = Settings()

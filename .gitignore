@@ -23,6 +23,7 @@ logs/
 .pypoetry.virtualenvs/
 
 repo_for_upload/
+family_bot/
 *.zip
 
 google-credentials.json
