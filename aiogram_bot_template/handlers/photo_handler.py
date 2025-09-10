@@ -1,6 +1,4 @@
 # aiogram_bot_template/handlers/photo_handler.py
-import mimetypes
-
 import asyncpg
 import structlog
 from aiogram import Bot, F, Router
@@ -22,10 +20,8 @@ router = Router(name="photo-handler")
 
 
 async def proceed_to_quality_selection(
-    message: Message,
-    state: FSMContext,
-    db_pool: asyncpg.Pool,
-    business_logger: structlog.typing.FilteringBoundLogger,
+    message: Message, state: FSMContext, db_pool: asyncpg.Pool,
+    business_logger: structlog.typing.FilteringBoundLogger
 ) -> None:
     user_data = await state.get_data()
     db = PostgresConnection(db_pool, logger=business_logger)
@@ -34,16 +30,13 @@ async def proceed_to_quality_selection(
     photos = user_data.get("photos_collected", [])
     roles = [ImageRole.PHOTO_1, ImageRole.PHOTO_2]
 
-    # For DB logging, we store the original, user-provided image details
     source_images_dto = [
         (p["original_file_unique_id"], p["original_file_id"], role)
         for p, role in zip(photos, roles)
     ]
 
     draft = generations_repo.GenerationRequestDraft(
-        user_id=user_id,
-        status="photos_collected",
-        source_images=source_images_dto,
+        user_id=user_id, status="photos_collected", source_images=source_images_dto
     )
     request_id = await generations_repo.create_generation_request(db, draft)
     await state.update_data(request_id=request_id)
@@ -61,63 +54,58 @@ async def proceed_to_quality_selection(
 
 @router.message(Generation.collecting_photos, F.photo)
 async def process_photo_input(
-    message: Message,
-    state: FSMContext,
-    bot: Bot,
-    cache_pool: Redis,
-    db_pool: asyncpg.Pool,
-    business_logger: structlog.typing.FilteringBoundLogger,
+    message: Message, state: FSMContext, bot: Bot, cache_pool: Redis,
+    db_pool: asyncpg.Pool, business_logger: structlog.typing.FilteringBoundLogger
 ) -> None:
     photo = message.photo[-1]
     status_msg = await message.answer(_("Processing your photo... ⏳"))
 
     try:
-        # 1. Get file path from Telegram
         file_info = await bot.get_file(photo.file_id)
         if not file_info.file_path:
             await status_msg.edit_text(_("I couldn't get file information. Please try sending the photo again."))
             return
 
-        # 2. Download original photo bytes using the file_path
         file_io = await bot.download_file(file_info.file_path)
         original_image_bytes = file_io.read()
 
-        # 3. Run preprocessing
-        processed_image_bytes = photo_processing.preprocess_image(original_image_bytes)
-        if not processed_image_bytes:
-            await status_msg.edit_text(_("I couldn't detect a face in this photo. Please send another one."))
+        # <<< ИЗМЕНЕНИЕ: Получаем объект с тремя кропами
+        processed_result = photo_processing.preprocess_image(original_image_bytes)
+        if not processed_result:
+            await status_msg.edit_text(_("I couldn't detect a clear face. Please send another one."))
             return
 
-        # 4. Cache both original and processed images
-        processed_unique_id = f"{photo.file_unique_id}_processed"
-        await image_cache.cache_image_bytes(
-            photo.file_unique_id, original_image_bytes, "image/jpeg", cache_pool
-        )
-        await image_cache.cache_image_bytes(
-            processed_unique_id, processed_image_bytes, "image/jpeg", cache_pool
-        )
-        business_logger.info(
-            "Cached original and processed images",
-            original_id=photo.file_unique_id,
-            processed_id=processed_unique_id,
-        )
+        # <<< ИЗМЕНЕНИЕ: Кэшируем все три версии
+        base_unique_id = photo.file_unique_id
+        
+        # Кэшируем оригинал
+        await image_cache.cache_image_bytes(base_unique_id, original_image_bytes, "image/jpeg", cache_pool)
+        
+        # Кэшируем обработанные версии
+        processed_uids = {}
+        for crop_name in ["headshot", "portrait", "half_body"]:
+            uid = f"{base_unique_id}_{crop_name}"
+            image_bytes = getattr(processed_result, crop_name)
+            await image_cache.cache_image_bytes(uid, image_bytes, "image/jpeg", cache_pool)
+            processed_uids[crop_name] = uid
+        
+        business_logger.info("Cached original and all processed image versions", original_id=base_unique_id)
 
-        # 5. Update FSM state with details for both versions
+        # <<< ИЗМЕНЕНИЕ: Обновляем FSM новой структурой данных
         data = await state.get_data()
         photos_collected = data.get("photos_collected", [])
 
-        if any(p["original_file_unique_id"] == photo.file_unique_id for p in photos_collected):
+        if any(p["original_file_unique_id"] == base_unique_id for p in photos_collected):
             await status_msg.edit_text(_("You've already sent this photo. Please send a different one."))
             return
 
         photos_collected.append({
             "original_file_id": photo.file_id,
-            "original_file_unique_id": photo.file_unique_id,
-            "processed_file_unique_id": processed_unique_id,
+            "original_file_unique_id": base_unique_id,
+            "processed_files": processed_uids, # Сохраняем словарь с ID
         })
         await state.update_data(photos_collected=photos_collected)
 
-        # 6. Guide the user to the next step
         if len(photos_collected) < 2:
             await status_msg.edit_text(_("Perfect! Now, please send the photo of the second person."))
         else:

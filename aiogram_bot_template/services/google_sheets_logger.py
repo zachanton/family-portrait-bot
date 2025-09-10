@@ -217,7 +217,6 @@ class GoogleSheetsLogger:
             if not sheet_title:
                 return
 
-            # --- ИЗМЕНЕНИЕ: Убрана колонка для 3-го изображения ---
             headers = [
                 "Timestamp", "Generation Type", "Quality",
                 "Input Image 1", "Input Image 2",
@@ -229,18 +228,15 @@ class GoogleSheetsLogger:
 
             input_image_formulas: List[str] = []
             
-            # --- ИЗМЕНЕНИЕ: Используем photos_collected с ID обработанных фото ---
             if photos_collected := gen_data.get("photos_collected"):
                 for img_data in photos_collected:
-                    # Мы берем ID обработанного изображения для лога
-                    processed_uid = img_data.get("processed_file_unique_id")
+                    processed_files = img_data.get("processed_files", {})
+                    processed_uid = processed_files.get("half_body")
                     if processed_uid:
                         base_url = image_cache.get_cached_image_proxy_url(processed_uid)
                         cache_busting_url = f"{base_url}?v={int(time.time())}"
                         input_image_formulas.append(f'=IMAGE("{cache_busting_url}"; {IMAGE_MODE})')
-            # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
-            # Дополняем до 2-х, если было меньше
             input_image_formulas.extend(["-"] * (2 - len(input_image_formulas)))
 
             base_output_url = image_cache.get_cached_image_proxy_url(output_image_unique_id)

@@ -1,33 +1,31 @@
 # aiogram_bot_template/services/pipelines/group_photo.py
 import random
-
 from aiogram.utils.i18n import gettext as _
-
 from aiogram_bot_template.services import image_cache
 from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.services.prompting.factory import get_prompt_strategy
 from .base import BasePipeline, PipelineOutput
 
-
 class GroupPhotoPipeline(BasePipeline):
     async def prepare_data(self) -> PipelineOutput:
         await self.update_status_func("Preparing your group portrait... 👨‍👩‍👧")
 
-        # This data comes from the FSM state and contains the processed IDs
         photos_collected = self.gen_data.get("photos_collected", [])
-
         if len(photos_collected) < 2:
             raise ValueError("Missing one or both source images for group photo.")
 
-        photo1_processed_uid = photos_collected[0].get("processed_file_unique_id")
-        photo2_processed_uid = photos_collected[1].get("processed_file_unique_id")
+        photo1_processed_files = photos_collected[0].get("processed_files", {})
+        photo2_processed_files = photos_collected[1].get("processed_files", {})
 
-        if not photo1_processed_uid or not photo2_processed_uid:
+        photo1_uid = photo1_processed_files.get("half_body")
+        photo2_uid = photo2_processed_files.get("half_body")
+
+        if not photo1_uid or not photo2_uid:
             raise ValueError("Missing processed file unique ID for one or both images.")
 
         image_urls = [
-            image_cache.get_cached_image_proxy_url(photo1_processed_uid),
-            image_cache.get_cached_image_proxy_url(photo2_processed_uid),
+            image_cache.get_cached_image_proxy_url(photo1_uid),
+            image_cache.get_cached_image_proxy_url(photo2_uid),
         ]
 
         quality_level = self.gen_data.get("quality_level", 1)
@@ -47,11 +45,5 @@ class GroupPhotoPipeline(BasePipeline):
             "seed": seed_to_use,
             **prompt_payload,
         }
-
         caption = _("✨ Here is your beautiful group portrait!")
-
-        return PipelineOutput(
-            request_payload=request_payload,
-            caption=caption,
-            metadata={}
-        )
+        return PipelineOutput(request_payload=request_payload, caption=caption, metadata={})
