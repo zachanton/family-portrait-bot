@@ -22,23 +22,11 @@ class GroupPhotoPipeline(BasePipeline):
         if not photo1_uid or not photo2_uid:
             raise ValueError("Missing processed file unique ID for one or both images.")
 
-        await self.update_status_func("Harmonizing photos... ✨")
         photo1_bytes, _c1 = await image_cache.get_cached_image_bytes(photo1_uid, self.cache_pool)
         photo2_bytes, _c2 = await image_cache.get_cached_image_bytes(photo2_uid, self.cache_pool)
 
-        if not photo1_bytes or not photo2_bytes:
-            raise ValueError("Could not retrieve images for harmonization.")
-
-        harmonized1_bytes, harmonized2_bytes = photo_processing.harmonize_pair(photo1_bytes, photo2_bytes)
-        
-        # --- ДОБАВЛЯЕМ КЕШИРОВАНИЕ ГАРМОНИЗИРОВАННЫХ ФОТО ---
-        harmonized1_uid = f"harmonized_{uuid.uuid4().hex}"
-        harmonized2_uid = f"harmonized_{uuid.uuid4().hex}"
-        await image_cache.cache_image_bytes(harmonized1_uid, harmonized1_bytes, "image/jpeg", self.cache_pool)
-        await image_cache.cache_image_bytes(harmonized2_uid, harmonized2_bytes, "image/jpeg", self.cache_pool)
-
         await self.update_status_func("Creating a composite draft... 🖼️")
-        composite_bytes = photo_processing.create_composite_image(harmonized1_bytes, harmonized2_bytes)
+        composite_bytes = photo_processing.create_composite_image(photo1_bytes, photo2_bytes)
         composite_uid = f"composite_{uuid.uuid4().hex}"
         await image_cache.cache_image_bytes(composite_uid, composite_bytes, "image/jpeg", self.cache_pool)
         self.log.info("Cached composite image", uid=composite_uid)
@@ -51,17 +39,7 @@ class GroupPhotoPipeline(BasePipeline):
             raise ValueError(f"Tier configuration for quality level {quality_level} not found.")
 
         strategy = get_prompt_strategy(tier_config.client)
-        prompt_text = (
-            "This is a pre-composited image of two people. Your task is to enhance it into a single, cohesive, "
-            "ultra-realistic group portrait. **Primary Goal: Seamless Integration & Realism.** "
-            "Refine the image to remove any visible seams or blending artifacts. "
-            "Ensure the lighting, shadows, and color grading are consistent across the entire scene, making it look like a single photograph. "
-            "**Identity Lock:** Preserve 100% of the facial features and identity of each person from the source composite. Do not alter their faces. "
-            "**Final Touches:** Enhance the overall quality to professional-grade photorealism. The final output should be a vertical 4:5 aspect ratio portrait. "
-            "Fix any compositional awkwardness if possible. Avoid a 'pasted' or 'collage' look."
-        )
         prompt_payload = strategy.create_group_photo_payload()
-        prompt_payload["prompt"] = " ".join(prompt_text.replace("\n", " ").split())
 
         is_retry = self.gen_data.get("is_retry", False)
         seed_to_use = random.randint(0, 2**32 - 1) if is_retry else 42
@@ -74,9 +52,7 @@ class GroupPhotoPipeline(BasePipeline):
         }
         caption = _("✨ Here is your beautiful group portrait!")
         
-        # --- ПЕРЕДАЕМ ВСЕ UID ДЛЯ ОТЛАДКИ ---
         metadata = {
-            "harmonized_uids": [harmonized1_uid, harmonized2_uid],
             "composite_uid": composite_uid
         }
         

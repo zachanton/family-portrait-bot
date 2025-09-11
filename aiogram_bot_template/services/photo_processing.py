@@ -76,109 +76,21 @@ def align_and_crop_robust(img_bgr: np.ndarray, lmk_px: np.ndarray, output_size: 
 # --------------------------------------------------------------------
 # Pair Harmonization and Compositing
 # --------------------------------------------------------------------
-def _color_transfer(source_bgr: np.ndarray, target_bgr: np.ndarray) -> np.ndarray:
-    source = cv2.cvtColor(source_bgr, cv2.COLOR_BGR2LAB).astype("float32")
-    target = cv2.cvtColor(target_bgr, cv2.COLOR_BGR2LAB).astype("float32")
-    (l_mean_src, _, _), (l_std_src, _, _) = cv2.meanStdDev(source)
-    (l_mean_tgt, _, _), (l_std_tgt, _, _) = cv2.meanStdDev(target)
-    (l, a, b) = cv2.split(target)
-    l -= l_mean_tgt; a -= 0; b -= 0 # Only adjust lightness for natural look
-    l = (l_std_src / l_std_tgt) * l
-    l += l_mean_src
-    l = np.clip(l, 0, 255)
-    return cv2.cvtColor(cv2.merge([l, a, b]).astype("uint8"), cv2.COLOR_LAB2BGR)
-
-def harmonize_pair(master_bytes: bytes, slave_bytes: bytes) -> Tuple[bytes, bytes]:
-    logger.info("Starting MASTER-SLAVE harmonization...")
-    master_img, slave_img = load_image_bgr_from_bytes(master_bytes), load_image_bgr_from_bytes(slave_bytes)
-    if master_img is None or slave_img is None: return master_bytes, slave_bytes
-    try:
-        corrected_slave = _color_transfer(master_img, slave_img)
-        logger.info("Master-slave harmonization finished successfully.")
-        return (master_bytes, convert_bgr_to_jpeg_bytes(corrected_slave))
-    except Exception:
-        logger.exception("Harmonization failed."); return master_bytes, slave_bytes
-
-def _create_person_mask(image: np.ndarray) -> Optional[np.ndarray]:
-    try:
-        landmarks = detect_face_landmarks(image)
-        face_oval_indices = [10,338,297,332,284,251,389,356,454,323,361,288,397,365,379,378,400,377,152,148,176,149,150,136,172,58,132,93,234,127,162,21,54,103,67,109]
-        hull = cv2.convexHull(landmarks[face_oval_indices].astype(np.int32))
-        x, y, w, h = cv2.boundingRect(hull)
-        mask = np.zeros(image.shape[:2], dtype=np.uint8)
-        cv2.ellipse(mask, (x+w//2, y+h//2), (int(w*0.9), int(h*1.3)), 0, 0, 360, 255, -1)
-        return cv2.GaussianBlur(mask, (199, 199), 0)
-    except Exception:
-        return None
-
-def _create_gradient_background(width: int, height: int, top_color=(230, 220, 210), bottom_color=(200, 190, 180)) -> np.ndarray:
-    background = np.zeros((height, width, 3), dtype=np.float32)
-    for y in range(height):
-        alpha = y / (height - 1)
-        color = [(1 - alpha) * c1 + alpha * c2 for c1, c2 in zip(top_color, bottom_color)]
-        background[y, :] = color
-    noise = np.random.randn(height, width, 3) * 2; background += noise
-    return np.clip(background, 0, 255).astype(np.uint8)
-
-def _paste_bgra_on_bgr(foreground_bgra: np.ndarray, background_bgr: np.ndarray, x: int, y: int) -> np.ndarray:
-    fh, fw = foreground_bgra.shape[:2]
-    bh, bw = background_bgr.shape[:2]
-
-    # Ensure the paste location is valid
-    if x >= bw or y >= bh or x + fw <= 0 or y + fh <= 0:
-        return background_bgr
-
-    # Clip coordinates to be within background bounds
-    x1, y1 = max(x, 0), max(y, 0)
-    x2, y2 = min(x + fw, bw), min(y + fh, bh)
-    
-    fg_x1, fg_y1 = max(0, -x), max(0, -y)
-    fg_x2, fg_y2 = fw - max(0, (x + fw) - bw), fh - max(0, (y + fh) - bh)
-
-    if y2 <= y1 or x2 <= x1:
-        return background_bgr
-
-    roi_bg = background_bgr[y1:y2, x1:x2]
-    roi_fg = foreground_bgra[fg_y1:fg_y2, fg_x1:fg_x2]
-
-    alpha = (roi_fg[:, :, 3].astype(np.float32) / 255.0)[:, :, np.newaxis]
-    blended = roi_bg * (1.0 - alpha) + roi_fg[:, :, :3] * alpha
-    background_bgr[y1:y2, x1:x2] = blended.astype(np.uint8)
-    return background_bgr
 
 def create_composite_image(person1_bytes: bytes, person2_bytes: bytes) -> bytes:
-    logger.info("Starting FINAL Alpha Composite creation...")
+    """
+    Creates a simple side-by-side image by concatenating two full portraits.
+    """
+    logger.info("Starting FINAL SIMPLE CONCATENATION...")
     p1_img, p2_img = load_image_bgr_from_bytes(person1_bytes), load_image_bgr_from_bytes(person2_bytes)
-    if p1_img is None or p2_img is None: return person1_bytes
+    if p1_img is None or p2_img is None:
+        return person1_bytes or person2_bytes
 
-    canvas_w, canvas_h = 1024, 1280
-    background = _create_gradient_background(canvas_w, canvas_h)
+    # Просто соединяем два изображения 1024x1024 по горизонтали
+    final_image = cv2.hconcat([p1_img, p2_img])
 
-    mask1 = _create_person_mask(p1_img); mask2 = _create_person_mask(p2_img)
-    if mask1 is None or mask2 is None: return person1_bytes
-    
-    p1_bgra = cv2.merge([p1_img, mask1]); p2_bgra = cv2.merge([p2_img, mask2])
-
-    scale_factor = 0.80
-    scaled_h = int(p1_bgra.shape[0] * scale_factor)
-    scaled_w = int(p1_bgra.shape[1] * scale_factor)
-    
-    p1_scaled = cv2.resize(p1_bgra, (scaled_w, scaled_h), interpolation=cv2.INTER_AREA)
-    p2_scaled = cv2.resize(p2_bgra, (scaled_w, scaled_h), interpolation=cv2.INTER_AREA)
-    
-    # Robust positioning based on scaled width
-    overlap = int(scaled_w * 0.3)
-    pos1_x = (canvas_w // 2) - scaled_w + (overlap // 2)
-    pos2_x = (canvas_w // 2) - (overlap // 2)
-    pos_y = (canvas_h - scaled_h) // 2
-
-    # Paste the back layer (man) first
-    background = _paste_bgra_on_bgr(p2_scaled, background, pos2_x, pos_y)
-    # Paste the front layer (woman) on top
-    background = _paste_bgra_on_bgr(p1_scaled, background, pos1_x, pos_y)
-
-    logger.info("Final Alpha Composite image created successfully.")
-    return convert_bgr_to_jpeg_bytes(background)
+    logger.info("Final Simple Concatenation created successfully.")
+    return convert_bgr_to_jpeg_bytes(final_image)
 
 # ------------------------------
 # End-to-end Pipeline

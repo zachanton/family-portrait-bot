@@ -63,7 +63,6 @@ async def run_generation_worker(
         gen_data["type"] = GenerationType.GROUP_PHOTO.value
         gen_data["quality_level"] = gen_data["quality"]
         
-        # --- ВОССТАНОВЛЕННОЕ И УЛУЧШЕННОЕ ЛОГИРОВАНИЕ ---
         photos_collected = gen_data.get("photos_collected", [])
         if len(photos_collected) == 2:
             photo1_uid = photos_collected[0].get("processed_files", {}).get("half_body")
@@ -71,21 +70,14 @@ async def run_generation_worker(
             if photo1_uid and photo2_uid:
                 await _send_debug_image(bot, chat_id, cache_pool, photo1_uid, "DEBUG: 1. Индивидуально обработанное фото 1")
                 await _send_debug_image(bot, chat_id, cache_pool, photo2_uid, "DEBUG: 2. Индивидуально обработанное фото 2")
-        # --- КОНЕЦ ЛОГИРОВАНИЯ ---
         
         await generations_repo.update_generation_request_status(db, request_id, "processing")
 
         pipeline = GroupPhotoPipeline(bot, gen_data, log, status.update, cache_pool)
         pipeline_output = await pipeline.prepare_data()
 
-        # --- ВОССТАНОВЛЕННОЕ И УЛУЧШЕННОЕ ЛОГИРОВАНИЕ ---
-        if harmonized_uids := pipeline_output.metadata.get("harmonized_uids"):
-            await _send_debug_image(bot, chat_id, cache_pool, harmonized_uids[0], "DEBUG: 3. Гармонизированное фото 1")
-            await _send_debug_image(bot, chat_id, cache_pool, harmonized_uids[1], "DEBUG: 4. Гармонизированное фото 2")
-            
         if composite_uid := pipeline_output.metadata.get("composite_uid"):
             await _send_debug_image(bot, chat_id, cache_pool, composite_uid, "DEBUG: 5. Склеенное изображение (вход для AI)")
-        # --- КОНЕЦ ЛОГИРОВАНИЯ ---
 
         result, error_meta = await pipeline.run_generation(pipeline_output)
 
