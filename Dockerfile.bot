@@ -3,10 +3,13 @@
 # --- Stage 1: Build stage with Poetry ---
 FROM python:3.11-slim AS builder
 
-# Устанавливаем корректные и минимальные зависимости для headless OpenCV
+# Install build-time dependencies (for insightface) and runtime dependencies (for opencv)
+# It's good practice to have them here in case any package needs them during installation.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     libgl1 \
     libgomp1 \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install poetry
@@ -24,6 +27,13 @@ RUN poetry install --no-root $(if [ "$INSTALL_MODE" = "cloud" ]; then echo "--wi
 
 # --- Stage 2: Final image ---
 FROM python:3.11-slim
+
+# Install ONLY the runtime dependencies needed for the application to run.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 \
+    libgomp1 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
