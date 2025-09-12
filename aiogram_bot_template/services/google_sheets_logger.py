@@ -17,7 +17,6 @@ from aiogram_bot_template.services.image_generation_service import GenerationRes
 
 logger = structlog.get_logger(__name__)
 
-# --- ИЗМЕНЕНИЕ: Оставлен только один тип генерации ---
 SHEET_TITLE_MAP = {
     GenerationType.GROUP_PHOTO: "Group Photo Log",
 }
@@ -41,7 +40,6 @@ class GoogleSheetsLogger:
                     raise ValueError("Google service account credentials JSON is empty.")
 
                 creds_info = json.loads(creds_json)
-                # Use modern Sheets scope + Drive (needed by gspread). No legacy *feeds* scope.
                 self._creds = Credentials.from_service_account_info(
                     info=creds_info,
                     scopes=[
@@ -64,14 +62,12 @@ class GoogleSheetsLogger:
         worksheet,     # AsyncioGspreadWorksheet
     ) -> None:
         """
-        Force column widths (E,F,G,I) and row heights (row 2+) in pixels
-        so IMAGE(...; 1) appears large while keeping aspect ratio.
+        Force column widths and row heights in pixels for better image display.
         """
         try:
-            sheet_gid = worksheet.id  # numeric gid of the tab
+            sheet_gid = worksheet.id
             requests: List[dict] = []
 
-            # Set pixel width for image columns (E, F, G, I)
             for col in IMAGE_COL_INDEXES:
                 requests.append({
                     "updateDimensionProperties": {
@@ -86,7 +82,6 @@ class GoogleSheetsLogger:
                     }
                 })
 
-            # Set pixel height for many data rows (rows are 0-based; 1 -> visual row 2)
             requests.append({
                 "updateDimensionProperties": {
                     "range": {
@@ -100,15 +95,8 @@ class GoogleSheetsLogger:
                 }
             })
 
-            # IMPORTANT: call batch_update on the Spreadsheet object, not on Worksheet
-            resp = await spreadsheet.batch_update({"requests": requests})
-            logger.info(
-                "Applied column widths and row heights",
-                gid=sheet_gid,
-                col_width_px=IMG_COL_WIDTH_PX,
-                row_height_px=IMG_ROW_HEIGHT_PX,
-                reply_type=str(type(resp)),
-            )
+            await spreadsheet.batch_update({"requests": requests})
+            logger.info("Applied column widths and row heights for images.")
         except Exception:
             logger.exception("Failed to set column/row sizes for images.")
 
@@ -118,8 +106,6 @@ class GoogleSheetsLogger:
         spreadsheet = await agc.open_by_key(self.sheet_id)
         return spreadsheet
 
-    # --- REFACTORED METHOD ---
-    # Now accepts a list of headers to be more reusable
     async def _get_worksheet(
         self, sheet_title: str, headers: List[str]
     ) -> Tuple[Any, Any] | Tuple[None, None]:
@@ -137,7 +123,6 @@ class GoogleSheetsLogger:
             logger.exception("Failed to access worksheet", sheet_title=sheet_title)
             return None, None
 
-    # --- NEW METHOD: Log Vision Analysis ---
     async def log_vision_analysis(
         self, image_unique_id: str, model_name: str, result_data: dict[str, Any]
     ) -> None:
@@ -163,7 +148,6 @@ class GoogleSheetsLogger:
         except Exception:
             logger.exception("Failed to log vision analysis to Google Sheets.")
     
-    # --- NEW METHOD: Log Prompt Enhancement ---
     async def log_prompt_enhancement(
         self,
         user_content: List[dict],
@@ -228,15 +212,17 @@ class GoogleSheetsLogger:
 
             input_image_formulas: List[str] = []
             
+            # <<< ИЗМЕНЕНИЕ: Логируем оригинальные фото, а не обработанные кропы
             if photos_collected := gen_data.get("photos_collected"):
                 for img_data in photos_collected:
-                    processed_files = img_data.get("processed_files", {})
-                    processed_uid = processed_files.get("half_body")
-                    if processed_uid:
-                        base_url = image_cache.get_cached_image_proxy_url(processed_uid)
+                    # Используем 'file_unique_id' из новой упрощенной структуры
+                    original_uid = img_data.get("file_unique_id")
+                    if original_uid:
+                        base_url = image_cache.get_cached_image_proxy_url(original_uid)
                         cache_busting_url = f"{base_url}?v={int(time.time())}"
                         input_image_formulas.append(f'=IMAGE("{cache_busting_url}"; {IMAGE_MODE})')
 
+            # Дополняем пустыми значениями, если фото меньше двух
             input_image_formulas.extend(["-"] * (2 - len(input_image_formulas)))
 
             base_output_url = image_cache.get_cached_image_proxy_url(output_image_unique_id)

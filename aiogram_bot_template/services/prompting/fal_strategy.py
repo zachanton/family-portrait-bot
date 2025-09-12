@@ -55,5 +55,5 @@ class FalStrategy(PromptStrategy):
         # while `guidance_scale` and `num_inference_steps` might be used by others like Fal.
         return {
             "prompt": " ".join(prompt.replace("\n", " ").split()),
-            "temperature": 1, # Good for creative but not chaotic results in Gemini
+            "temperature": 0.3, # Good for creative but not chaotic results in Gemini
         }

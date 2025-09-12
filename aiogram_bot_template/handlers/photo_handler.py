@@ -13,7 +13,8 @@ from aiogram_bot_template.db.db_api.storages import PostgresConnection
 from aiogram_bot_template.db.repo import generations as generations_repo
 from aiogram_bot_template.db.repo import users as users_repo
 from aiogram_bot_template.keyboards.inline.quality import quality_kb
-from aiogram_bot_template.services import image_cache, photo_processing
+from aiogram_bot_template.services import image_cache
+# <<< ИЗМЕНЕНИЕ: photo_processing больше не нужен для предобработки здесь
 from aiogram_bot_template.states.user import Generation
 
 router = Router(name="photo-handler")
@@ -30,8 +31,9 @@ async def proceed_to_quality_selection(
     photos = user_data.get("photos_collected", [])
     roles = [ImageRole.PHOTO_1, ImageRole.PHOTO_2]
 
+    # <<< ИЗМЕНЕНИЕ: Структура DTO теперь проще
     source_images_dto = [
-        (p["original_file_unique_id"], p["original_file_id"], role)
+        (p["file_unique_id"], p["file_id"], role)
         for p, role in zip(photos, roles)
     ]
 
@@ -69,40 +71,23 @@ async def process_photo_input(
         file_io = await bot.download_file(file_info.file_path)
         original_image_bytes = file_io.read()
 
-        # <<< ИЗМЕНЕНИЕ: Получаем объект с тремя кропами
-        processed_result = photo_processing.preprocess_image(original_image_bytes)
-        if not processed_result:
-            await status_msg.edit_text(_("I couldn't detect a clear face. Please send another one."))
-            return
+        # <<< ИЗМЕНЕНИЕ: Удалена вся логика предобработки и нарезки кропов.
+        # Просто кешируем оригинальное фото.
+        unique_id = photo.file_unique_id
+        await image_cache.cache_image_bytes(unique_id, original_image_bytes, "image/jpeg", cache_pool)
+        business_logger.info("Cached original user photo", original_id=unique_id)
 
-        # <<< ИЗМЕНЕНИЕ: Кэшируем все три версии
-        base_unique_id = photo.file_unique_id
-        
-        # Кэшируем оригинал
-        await image_cache.cache_image_bytes(base_unique_id, original_image_bytes, "image/jpeg", cache_pool)
-        
-        # Кэшируем обработанные версии
-        processed_uids = {}
-        for crop_name in ["headshot", "portrait", "half_body"]:
-            uid = f"{base_unique_id}_{crop_name}"
-            image_bytes = getattr(processed_result, crop_name)
-            await image_cache.cache_image_bytes(uid, image_bytes, "image/jpeg", cache_pool)
-            processed_uids[crop_name] = uid
-        
-        business_logger.info("Cached original and all processed image versions", original_id=base_unique_id)
-
-        # <<< ИЗМЕНЕНИЕ: Обновляем FSM новой структурой данных
+        # <<< ИЗМЕНЕНИЕ: Обновляем FSM простой структурой данных
         data = await state.get_data()
         photos_collected = data.get("photos_collected", [])
 
-        if any(p["original_file_unique_id"] == base_unique_id for p in photos_collected):
+        if any(p["file_unique_id"] == unique_id for p in photos_collected):
             await status_msg.edit_text(_("You've already sent this photo. Please send a different one."))
             return
 
         photos_collected.append({
-            "original_file_id": photo.file_id,
-            "original_file_unique_id": base_unique_id,
-            "processed_files": processed_uids, # Сохраняем словарь с ID
+            "file_id": photo.file_id,
+            "file_unique_id": unique_id,
         })
         await state.update_data(photos_collected=photos_collected)
 
