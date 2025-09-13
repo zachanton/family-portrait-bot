@@ -55,6 +55,7 @@ class QualityTierConfig(BaseModel):
     client: str
     model: str
     price: int
+    count: int = 1
     image_payload_key: str = "image_urls"
 
 
@@ -83,7 +84,6 @@ class Settings(BaseSettings):
 
     group_photo: GenerationConfig
 
-    # --- ВОТ ИСПРАВЛЕНИЕ: Возвращаем поле free_trial_whitelist ---
     free_trial_whitelist: list[int] = Field(default_factory=list)
 
     logging_level: int = 20

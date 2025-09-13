@@ -1,59 +1,73 @@
 # aiogram_bot_template/services/prompting/fal_strategy.py
 from typing import Dict, Any
-from .base_strategy import PromptStrategy
+from aiogram.utils.i18n import gettext as _
 
-from typing import Dict, Any
 from .base_strategy import PromptStrategy
+from .styles import (
+    PROMPT_DEFAULT, 
+    PROMPT_RETRO_MOTEL, 
+    PROMPT_GOLDEN_HOUR, 
+    PROMPT_BAROQUE,
+    PROMPT_OLD,
+    PROMPT_PARTY_POLAROID,
+    PROMPT_HOLLYWOOD_GLAMOUR,
+    PROMPT_COLOR_GEL,
+    PROMPT_VOGUE,
+    PROMPT_WET_PLATE,
+    PROMPT_POP_ART
+
+)
+
+
+STYLE_PROMPTS = {
+    "old": PROMPT_OLD,
+    "party_polaroid": PROMPT_PARTY_POLAROID,
+    "hollywood_glamour": PROMPT_HOLLYWOOD_GLAMOUR,
+    "color_gel": PROMPT_COLOR_GEL,
+    "vogue": PROMPT_VOGUE,
+    "retro_motel": PROMPT_RETRO_MOTEL,
+    "golden_hour": PROMPT_GOLDEN_HOUR,
+    "baroque": PROMPT_BAROQUE,
+    "wet_plate": PROMPT_WET_PLATE,
+    "pop_art": PROMPT_POP_ART,
+
+
+}
+
+def get_translated_style_name(style: str) -> str:
+    """Returns a translatable, human-readable name for a given style key."""
+    style_map = {
+        "old": _("19th-century Studio Portrait"),
+        "party_polaroid": _("Party Polaroid Portrait"),
+        "hollywood_glamour": _("1930s Hollywood Glamour Portrait"),
+        "color_gel": _("1980s Color-Gel Studio Portrait"),
+        "vogue": _("Vogue High-Key Editorial Portrait"),
+        "retro_motel": _("Retro Motel 1950s Pastel Portrait"),
+        "golden_hour": _("Golden Hour Backlit Haze Portrait"),
+        "baroque": _("Baroque Chiaroscuro Portrait"),
+        "wet_plate": _("Wet-Plate Collodion Tonality Portrait"),
+        "pop_art": _("Pop-Art Color Block Portrait"),
+
+        
+    }
+    # Fallback for any new styles added that aren't in the map yet
+    return style_map.get(style, style.replace("_", " ").title())
+
 
 class FalStrategy(PromptStrategy):
     """
     Prompt strategy for models like Fal.ai and Google Gemini.
     """
-    def create_group_photo_payload(self) -> Dict[str, Any]:
+    def create_group_photo_payload(self, style: str) -> Dict[str, Any]:
         """
-        Returns a detailed prompt and optimized parameters for generating a group portrait.
-        This prompt is designed to be robust for modern vision models.
+        Returns a detailed prompt and optimized parameters for generating a group portrait,
+        based on the selected style.
         """
-        prompt = (
-            """
-**GOAL:** Produce an advertising-grade **couple family portrait** with **edge-to-edge background** (no gray matte) and **both subjects looking at the camera**.
-
-**HARD CONSTRAINTS**
-
-* **Edit the provided pixels only.** Do **not** create/replace faces, people, hands, clothing, text, or logos.
-* Strictly photorealistic.
-* **Full-bleed output:** fill the canvas to every edge with image content. **No borders, frames, soft ovals, vignettes, flat gray/white panels, gradients, stickers, watermarks, or transparency.**
-* **Exactly two people** visible; no duplicates or mirrored copies.
-
-**IDENTITY LOCK (must match the source)**
-
-* Keep **face width and jaw/chin geometry**; do not slim or reshape faces.
-* Preserve **inter-pupillary distance**, **eyelid shapes** and eye aperture; only minimal iris re-positioning for eye contact (**≤ 10% of iris diameter**, no redraw).
-* Keep **eyebrow thickness/angle**, **nose bridge & tip shape**, **lip fullness & natural corner asymmetry**.
-* Preserve **skin micro-texture** (freckles/pores/stubble); no beauty smoothing.
-* Keep **glasses geometry** (frame size, rim thickness, lens height/width, nose-pad position) and **cap/brim shape & logo orientation** exactly.
-
-**STEP-BY-STEP ACTIONS**
-
-1. **Remove** all feathered mattes/ovals and any drop shadows around cutouts.
-2. **Background:** extend/clone/blur the **background only** into a continuous outdoor nature scene (trees/sky) with shallow depth of field.
-
-   * Background must be **100% opaque and continuous to every edge**; clean hair edges (no halos).
-3. **Recompose (move/scale/rotate/warp only):** place subjects **cheek-to-temple and shoulder-to-shoulder**; woman slightly in front/left, man behind/right; **\~12% overlap** for natural occlusion; align eye lines; slight inward head tilt (\~5°).
-4. **Eye-contact correction:** if a gaze is off-camera, nudge the **iris position only** (see Identity Lock) while preserving eyelids, catchlights, color, and proportions.
-5. **Crop:** **4:5 vertical**, **head-and-shoulders above the collarbones** (no elbows/torsos).
-6. **Color & light:** unify white balance/exposure; warm daylight (golden hour); natural saturation; avoid HDR halos/filters.
-7. **Retouch (subtle, realistic):** reduce glare/noise; mild local contrast/sharpness; keep all identity anchors unchanged.
-
-**OUTPUT**
-
-* **One** PNG, **1536×1920** (4:5), **full-bleed** with **no vignettes/ovals/overlays**.
-* If any matte/vignette remains, **remove it and refill with natural background** so the image is edge-to-edge."""
-        )
+        prompt = STYLE_PROMPTS.get(style, PROMPT_DEFAULT)
         
         # We return a more generic payload. `temperature` is used by Gemini,
         # while `guidance_scale` and `num_inference_steps` might be used by others like Fal.
         return {
-            "prompt": " ".join(prompt.replace("\n", " ").split()),
+            "prompt": prompt,
             "temperature": 0.3, # Good for creative but not chaotic results in Gemini
         }

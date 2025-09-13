@@ -15,7 +15,6 @@ from aiohttp import web
 from redis.asyncio import Redis
 
 from aiogram_bot_template import utils
-# Это правильный импорт объекта настроек
 from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.middlewares.i18n import I18nMiddleware
 from aiogram_bot_template.middlewares import StructLoggingMiddleware
@@ -25,7 +24,6 @@ from aiogram_bot_template.web_handlers.file_cache_server import (
 )
 from aiogram_bot_template.web_handlers.tg_updates import tg_webhook_handler
 
-# --- ИЗМЕНЕНИЕ 1: Импортируем модуль `settings` с псевдонимом `settings_handler` ---
 from aiogram_bot_template.handlers import (
     error,
     feedback_handler,
@@ -34,7 +32,7 @@ from aiogram_bot_template.handlers import (
     payment_handler,
     photo_handler,
     quality_handler,
-    settings as settings_handler, # <--- ВОТ ИСПРАВЛЕНИЕ
+    settings as settings_handler,
     utility,
 )
 
@@ -103,8 +101,7 @@ async def close_db_connections(dp: Dispatcher) -> None:
 def setup_handlers(dp: Dispatcher) -> None:
     dp.include_router(error.router)
     dp.include_router(menu.router)
-    # --- ИЗМЕНЕНИЕ 2: Используем новое имя `settings_handler` для регистрации роутера ---
-    dp.include_router(settings_handler.router) # <--- И ВОТ ИСПРАВЛЕНИЕ
+    dp.include_router(settings_handler.router)
     dp.include_router(utility.router)
     dp.include_router(photo_handler.router)
     dp.include_router(quality_handler.router)
@@ -206,7 +203,6 @@ def main() -> None:
         logger=aiogram_session_logger,
     )
     bot = Bot(
-        # Теперь эта строка будет работать, так как `settings` - это объект конфигурации
         token=settings.bot.token.get_secret_value(),
         session=session,
         default=DefaultBotProperties(parse_mode="HTML"),

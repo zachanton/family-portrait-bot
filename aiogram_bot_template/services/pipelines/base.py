@@ -47,26 +47,20 @@ class BasePipeline(ABC):
 
     async def run_generation(
         self,
-        pipeline_output: PipelineOutput
+        pipeline_output: PipelineOutput,
+        payload_override: dict | None = None,
     ) -> tuple[ai_service.GenerationResult | None, dict | None]:
         """
         Selects the AI client, adapts the payload based on config, and runs generation.
         """
-        await self.update_status_func(_("Generating final portrait... 🎨"))
-
         gen_type_enum = GenerationType(self.gen_data["type"])
         quality_level = self.gen_data["quality_level"]
 
-        generation_config = getattr(settings, gen_type_enum.value)
-        tier_config = generation_config.tiers.get(quality_level)
-        if not tier_config:
-            raise ValueError(f"No config found for {gen_type_enum.value} tier {quality_level}")
-
-        generation_ai_client, model_name = ai_client_factory.get_ai_client_and_model(
+        generation_ai_client, _ = ai_client_factory.get_ai_client_and_model(
             generation_type=gen_type_enum, quality=quality_level
         )
         
-        payload = pipeline_output.request_payload.copy()
+        payload = payload_override or pipeline_output.request_payload.copy()
         
         result, error_meta = await ai_service.generate_image_with_reference(
             payload,

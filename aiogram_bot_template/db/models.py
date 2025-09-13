@@ -54,6 +54,7 @@ class Generation(Base):
     quality_level = Column(Integer, nullable=True)
     trial_type = Column(String(50), nullable=True, index=True)
     seed = Column(BigInteger, nullable=True)
+    style = Column(String(50), nullable=True)
     result_image_unique_id = Column(String, nullable=True)
     result_message_id = Column(BigInteger, nullable=True)
     result_file_id = Column(String, nullable=True)

@@ -9,7 +9,7 @@ class PromptStrategy(ABC):
     """
 
     @abstractmethod
-    def create_group_photo_payload(self) -> Dict[str, Any]:
+    def create_group_photo_payload(self, style: str | None = None) -> Dict[str, Any]:
         """
         Creates the specific prompt and parameters for group photo generation.
         """

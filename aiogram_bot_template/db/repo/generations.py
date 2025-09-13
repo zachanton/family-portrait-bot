@@ -52,8 +52,8 @@ class GenerationLog:
     status: str
     quality_level: int | None = None
     trial_type: str | None = None
-    # --- ИЗМЕНЕНИЕ: Возвращаем поле seed ---
     seed: int | None = None
+    style: str | None = None
     result_image_unique_id: str | None = None
     result_message_id: int | None = None
     result_file_id: str | None = None
@@ -66,21 +66,20 @@ class GenerationLog:
 
 async def create_generation_log(db: PostgresConnection, log_data: GenerationLog) -> int:
     """Logs a single generation attempt and returns its ID."""
-    # --- ИЗМЕНЕНИЕ: Возвращаем seed в SQL-запрос ---
     sql = """
         INSERT INTO generations (
-            request_id, type, status, quality_level, trial_type, seed,
+            request_id, type, status, quality_level, trial_type, seed, style,
             result_image_unique_id, result_message_id, result_file_id, caption,
             control_message_id, error_message, generation_time_ms,
             api_request_payload, api_response_payload
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         RETURNING id;
     """
     result = await db.fetchrow(
         sql,
         (
             log_data.request_id, log_data.type, log_data.status, log_data.quality_level,
-            log_data.trial_type, log_data.seed, log_data.result_image_unique_id,
+            log_data.trial_type, log_data.seed, log_data.style, log_data.result_image_unique_id,
             log_data.result_message_id, log_data.result_file_id,
             log_data.caption, log_data.control_message_id,
             log_data.error_message, log_data.generation_time_ms,

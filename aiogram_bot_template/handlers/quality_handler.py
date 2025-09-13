@@ -7,7 +7,7 @@ from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
 from aiogram.filters import StateFilter
-from aiogram.utils.i18n import gettext as _
+from aiogram.utils.i18n import gettext as _, ngettext
 from contextlib import suppress
 from aiogram.exceptions import TelegramBadRequest
 
@@ -18,7 +18,7 @@ from aiogram_bot_template.handlers import payment_handler
 from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.services import generation_worker
-from aiogram_bot_template.keyboards.inline.quality import quality_kb # Добавим импорт для возврата клавиатуры
+from aiogram_bot_template.keyboards.inline.quality import quality_kb 
 
 router = Router(name="quality-handler")
 
@@ -47,6 +47,11 @@ async def process_quality_selection(
         await cb.message.answer(_("An error occurred. Please start over with /cancel."))
         return
 
+    tier_config = settings.group_photo.tiers.get(quality_val)
+    if not tier_config:
+        await cb.message.answer(_("A configuration error occurred. Please start over with /cancel."))
+        return
+
     with suppress(TelegramBadRequest):
         await cb.message.delete()
 
@@ -54,53 +59,52 @@ async def process_quality_selection(
     
     is_in_whitelist = user_id in settings.free_trial_whitelist
 
+    # Logic for the free tier
     if quality_val == 0:
         has_used_trial = await users_repo.get_user_trial_status(db, user_id)
         
-        # --- ИЗМЕНЕНИЕ: Отклоняем, только если юзер НЕ в вайтлисте И уже использовал попытку ---
         if not is_in_whitelist and has_used_trial:
             await cb.message.answer(
-                _("Your free trial has already been used. Please choose a paid quality level to proceed:"),
+                _("Your free trial has already been used. Please choose a paid package to proceed:"),
                 reply_markup=quality_kb(is_trial_available=False)
             )
             return
 
         status_msg = await cb.message.answer(
-            _("✅ Thank you! Preparing your free request..."), reply_markup=None
+            _("✅ Thank you! Preparing your free portrait..."), reply_markup=None
         )
         
-        # --- ИЗМЕНЕНИЕ: Правильно определяем тип бесплатной попытки для аналитики ---
         trial_type_to_log = "whitelist" if is_in_whitelist else "free_trial"
         await state.update_data(trial_type=trial_type_to_log)
         
-        # Помечаем попытку использованной, только если юзер НЕ в вайтлисте
         if not is_in_whitelist:
             await users_repo.mark_free_trial_as_used(db, user_id)
 
         await scheduler.spawn(
             generation_worker.run_generation_worker(
-                bot=bot,
-                chat_id=cb.message.chat.id,
-                status_message_id=status_msg.message_id,
-                db_pool=db_pool,
-                cache_pool=cache_pool,
-                business_logger=business_logger,
-                state=state,
+                bot=bot, chat_id=cb.message.chat.id, status_message_id=status_msg.message_id,
+                db_pool=db_pool, cache_pool=cache_pool, business_logger=business_logger, state=state,
             )
         )
         return
     
-    # Логика для платных тиров остается прежней
+    # Logic for paid tiers
+    description = ngettext(
+        "Confirm payment to create your unique portrait!",
+        "Confirm payment to create your {count} unique portraits!",
+        tier_config.count
+    ).format(count=tier_config.count)
+
     status_msg = await cb.message.answer(_("✅ Got it! Preparing your payment..."))
     
-    tier_config = settings.group_photo.tiers.get(quality_val)
-    if not tier_config or tier_config.price <= 0:
+    if tier_config.price <= 0:
         await status_msg.edit_text(_("A price configuration error occurred. Please try again later."))
         return
 
     await generations_repo.update_generation_request_status(db, request_id, "awaiting_payment")
     invoice_message = await payment_handler.send_stars_invoice(
-        msg=cb.message, request_id=request_id, generation_type=GenerationType.GROUP_PHOTO, quality=quality_val
+        msg=cb.message, request_id=request_id, generation_type=GenerationType.GROUP_PHOTO, 
+        quality=quality_val, description=description
     )
     if invoice_message:
         await state.update_data(invoice_message_id=invoice_message.message_id, status_message_id=status_msg.message_id)

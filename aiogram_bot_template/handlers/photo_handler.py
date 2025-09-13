@@ -14,7 +14,6 @@ from aiogram_bot_template.db.repo import generations as generations_repo
 from aiogram_bot_template.db.repo import users as users_repo
 from aiogram_bot_template.keyboards.inline.quality import quality_kb
 from aiogram_bot_template.services import image_cache
-# <<< ИЗМЕНЕНИЕ: photo_processing больше не нужен для предобработки здесь
 from aiogram_bot_template.states.user import Generation
 
 router = Router(name="photo-handler")
@@ -24,6 +23,10 @@ async def proceed_to_quality_selection(
     message: Message, state: FSMContext, db_pool: asyncpg.Pool,
     business_logger: structlog.typing.FilteringBoundLogger
 ) -> None:
+    """
+    Finalizes the photo collection step, creates a request in the DB,
+    and shows the quality/package selection keyboard to the user.
+    """
     user_data = await state.get_data()
     db = PostgresConnection(db_pool, logger=business_logger)
     user_id = message.from_user.id
@@ -31,7 +34,6 @@ async def proceed_to_quality_selection(
     photos = user_data.get("photos_collected", [])
     roles = [ImageRole.PHOTO_1, ImageRole.PHOTO_2]
 
-    # <<< ИЗМЕНЕНИЕ: Структура DTO теперь проще
     source_images_dto = [
         (p["file_unique_id"], p["file_id"], role)
         for p, role in zip(photos, roles)
@@ -48,7 +50,7 @@ async def proceed_to_quality_selection(
     is_trial_available = is_in_whitelist or not has_used_trial
 
     await message.answer(
-        _("Excellent, both photos are uploaded. Now, please choose the quality for your portrait."),
+        _("Excellent, both photos are uploaded. Now, please choose your generation package:"),
         reply_markup=quality_kb(is_trial_available=is_trial_available),
     )
     await state.set_state(Generation.waiting_for_quality)
@@ -59,25 +61,27 @@ async def process_photo_input(
     message: Message, state: FSMContext, bot: Bot, cache_pool: Redis,
     db_pool: asyncpg.Pool, business_logger: structlog.typing.FilteringBoundLogger
 ) -> None:
+    """Handles receiving photos one by one using a robust download method."""
     photo = message.photo[-1]
     status_msg = await message.answer(_("Processing your photo... ⏳"))
 
     try:
+        # --- CORRECTED & ROBUST FILE HANDLING ---
+        # Step 1: Get the file info object with a temporary file_path
         file_info = await bot.get_file(photo.file_id)
         if not file_info.file_path:
             await status_msg.edit_text(_("I couldn't get file information. Please try sending the photo again."))
             return
 
+        # Step 2: Immediately download the file using the fresh file_path
         file_io = await bot.download_file(file_info.file_path)
         original_image_bytes = file_io.read()
+        # --- END OF CORRECTION ---
 
-        # <<< ИЗМЕНЕНИЕ: Удалена вся логика предобработки и нарезки кропов.
-        # Просто кешируем оригинальное фото.
         unique_id = photo.file_unique_id
         await image_cache.cache_image_bytes(unique_id, original_image_bytes, "image/jpeg", cache_pool)
         business_logger.info("Cached original user photo", original_id=unique_id)
 
-        # <<< ИЗМЕНЕНИЕ: Обновляем FSM простой структурой данных
         data = await state.get_data()
         photos_collected = data.get("photos_collected", [])
 

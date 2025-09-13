@@ -14,3 +14,7 @@ class FeedbackCallback(CallbackData, prefix="feedback"):
 class RetryGenerationCallback(CallbackData, prefix="retry_gen"):
     """Callback to retry a request with a new seed."""
     request_id: int
+
+class StyleCallback(CallbackData, prefix="style"):
+    """Callback for selecting a generation style."""
+    style_id: str
