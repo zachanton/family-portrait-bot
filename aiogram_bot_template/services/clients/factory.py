@@ -12,6 +12,8 @@ from .local_ai_client import LocalGenerationClient
 from .mock_ai_client import MockAIClient
 from .fal_async_client import FalAsyncClient
 from .google_ai_client import GoogleAIClient
+# --- NEW: Import the new client ---
+from .openrouter_client import OpenRouterClient
 
 _PROVIDER_CONFIG = {
     "together": {"api_key_env": "TOGETHER_API_KEY", "base_url": str(settings.api_urls.together)},
@@ -24,7 +26,8 @@ _CLIENT_CLASSES: dict[str, type[Any]] = {
     "local": LocalGenerationClient,
     "fal": FalAsyncClient,
     "google": GoogleAIClient,
-    "openrouter": AsyncOpenAI, 
+    "openrouter": AsyncOpenAI,
+    "openrouter_generation": OpenRouterClient,
     **dict.fromkeys(_PROVIDER_CONFIG, AsyncOpenAI),
 }
 
@@ -50,6 +53,7 @@ def _create_client_instance(client_name: str) -> Any:
             raise RuntimeError(f"Missing API key for provider='{client_name}'. Set env var {provider_config['api_key_env']}.")
         return client_class(api_key=api_key, base_url=provider_config["base_url"])
 
+    # For clients like Fal, Mock, and our new OpenRouterClient, just instantiate
     return client_class()
 
 def get_ai_client(client_name: str) -> Any:

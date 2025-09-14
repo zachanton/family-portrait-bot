@@ -31,6 +31,7 @@ from aiogram_bot_template.services.prompting.factory import get_prompt_strategy
 from aiogram_bot_template.services.prompting.fal_strategy import STYLE_PROMPTS, get_translated_style_name
 
 
+# ... (вспомогательные функции _send_debug_image и _calculate_and_update_similarity_caption остаются без изменений) ...
 async def _send_debug_image(
     bot: Bot, chat_id: int, redis: Redis, image_uid: str, caption: str
 ):
@@ -118,6 +119,7 @@ async def _calculate_and_update_similarity_caption(
     except Exception:
         log.exception("An error occurred in the background similarity scoring task.")
 
+
 async def run_generation_worker(
     bot: Bot,
     chat_id: int,
@@ -149,7 +151,7 @@ async def run_generation_worker(
         
         if tier_config.count > 0:
             styles_to_use = random.sample(available_styles * tier_config.count, tier_config.count)
-            styles_to_use = ['party_polaroid']
+            styles_to_use = ['retro_motel']
             for style in styles_to_use:
                 generation_tasks.append({"style": style, "seed": random.randint(0, 2**32 - 1)})
         
@@ -207,6 +209,8 @@ async def run_generation_worker(
             current_payload["prompt"] = final_prompt
             current_payload["seed"] = task["seed"]
 
+            log_task.info("Final prompt prepared for generation", final_prompt=final_prompt)
+
             if generation_count > 1:
                 await status.update(_("🎨 Generating portrait {current} of {total}...").format(
                     current=current_iteration, total=generation_count
@@ -258,8 +262,7 @@ async def run_generation_worker(
                 generation_time_ms=result.generation_time_ms, 
                 api_request_payload=result.request_payload,
                 api_response_payload=result.response_payload, 
-                # --- FIX: This line now works correctly ---
-                enhanced_prompt=final_prompt if is_enhanced else None,
+                enhanced_prompt=identity_lock_text if is_enhanced else None,
                 result_image_unique_id=result_image_unique_id,
                 result_message_id=last_sent_message.message_id, result_file_id=result_file_id,
                 caption=caption_text,
