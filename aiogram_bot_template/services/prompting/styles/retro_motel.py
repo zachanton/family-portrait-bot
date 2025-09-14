@@ -8,13 +8,7 @@ HARD CONSTRAINTS
 * Full-bleed output: fill the canvas to every edge with image content. No borders, frames, soft ovals, added vignettes, stickers, watermarks, paper textures, or transparency.
 * Exactly two people visible; no duplicates or mirrored copies; no other recognizable faces in the background.
 
-IDENTITY LOCK (must match the source)
-* Keep face width and jaw/chin geometry; do not slim or reshape faces.
-* Preserve inter-pupillary distance, eyelid shapes and eye aperture; only minimal iris re-positioning for eye contact (≤ 10% of iris diameter, no redraw).
-* Keep eyebrow thickness/angle, nose bridge & tip shape, lip fullness & natural corner asymmetry.
-* Preserve skin micro-texture (freckles/pores/stubble); no beauty smoothing.
-* Keep ear shape and earring pierce positions; jewelry may be simplified but not relocated.
-* If glasses are present, preserve frame geometry (size, rim thickness, lens proportions, nose-pad position).
+{{IDENTITY_LOCK_DATA}}
 
 STYLE TARGET — “Retro Motel 1950s Pastel”
 * Background: pastel motel vibe — painted stucco or tiled wall in mint/salmon/robin’s-egg/butter-cream; allow crisp geometric shadows from venetian blinds or signage edges on the background only. No readable signage or brand marks. 100% opaque to every edge.

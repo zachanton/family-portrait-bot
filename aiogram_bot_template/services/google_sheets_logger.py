@@ -123,31 +123,7 @@ class GoogleSheetsLogger:
             logger.exception("Failed to access worksheet", sheet_title=sheet_title)
             return None, None
 
-    async def log_vision_analysis(
-        self, image_unique_id: str, model_name: str, result_data: dict[str, Any]
-    ) -> None:
-        if not self._agcm:
-            return
-        try:
-            sheet_title = "Vision Analysis Log"
-            headers = ["Timestamp", "Image", "Model", "Vision API Response JSON"]
-            _, worksheet = await self._get_worksheet(sheet_title, headers)
-            if not worksheet:
-                return
-
-            base_url = image_cache.get_cached_image_proxy_url(image_unique_id)
-            image_formula = f'=IMAGE("{base_url}?v={int(time.time())}"; 1)'
-
-            row_data = [
-                datetime.now().isoformat(),
-                image_formula,
-                model_name,
-                json.dumps(result_data, indent=2, ensure_ascii=False),
-            ]
-            await worksheet.append_row(row_data, value_input_option="USER_ENTERED")
-        except Exception:
-            logger.exception("Failed to log vision analysis to Google Sheets.")
-    
+    # --- NEW METHOD ---
     async def log_prompt_enhancement(
         self,
         user_content: List[dict],
@@ -155,6 +131,7 @@ class GoogleSheetsLogger:
         model_name: str,
         result_model: BaseModel,
     ) -> None:
+        """Logs the input and output of a prompt enhancement call to a dedicated sheet."""
         if not self._agcm:
             return
         try:
@@ -185,6 +162,7 @@ class GoogleSheetsLogger:
             await worksheet.append_row(row_data, value_input_option="USER_ENTERED")
         except Exception:
             logger.exception("Failed to log prompt enhancement to Google Sheets.")
+    # --- END NEW METHOD ---
 
     async def log_generation(
         self,
@@ -212,17 +190,14 @@ class GoogleSheetsLogger:
 
             input_image_formulas: List[str] = []
             
-            # <<< ИЗМЕНЕНИЕ: Логируем оригинальные фото, а не обработанные кропы
             if photos_collected := gen_data.get("photos_collected"):
                 for img_data in photos_collected:
-                    # Используем 'file_unique_id' из новой упрощенной структуры
                     original_uid = img_data.get("file_unique_id")
                     if original_uid:
                         base_url = image_cache.get_cached_image_proxy_url(original_uid)
                         cache_busting_url = f"{base_url}?v={int(time.time())}"
                         input_image_formulas.append(f'=IMAGE("{cache_busting_url}"; {IMAGE_MODE})')
 
-            # Дополняем пустыми значениями, если фото меньше двух
             input_image_formulas.extend(["-"] * (2 - len(input_image_formulas)))
 
             base_output_url = image_cache.get_cached_image_proxy_url(output_image_unique_id)

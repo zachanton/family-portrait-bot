@@ -1,7 +1,6 @@
 # aiogram_bot_template/services/generation_worker.py
 import asyncio
 import random
-import re
 import uuid
 from contextlib import suppress
 
@@ -24,72 +23,12 @@ from aiogram_bot_template.services import (
     prompt_enhancer,
     similarity_scorer,
 )
-from aiogram_bot_template.services.prompt_enhancer import EnhancedPromptData
 from aiogram_bot_template.services.google_sheets_logger import GoogleSheetsLogger
 from aiogram_bot_template.services.pipelines.group_photo import GroupPhotoPipeline
 from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.utils.status_manager import StatusMessageManager
 from aiogram_bot_template.services.prompting.factory import get_prompt_strategy
 from aiogram_bot_template.services.prompting.fal_strategy import STYLE_PROMPTS, get_translated_style_name
-
-
-def _format_enhanced_parts(data: EnhancedPromptData) -> str:
-    """Formats the structured data from the Pydantic model into a readable text block."""
-    
-    def format_identity_lock(person_data, title):
-        lines = [
-            title,
-            f"* Overall Impression & Essence: {person_data.overall_impression}",
-            f"* Face geometry: {person_data.face_geometry}",
-            "* Eyes:",
-            f"  * Color: {person_data.eyes.color}",
-            f"  * Shape: {person_data.eyes.shape}",
-            f"* Eyebrows: {person_data.eyebrows}",
-            "* Nose (Forensic Breakdown):",
-            f"  * Bridge (Dorsum): {person_data.nose.bridge}",
-            f"  * Tip (Apex): {person_data.nose.tip}",
-            f"  * Nostrils: {person_data.nose.nostrils}",
-            f"* Lips: {person_data.lips}",
-            f"* Skin: {person_data.skin}",
-            f"* Hair: {person_data.hair}",
-            f"* Unique details: {person_data.unique_details}",
-        ]
-        return "\n".join(lines)
-
-    person_a_text = format_identity_lock(
-        data.person_a, "IDENTITY LOCK — PERSON A (woman, on the left in the source)"
-    )
-    person_b_text = format_identity_lock(
-        data.person_b, "IDENTITY LOCK — PERSON B (man, on the right in the source)"
-    )
-    
-    cleanup_text = "\n".join([
-        "SOURCE-SPECIFIC CLEANUP",
-        f"* {data.cleanup.artifacts}",
-        f"* {data.cleanup.seam}",
-        f"* {data.cleanup.logos}",
-    ])
-
-    return f"{person_a_text}\n\n{person_b_text}\n\n{cleanup_text}"
-
-
-def _construct_final_prompt(base_prompt: str, enhanced_data: EnhancedPromptData) -> str:
-    """
-    Surgically replaces the generic IDENTITY LOCK section in the base prompt
-    with detailed, formatted text from the structured data.
-    """
-    pattern = re.compile(r"IDENTITY LOCK \(must match the source\).*?STYLE TARGET", re.DOTALL | re.IGNORECASE)
-    
-    formatted_parts = _format_enhanced_parts(enhanced_data)
-    
-    replacement_text = f"{formatted_parts}\n\nSTYLE TARGET"
-
-    final_prompt, num_replacements = pattern.subn(replacement_text, base_prompt, count=1)
-
-    if num_replacements == 0:
-        return base_prompt
-
-    return final_prompt
 
 
 async def _send_debug_image(
@@ -188,7 +127,6 @@ async def run_generation_worker(
     cache_pool: Redis,
     state: FSMContext,
 ) -> None:
-    # Most of this function remains the same, only the enhancement part changes
     user_data = await state.get_data()
     request_id = user_data.get("request_id")
     quality_level = user_data.get("quality")
@@ -209,11 +147,9 @@ async def run_generation_worker(
         generation_tasks = []
         available_styles = list(STYLE_PROMPTS.keys())
         
-        if quality_level == 0:
-            style = "golden_hour" if trial_type == "free_trial" else random.choice(available_styles)
-            generation_tasks.append({"style": style, "seed": 42})
-        else:
+        if tier_config.count > 0:
             styles_to_use = random.sample(available_styles * tier_config.count, tier_config.count)
+            styles_to_use = ['party_polaroid']
             for style in styles_to_use:
                 generation_tasks.append({"style": style, "seed": random.randint(0, 2**32 - 1)})
         
@@ -230,16 +166,29 @@ async def run_generation_worker(
         pipeline = GroupPhotoPipeline(bot, gen_data, log, status.update, cache_pool)
         pipeline_output = await pipeline.prepare_data()
 
-        composite_image_url = None
-        if pipeline_output.request_payload.get("image_urls"):
-            composite_image_url = pipeline_output.request_payload["image_urls"][0]
+        composite_image_url = pipeline_output.request_payload.get("image_urls", [None])[0]
         
         if composite_uid := pipeline_output.metadata.get("composite_uid"):
             await _send_debug_image(
                 bot=bot, chat_id=chat_id, redis=cache_pool,
                 image_uid=composite_uid, caption="DEBUG: Composite image (input for AI)",
             )
+
+        await status.update(_("✍️ Analyzing facial features..."))
+        enhanced_data = await prompt_enhancer.get_enhanced_prompt_data(image_url=composite_image_url)
         
+        is_enhanced = enhanced_data is not None
+        
+        identity_lock_text = ""
+        if is_enhanced:
+            identity_lock_text = prompt_enhancer.format_enhanced_data_as_text(enhanced_data)
+            log.info("Prompt enhancer data prepared.", text_length=len(identity_lock_text))
+            await status.update(_("✅ Analysis complete! Starting generation..."))
+        else:
+            log.warning("Could not enhance prompt with structured data. Fallback to generic prompts.")
+            identity_lock_text = "IDENTITY LOCK (must match the source)"
+
+
         last_sent_message = None
         
         for i, task in enumerate(generation_tasks):
@@ -249,21 +198,9 @@ async def run_generation_worker(
 
             strategy = get_prompt_strategy(tier_config.client)
             style_payload = strategy.create_group_photo_payload(style=task["style"])
-            base_prompt = style_payload.get("prompt", "")
-
-            final_prompt = base_prompt
-            enhanced_data = await prompt_enhancer.enhance_prompt(
-                image_url=composite_image_url,
-                base_prompt=base_prompt
-            )
             
-            is_enhanced = enhanced_data is not None
-            if is_enhanced:
-                final_prompt = _construct_final_prompt(base_prompt, enhanced_data)
-                log_task.info("Prompt enhanced with structured data", new_prompt_len=len(final_prompt))
-                await status.update(_("✍️ Adapting style for your photo..."))
-            else:
-                log_task.warning("Could not enhance prompt with structured data, using original style prompt.")
+            prompt_template = style_payload.get("prompt", "")
+            final_prompt = prompt_template.replace("{{IDENTITY_LOCK_DATA}}", identity_lock_text)
 
             current_payload = pipeline_output.request_payload.copy()
             current_payload.update(style_payload)
@@ -321,6 +258,7 @@ async def run_generation_worker(
                 generation_time_ms=result.generation_time_ms, 
                 api_request_payload=result.request_payload,
                 api_response_payload=result.response_payload, 
+                # --- FIX: This line now works correctly ---
                 enhanced_prompt=final_prompt if is_enhanced else None,
                 result_image_unique_id=result_image_unique_id,
                 result_message_id=last_sent_message.message_id, result_file_id=result_file_id,

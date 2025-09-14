@@ -1,17 +1,22 @@
 # aiogram_bot_template/keyboards/inline/quality.py
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.utils.i18n import gettext as _
+from aiogram.utils.i18n import gettext as _, ngettext
 from aiogram_bot_template.data.settings import settings
 
 def _get_translated_tier_name(q: int, count: int) -> str:
     """Returns a translatable string for a given quality tier."""
     if q == 0:
-        return _("🎁 Free Trial (1 Portrait)")
+        # Use ngettext for proper pluralization on the free tier as well
+        return ngettext(
+            "🎁 Free Trial ({count} Portrait)",
+            "🎁 Free Trial ({count} Portraits)",
+            count
+        ).format(count=count)
     
     # Using ngettext for proper pluralization
-    return _(
-        "✨ {count} Random Style",
-        "✨ {count} Random Styles",
+    return ngettext(
+        "✨ {count} Random Portrait",
+        "✨ {count} Random Portraits",
         count
     ).format(count=count)
 
@@ -27,6 +32,7 @@ def quality_kb(is_trial_available: bool) -> InlineKeyboardMarkup:
         if q == 0:
             if not is_trial_available:
                 continue
+            # Pass the count to the translation function
             label = _get_translated_tier_name(q, tier.count)
             rows.append([InlineKeyboardButton(text=label, callback_data=f"quality:{q}")])
         else:

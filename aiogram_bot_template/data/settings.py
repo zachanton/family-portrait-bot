@@ -49,6 +49,9 @@ class ApiUrls(BaseModel):
     bentoml: AnyHttpUrl = "http://bento-local-ml:3000"
     fal_api_key: SecretStr | None = None
     google_api_key: SecretStr | None = None
+    # --- OpenRouter Settings ---
+    openrouter: AnyHttpUrl = "https://openrouter.ai/api/v1"
+    openrouter_api_key: SecretStr | None = None
 
 
 class QualityTierConfig(BaseModel):

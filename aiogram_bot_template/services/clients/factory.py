@@ -24,6 +24,7 @@ _CLIENT_CLASSES: dict[str, type[Any]] = {
     "local": LocalGenerationClient,
     "fal": FalAsyncClient,
     "google": GoogleAIClient,
+    "openrouter": AsyncOpenAI, 
     **dict.fromkeys(_PROVIDER_CONFIG, AsyncOpenAI),
 }
 
@@ -32,6 +33,15 @@ def _create_client_instance(client_name: str) -> Any:
     client_class = _CLIENT_CLASSES.get(client_name)
     if not client_class:
         raise ValueError(f"Unknown client type specified in config: '{client_name}'")
+
+    if client_name == "openrouter":
+        if not settings.api_urls.openrouter_api_key:
+            raise RuntimeError("Missing API key for OpenRouter. Set env var API_URLS__OPENROUTER_API_KEY.")
+        
+        return client_class(
+            api_key=settings.api_urls.openrouter_api_key.get_secret_value(),
+            base_url=str(settings.api_urls.openrouter)
+        )
 
     if client_name in _PROVIDER_CONFIG:
         provider_config = _PROVIDER_CONFIG[client_name]
@@ -42,21 +52,13 @@ def _create_client_instance(client_name: str) -> Any:
 
     return client_class()
 
-# --- NEW ---
 def get_ai_client(client_name: str) -> Any:
     """
     Creates an AI client instance for a given client name.
-    
-    Args:
-        client_name: The name of the client (e.g., 'openai', 'google').
-
-    Returns:
-        An initialized AI client instance.
     """
     client_lower = client_name.lower()
     client_instance = _create_client_instance(client_lower)
     return client_instance
-# --- END NEW ---
 
 def get_ai_client_and_model(
     *,
@@ -67,20 +69,14 @@ def get_ai_client_and_model(
     Creates an AI client instance and returns it along with the model name,
     based on the generation type and quality tier from settings.
     """
-    client_name, model_name = "", ""
-
     generation_config = getattr(settings, generation_type.value, None)
-
     if not generation_config or not hasattr(generation_config, "tiers"):
          raise ValueError(f"Configuration for generation type '{generation_type.value}' not found in settings.")
 
     tier_config = generation_config.tiers.get(quality)
-    if tier_config:
-        client_name, model_name = tier_config.client, tier_config.model
-
-    if not client_name or not model_name:
+    if not tier_config:
         raise ValueError(f"Could not find a valid client/model configuration for the request: "
                          f"type='{generation_type}', quality='{quality}'.")
 
-    client_instance = _create_client_instance(client_name.lower())
-    return client_instance, model_name
+    client_instance = _create_client_instance(tier_config.client.lower())
+    return client_instance, tier_config.model
