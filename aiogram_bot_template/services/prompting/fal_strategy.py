@@ -68,6 +68,6 @@ class FalStrategy(PromptStrategy):
         # We return a more generic payload. `temperature` is used by Gemini,
         # while `guidance_scale` and `num_inference_steps` might be used by others like Fal.
         return {
-            "prompt": prompt,
+            "prompt": prompt.replace('\n', ' '),
             "temperature": 0.3, # Good for creative but not chaotic results in Gemini
         }

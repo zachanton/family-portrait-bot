@@ -42,6 +42,22 @@ def _create_client_instance(client_name: str) -> Any:
 
     return client_class()
 
+# --- NEW ---
+def get_ai_client(client_name: str) -> Any:
+    """
+    Creates an AI client instance for a given client name.
+    
+    Args:
+        client_name: The name of the client (e.g., 'openai', 'google').
+
+    Returns:
+        An initialized AI client instance.
+    """
+    client_lower = client_name.lower()
+    client_instance = _create_client_instance(client_lower)
+    return client_instance
+# --- END NEW ---
+
 def get_ai_client_and_model(
     *,
     generation_type: GenerationType,

@@ -64,6 +64,9 @@ class Generation(Base):
     generation_time_ms = Column(Integer, nullable=True)
     api_request_payload = Column(JSON, nullable=True)
     api_response_payload = Column(JSON, nullable=True)
+    # --- NEW ---
+    enhanced_prompt = Column(Text, nullable=True)
+    # --- END NEW ---
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     request = relationship("GenerationRequest", back_populates="generations")

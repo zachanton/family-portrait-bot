@@ -67,6 +67,12 @@ class GoogleConfig(BaseModel):
     sheet_id: str | None = None
     service_account_creds_json: SecretStr | None = None
 
+class PromptEnhancerConfig(BaseModel):
+    """Configuration for the prompt enhancement service."""
+    enabled: bool = True
+    client: str = "openai"
+    model: str = "gpt-4o-mini"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -83,6 +89,8 @@ class Settings(BaseSettings):
     api_urls: ApiUrls = Field(default_factory=ApiUrls)
 
     group_photo: GenerationConfig
+
+    prompt_enhancer: PromptEnhancerConfig = Field(default_factory=PromptEnhancerConfig)
 
     free_trial_whitelist: list[int] = Field(default_factory=list)
 

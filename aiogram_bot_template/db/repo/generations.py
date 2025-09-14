@@ -63,6 +63,8 @@ class GenerationLog:
     generation_time_ms: int | None = None
     api_request_payload: dict[str, Any] | None = None
     api_response_payload: dict[str, Any] | None = None
+    enhanced_prompt: str | None = None
+
 
 async def create_generation_log(db: PostgresConnection, log_data: GenerationLog) -> int:
     """Logs a single generation attempt and returns its ID."""
@@ -71,8 +73,8 @@ async def create_generation_log(db: PostgresConnection, log_data: GenerationLog)
             request_id, type, status, quality_level, trial_type, seed, style,
             result_image_unique_id, result_message_id, result_file_id, caption,
             control_message_id, error_message, generation_time_ms,
-            api_request_payload, api_response_payload
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            api_request_payload, api_response_payload, enhanced_prompt
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
         RETURNING id;
     """
     result = await db.fetchrow(
@@ -83,7 +85,8 @@ async def create_generation_log(db: PostgresConnection, log_data: GenerationLog)
             log_data.result_message_id, log_data.result_file_id,
             log_data.caption, log_data.control_message_id,
             log_data.error_message, log_data.generation_time_ms,
-            log_data.api_request_payload, log_data.api_response_payload
+            log_data.api_request_payload, log_data.api_response_payload,
+            log_data.enhanced_prompt
         ),
     )
     return result.data["id"]
