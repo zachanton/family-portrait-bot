@@ -40,7 +40,7 @@ class GenerationRequest(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     user = relationship("User", back_populates="requests")
-    generations = relationship("Generation", back_populates="request", cascade="all, delete-orphan")
+    generations = relationship("Generation", back_populates="request", cascade="all, delete-orphan", foreign_keys="[Generation.request_id]")
     source_images = relationship("GenerationSourceImage", back_populates="request", cascade="all, delete-orphan")
     payment = relationship("Payment", back_populates="request", uselist=False)
 
@@ -64,13 +64,15 @@ class Generation(Base):
     generation_time_ms = Column(Integer, nullable=True)
     api_request_payload = Column(JSON, nullable=True)
     api_response_payload = Column(JSON, nullable=True)
-    # --- NEW ---
     enhanced_prompt = Column(Text, nullable=True)
-    # --- END NEW ---
+    sequence_index = Column(Integer, nullable=True, comment="The 0-indexed position of this image in a photoshoot sequence.")
+    source_generation_id = Column(Integer, ForeignKey("generations.id"), nullable=True, comment="The ID of the previous generation in the sequence, used as a source.")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    request = relationship("GenerationRequest", back_populates="generations")
+    request = relationship("GenerationRequest", back_populates="generations", foreign_keys=[request_id])
     feedback = relationship("Feedback", back_populates="generation", uselist=False, cascade="all, delete-orphan")
+    source_generation = relationship("Generation", remote_side=[id], backref="derived_generations", uselist=False)
+
 
 class GenerationSourceImage(Base):
     """Stores a source image for a specific generation request."""

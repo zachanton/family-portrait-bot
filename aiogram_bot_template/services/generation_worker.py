@@ -146,17 +146,13 @@ async def run_generation_worker(
         if not tier_config:
             raise ValueError(f"Tier configuration for quality level {quality_level} not found.")
 
-        generation_tasks = []
-        available_styles = list(STYLE_PROMPTS.keys())
-        
-        if tier_config.count > 0:
-            styles_to_use = random.sample(available_styles * tier_config.count, tier_config.count)
-            styles_to_use = ['retro_motel']
-            for style in styles_to_use:
-                generation_tasks.append({"style": style, "seed": random.randint(0, 2**32 - 1)})
-        
-        generation_count = len(generation_tasks)
-        log.info("Generation plan created", count=generation_count, tasks=generation_tasks)
+        generation_count = tier_config.count
+        if generation_count <= 0:
+            raise ValueError("Tier count must be a positive number.")
+            
+        chosen_style = random.choice(list(STYLE_PROMPTS.keys()))
+        chosen_style = 'golden_hour'
+        log.info("Photoshoot plan created", style=chosen_style, count=generation_count)
 
         db_data = await generations_repo.get_request_details_with_sources(db, request_id)
         if not db_data:
@@ -165,121 +161,123 @@ async def run_generation_worker(
         gen_data = {**user_data, **db_data, "type": GenerationType.GROUP_PHOTO.value, "quality_level": quality_level}
         await generations_repo.update_generation_request_status(db, request_id, "processing")
 
+        # --- Step 1: Prepare composite and get initial Identity Lock (runs once) ---
         pipeline = GroupPhotoPipeline(bot, gen_data, log, status.update, cache_pool)
         pipeline_output = await pipeline.prepare_data()
-
         composite_image_url = pipeline_output.request_payload.get("image_urls", [None])[0]
         
         if composite_uid := pipeline_output.metadata.get("composite_uid"):
-            await _send_debug_image(
-                bot=bot, chat_id=chat_id, redis=cache_pool,
-                image_uid=composite_uid, caption="DEBUG: Composite image (input for AI)",
-            )
+            await _send_debug_image(bot=bot, chat_id=chat_id, redis=cache_pool, image_uid=composite_uid, caption="DEBUG: Composite image (input for AI)")
 
-        await status.update(_("✍️ Analyzing facial features..."))
-        enhanced_data = await prompt_enhancer.get_enhanced_prompt_data(image_url=composite_image_url)
+        await status.update(_("✍️ Analyzing facial features for the first shot..."))
+        initial_identity_data = await prompt_enhancer.get_enhanced_prompt_data(image_url=composite_image_url)
+        identity_lock_text = prompt_enhancer.format_enhanced_data_as_text(initial_identity_data) if initial_identity_data else "IDENTITY LOCK (must match the source)"
+        log.info("Initial identity lock created.", text_length=len(identity_lock_text))
         
-        is_enhanced = enhanced_data is not None
-        
-        identity_lock_text = ""
-        if is_enhanced:
-            identity_lock_text = prompt_enhancer.format_enhanced_data_as_text(enhanced_data)
-            log.info("Prompt enhancer data prepared.", text_length=len(identity_lock_text))
-            await status.update(_("✅ Analysis complete! Starting generation..."))
-        else:
-            log.warning("Could not enhance prompt with structured data. Fallback to generic prompts.")
-            identity_lock_text = "IDENTITY LOCK (must match the source)"
-
-
+        # --- Step 2: Loop to generate the photoshoot sequence ---
+        last_successful_result = None
         last_sent_message = None
+        source_image_url = composite_image_url
+        source_generation_id = None
         
-        for i, task in enumerate(generation_tasks):
+        for i in range(generation_count):
             current_iteration = i + 1
-            log_task = log.bind(style=task["style"], seed=task["seed"])
-            log_task.info(f"Starting generation {current_iteration}/{generation_count}")
-
+            log_task = log.bind(style=chosen_style, sequence=f"{current_iteration}/{generation_count}")
+            log_task.info("Starting generation of next frame.")
+            
+            await status.update(_("🎨 Generating shot {current} of {total}...").format(current=current_iteration, total=generation_count))
+            
             strategy = get_prompt_strategy(tier_config.client)
-            style_payload = strategy.create_group_photo_payload(style=task["style"])
-            
-            prompt_template = style_payload.get("prompt", "")
-            final_prompt = prompt_template.replace("{{IDENTITY_LOCK_DATA}}", identity_lock_text)
-
             current_payload = pipeline_output.request_payload.copy()
-            current_payload.update(style_payload)
-            current_payload["prompt"] = final_prompt
-            current_payload["seed"] = task["seed"]
+            current_payload["image_urls"] = [source_image_url]
 
-            log_task.info("Final prompt prepared for generation", final_prompt=final_prompt)
-
-            if generation_count > 1:
-                await status.update(_("🎨 Generating portrait {current} of {total}...").format(
-                    current=current_iteration, total=generation_count
-                ))
+            if i == 0:
+                # FIRST FRAME: Use the initial style prompt with the pre-computed identity lock.
+                style_payload = strategy.create_group_photo_payload(style=chosen_style)
+                prompt_template = style_payload.get("prompt", "")
+                final_prompt = prompt_template.replace("{{IDENTITY_LOCK_DATA}}", identity_lock_text)
+                current_payload.update(style_payload)
             else:
-                await status.update(_("🎨 Generating your portrait..."))
+                # SUBSEQUENT FRAMES: Use the advanced continuation prompt.
+                if not source_image_url:
+                    log_task.warning("Skipping frame as previous one failed.")
+                    continue
+                
+                await status.update(_("🎬 Directing the next shot..."))
+                translated_style_name = get_translated_style_name(chosen_style)
+                
+                # Fetch new identity and pose data in parallel based on the LAST generated image.
+                identity_task = prompt_enhancer.get_enhanced_prompt_data(source_image_url)
+                next_frame_task = prompt_enhancer.get_next_frame_data(source_image_url, translated_style_name)
+                refreshed_identity_data, next_frame_data = await asyncio.gather(identity_task, next_frame_task)
+
+                if refreshed_identity_data:
+                    identity_lock_text = prompt_enhancer.format_enhanced_data_as_text(refreshed_identity_data)
+                    log_task.info("Identity lock refreshed for sequence.", text_length=len(identity_lock_text))
+
+                if not next_frame_data:
+                    log_task.warning("Failed to get next frame data. Falling back to simple style prompt.")
+                    style_payload = strategy.create_group_photo_payload(style=chosen_style)
+                    prompt_template = style_payload.get("prompt", "")
+                    final_prompt = prompt_template.replace("{{IDENTITY_LOCK_DATA}}", identity_lock_text)
+                    current_payload.update(style_payload)
+                else:
+                    pose_composition_text = prompt_enhancer.format_next_frame_data_as_text(next_frame_data)
+                    continuation_payload = strategy.create_photoshoot_continuation_payload()
+                    prompt_template = continuation_payload.get("prompt", "")
+                    prompt_with_identity = prompt_template.replace("{{IDENTITY_LOCK_DATA}}", identity_lock_text)
+                    final_prompt = prompt_with_identity.replace("{{POSE_AND_COMPOSITION_DATA}}", pose_composition_text)
+                    current_payload.update(continuation_payload)
+
+            current_payload["prompt"] = final_prompt
+            current_payload["seed"] = random.randint(0, 2**32 - 1)
             
+            log_task.info("Final prompt prepared for generation", final_prompt_summary=final_prompt)
+
             result, error_meta = await pipeline.run_generation(
                 pipeline_output, payload_override=current_payload
             )
 
             if not result:
                 log_task.error("AI service failed for one of the generations", meta=error_meta)
-                if current_iteration == generation_count:
-                     await status.update(_("There was an issue with the last generation, but here are the previous ones!"))
-                     await asyncio.sleep(3)
                 continue
 
-            translated_style_name = get_translated_style_name(task["style"])
-            caption_text = _("Style: {style_name}").format(style_name=translated_style_name)
-
-            photo = BufferedInputFile(result.image_bytes, f"group_photo_{current_iteration}.png")
-            last_sent_message = await bot.send_photo(
-                chat_id=chat_id, 
-                photo=photo, 
-                caption=caption_text
+            last_successful_result = result
+            translated_style_name = get_translated_style_name(chosen_style)
+            caption_text = _("Style: {style_name} (Shot {current}/{total})").format(
+                style_name=translated_style_name, current=current_iteration, total=generation_count
             )
 
-            asyncio.create_task(
-                _calculate_and_update_similarity_caption(
-                    bot=bot, chat_id=chat_id, message_id=last_sent_message.message_id,
-                    original_caption=caption_text, cache_pool=cache_pool, log=log_task,
-                    gen_data=gen_data, result_image_bytes=result.image_bytes,
-                )
-            )
-            
+            photo = BufferedInputFile(result.image_bytes, f"photoshoot_{current_iteration}.png")
+            last_sent_message = await bot.send_photo(chat_id=chat_id, photo=photo, caption=caption_text)
+
             result_image_unique_id = last_sent_message.photo[-1].file_unique_id
             result_file_id = last_sent_message.photo[-1].file_id
 
-            asyncio.create_task(
-                GoogleSheetsLogger().log_generation(
-                    gen_data=gen_data, result=result, output_image_unique_id=result_image_unique_id
-                )
-            )
+            await image_cache.cache_image_bytes(result_image_unique_id, result.image_bytes, result.content_type, cache_pool)
+            source_image_url = image_cache.get_cached_image_proxy_url(result_image_unique_id)
             
             log_entry = generations_repo.GenerationLog(
                 request_id=request_id, type=GenerationType.GROUP_PHOTO.value, status="completed",
-                quality_level=quality_level, trial_type=trial_type, seed=task["seed"], style=task["style"],
+                quality_level=quality_level, trial_type=trial_type, seed=current_payload["seed"], style=chosen_style,
                 generation_time_ms=result.generation_time_ms, 
                 api_request_payload=result.request_payload,
                 api_response_payload=result.response_payload, 
-                enhanced_prompt=identity_lock_text if is_enhanced else None,
+                enhanced_prompt=final_prompt,
                 result_image_unique_id=result_image_unique_id,
                 result_message_id=last_sent_message.message_id, result_file_id=result_file_id,
                 caption=caption_text,
+                sequence_index=i,
+                source_generation_id=source_generation_id
             )
-            await generations_repo.create_generation_log(db, log_entry)
-
-            await image_cache.cache_image_bytes(
-                result_image_unique_id, result.image_bytes, result.content_type, cache_pool
-            )
+            source_generation_id = await generations_repo.create_generation_log(db, log_entry)
 
         await status.delete()
 
         if not last_sent_message:
              raise RuntimeError("All generation attempts failed.")
 
-        await bot.send_message(
-            chat_id, _("What would you like to do next?"), 
+        await bot.send_message(chat_id, _("Your photoshoot is complete! What would you like to do next?"), 
             reply_markup=next_step.get_next_step_keyboard("continue", request_id)
         )
 

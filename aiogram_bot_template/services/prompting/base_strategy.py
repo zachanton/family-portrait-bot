@@ -11,6 +11,13 @@ class PromptStrategy(ABC):
     @abstractmethod
     def create_group_photo_payload(self, style: str | None = None) -> Dict[str, Any]:
         """
-        Creates the specific prompt and parameters for group photo generation.
+        Creates the specific prompt and parameters for the initial group photo generation.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def create_photoshoot_continuation_payload(self) -> Dict[str, Any]:
+        """
+        Creates the specific prompt and parameters for a photoshoot continuation frame.
         """
         raise NotImplementedError

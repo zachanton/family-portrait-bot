@@ -64,6 +64,9 @@ class GenerationLog:
     api_request_payload: dict[str, Any] | None = None
     api_response_payload: dict[str, Any] | None = None
     enhanced_prompt: str | None = None
+    # --- NEW FIELDS ---
+    sequence_index: int | None = None
+    source_generation_id: int | None = None
 
 
 async def create_generation_log(db: PostgresConnection, log_data: GenerationLog) -> int:
@@ -73,8 +76,11 @@ async def create_generation_log(db: PostgresConnection, log_data: GenerationLog)
             request_id, type, status, quality_level, trial_type, seed, style,
             result_image_unique_id, result_message_id, result_file_id, caption,
             control_message_id, error_message, generation_time_ms,
-            api_request_payload, api_response_payload, enhanced_prompt
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+            api_request_payload, api_response_payload, enhanced_prompt,
+            sequence_index, source_generation_id
+        ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
+        )
         RETURNING id;
     """
     result = await db.fetchrow(
@@ -86,7 +92,7 @@ async def create_generation_log(db: PostgresConnection, log_data: GenerationLog)
             log_data.caption, log_data.control_message_id,
             log_data.error_message, log_data.generation_time_ms,
             log_data.api_request_payload, log_data.api_response_payload,
-            log_data.enhanced_prompt
+            log_data.enhanced_prompt, log_data.sequence_index, log_data.source_generation_id
         ),
     )
     return result.data["id"]

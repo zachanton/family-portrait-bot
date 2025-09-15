@@ -15,8 +15,9 @@ from .styles import (
     PROMPT_VOGUE,
     PROMPT_WET_PLATE,
     PROMPT_POP_ART
-
 )
+# --- NEW IMPORT ---
+from .styles.photoshoot_continuation import PROMPT_PHOTOSHOOT_CONTINUATION
 
 
 STYLE_PROMPTS = {
@@ -30,12 +31,10 @@ STYLE_PROMPTS = {
     "baroque": PROMPT_BAROQUE,
     "wet_plate": PROMPT_WET_PLATE,
     "pop_art": PROMPT_POP_ART,
-
-
 }
 
 def get_translated_style_name(style: str) -> str:
-    """Returns a translatable, human-readable name for a given style key."""
+    # ... (this function remains unchanged) ...
     style_map = {
         "old": _("19th-century Studio Portrait"),
         "party_polaroid": _("Party Polaroid Portrait"),
@@ -47,10 +46,7 @@ def get_translated_style_name(style: str) -> str:
         "baroque": _("Baroque Chiaroscuro Portrait"),
         "wet_plate": _("Wet-Plate Collodion Tonality Portrait"),
         "pop_art": _("Pop-Art Color Block Portrait"),
-
-        
     }
-    # Fallback for any new styles added that aren't in the map yet
     return style_map.get(style, style.replace("_", " ").title())
 
 
@@ -65,9 +61,16 @@ class FalStrategy(PromptStrategy):
         """
         prompt = STYLE_PROMPTS.get(style, PROMPT_DEFAULT)
         
-        # We return a more generic payload. `temperature` is used by Gemini,
-        # while `guidance_scale` and `num_inference_steps` might be used by others like Fal.
         return {
             "prompt": prompt.replace('\n', ' '),
-            "temperature": 0.3, # Good for creative but not chaotic results in Gemini
+            "temperature": 0.3, 
+        }
+
+    def create_photoshoot_continuation_payload(self) -> Dict[str, Any]:
+        """
+        Returns the prompt and parameters for generating the next frame in a photoshoot.
+        """
+        return {
+            "prompt": PROMPT_PHOTOSHOOT_CONTINUATION.replace('\n', ' '),
+            "temperature": 0.3,
         }
