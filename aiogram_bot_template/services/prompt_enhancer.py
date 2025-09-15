@@ -13,7 +13,7 @@ from aiogram_bot_template.services.google_sheets_logger import GoogleSheetsLogge
 logger = structlog.get_logger(__name__)
 
 
-# --- Models for Identity Lock (existing) ---
+# ... (Все Pydantic модели остаются без изменений) ...
 class EyesDetail(BaseModel):
     color: str
     shape: str
@@ -44,7 +44,6 @@ class EnhancedPromptData(BaseModel):
     person_b: IdentityLock
     cleanup: CleanupInstructions
 
-# --- Pydantic models for Photoshoot Sequence Enhancement ---
 class CameraDetails(BaseModel):
     shot_type: str = Field(..., description="E.g., 'Medium Close-Up', 'Close-Up', 'Extreme Close-Up'.")
     angle: str = Field(..., description="E.g., 'Eye-level', 'Slightly high angle', 'Slightly low angle'.")
@@ -66,53 +65,45 @@ class NextFrameData(BaseModel):
     composition: CompositionDetails
 
 
-# --- Formatting functions (existing and new) ---
-
 def format_enhanced_data_as_text(data: EnhancedPromptData) -> str:
     """
-    Formats the structured data into a compact, command-oriented text block
-    for the final image generation model.
+    Formats the structured data into a detailed, safety-compliant, and syntactically correct text block.
     """
     def format_identity_lock(person_data, title):
-        nose_text = (f"  *   **Bridge:** {person_data.nose.bridge}\n"
-                     f"  *   **Tip:** {person_data.nose.tip}\n"
-                     f"  *   **Nostrils:** {person_data.nose.nostrils}")
+        # The Python code now constructs the full, grammatically correct command.
         lines = [
             f"**{title}**",
-            f"*   **Essence & Expression:** {person_data.overall_impression}",
-            f"*   **Facial Structure:** {person_data.face_geometry}",
-            f"*   **Eyes:** {person_data.eyes.shape} | **Color:** {person_data.eyes.color}",
-            f"*   **Eyebrows:** {person_data.eyebrows}",
-            f"*   **Nose Forensic-Analysis:**\n{nose_text}",
-            f"*   **Mouth & Smile:** {person_data.lips}",
-            f"*   **Skin Details:** {person_data.skin}",
-            f"*   **Hair:** {person_data.hair}",
-            f"*   **Unique Details:** {person_data.unique_details}",
+            f"  - Essence: Capture their {person_data.overall_impression}.",
+            f"  - Face Shape: Faithfully reproduce the subject's {person_data.face_geometry}.",
+            f"  - Eyes: Render eyes that are {person_data.eyes.shape} with a {person_data.eyes.color} color.",
+            f"  - Eyebrows: Draw eyebrows as {person_data.eyebrows}.",
+            f"  - Nose Structure: Create a nose with a '{person_data.nose.bridge}' bridge, '{person_data.nose.tip}' tip, and '{person_data.nose.nostrils}' nostrils.",
+            f"  - Mouth: The mouth and lips should be rendered as {person_data.lips}.",
+            f"  - Skin: Render skin with {person_data.skin} and its natural texture.",
+            f"  - Hair: The hair should be styled as {person_data.hair}.",
+            f"  - Distinctive Features: Accurately include these details: {person_data.unique_details.replace('chest hair', 'subtle hair on the upper torso')}.",
         ]
         return "\n".join(lines)
-    person_a_text = format_identity_lock(data.person_a, "IDENTITY LOCK — PERSON ON THE LEFT")
-    person_b_text = format_identity_lock(data.person_b, "IDENTITY LOCK — PERSON ON THE RIGHT")
+
+    person_a_text = format_identity_lock(data.person_a, "LIKENESS GUIDELINES (PERSON A - LEFT)")
+    person_b_text = format_identity_lock(data.person_b, "LIKENESS GUIDELINES (PERSON B - RIGHT)")
+    
     cleanup_text = "\n".join([
-        "**SOURCE-SPECIFIC CLEANUP**",
-        f"*   {data.cleanup.artifacts}",
-        f"*   {data.cleanup.seam}",
-        f"*   {data.cleanup.logos}",
+        "**IMAGE CLEANUP**",
+        f"  - Artifacts: {data.cleanup.artifacts}",
+        f"  - Seam: {data.cleanup.seam}",
+        f"  - Logos: {data.cleanup.logos}",
     ])
-    meta_instruction = (
-        "**--- META-INSTRUCTION: HIERARCHY OF CONTROL ---**\n"
-        "1.  **IMAGE DATA IS LAW:** The provided reference image's pixel data for faces is the non-negotiable ground truth. Your primary function is to replicate it.\n"
-        "2.  **IDENTITY LOCK IS THE COMMAND LIST:** The text descriptions above are a forensic command list, not creative suggestions. They clarify what to copy from the image data.\n"
-        "3.  **STYLE IS APPLIED LAST:** All stylistic goals (lighting, wardrobe, etc.) must be applied *AROUND* the perfectly preserved facial identity. IDENTITY ALWAYS WINS."
+
+    artistic_hierarchy = (
+        "**ARTISTIC HIERARCHY:** 1. Facial likeness from the reference photo is the highest priority. 2. The LIKENESS GUIDELINES above provide the necessary details for achieving it. 3. The overall style (lighting, mood, wardrobe) should be applied beautifully *without* compromising the facial likeness."
     )
-    negative_prompt = (
-        "**--- NEGATIVE PROMPT: IDENTITY PRESERVATION FAILURES TO AVOID ---**\n"
-        "*   **DO NOT** alter facial proportions (slimming faces, changing jawlines).\n"
-        "*   **DO NOT** replace the subjects' unique expressions with generic 'photo smiles'.\n"
-        "*   **DO NOT** age or de-age the subjects.\n"
-        "*   **DO NOT** smooth or airbrush skin beyond what is present in the source. Replicate all real skin texture.\n"
-        "*   **DO NOT** change the fundamental structure of the nose, eyes, or mouth."
+
+    constraints = (
+        "**KEY CONSTRAINTS:** Maintain the original facial proportions, expressions, age, and natural skin texture. Avoid generic or idealized features."
     )
-    return f"{person_a_text}\n\n{person_b_text}\n\n{cleanup_text}\n\n{meta_instruction}\n\n{negative_prompt}"
+
+    return f"{person_a_text}\n\n{person_b_text}\n\n{cleanup_text}\n\n{artistic_hierarchy}\n{constraints}"
 
 
 def format_next_frame_data_as_text(data: NextFrameData) -> str:
@@ -123,15 +114,10 @@ def format_next_frame_data_as_text(data: NextFrameData) -> str:
     person_b = data.person_b_pose
     
     lines = [
-        f"**Narrative Link:** {data.narrative_link}",
-        "**Camera & Composition:**",
-        f"*   **Shot Type:** {data.camera.shot_type}",
-        f"*   **Angle:** {data.camera.angle}",
-        f"*   **Framing:** {data.composition.framing}",
-        f"*   **Focus:** {data.composition.focus}",
-        "**Subject Directives:**",
-        f"*   **Person A (Left):** Expression: '{person_a.expression}'. Head: '{person_a.head_tilt}'. Posture: '{person_a.body_posture}'.",
-        f"*   **Person B (Right):** Expression: '{person_b.expression}'. Head: '{person_b.head_tilt}'. Posture: '{person_b.body_posture}'.",
+        f"**NEXT SHOT DIRECTIVE:** {data.narrative_link}",
+        f"  - Camera: Use a {data.camera.shot_type} from a {data.camera.angle}. Frame the shot as follows: {data.composition.framing}. Focus on: {data.composition.focus}.",
+        f"  - Person A (Left): Guide their expression to be '{person_a.expression}', with head tilt '{person_a.head_tilt}' and posture '{person_a.body_posture}'.",
+        f"  - Person B (Right): Guide their expression to be '{person_b.expression}', with head tilt '{person_b.head_tilt}' and posture '{person_b.body_posture}'.",
     ]
     return "\n".join(lines)
 

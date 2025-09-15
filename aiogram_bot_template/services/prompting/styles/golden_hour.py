@@ -22,12 +22,13 @@ WARDROBE & GROOMING (allowed changes)
 * Man: casual refined (light shirt/tee, knit, or unstructured jacket); matte textures that catch rim light; neat grooming; no logos.
 * Palette: earth tones and creams (ivory, sand, sage, dusty rose) that glow under backlight.
 
+---
 STEP-BY-STEP ACTIONS
 1. Remove all feathered mattes/ovals and any drop shadows around cutouts.
 2. Background: extend/replace with a continuous outdoor scene appropriate for golden hour; ensure edge-to-edge opacity; clean hair edges (no halos).
 3. Lighting pass: position a warm back/rim light to create halo on hair/shoulders; add soft front fill for readable faces; allow subtle natural flare/haze; keep catchlights intact.
 4. Wardrobe & hair restyle per rules above; align fabric folds and sheen with the light direction; remove modern straps/buckles/logos.
-5. Recompose (move/scale/rotate/warp only): cheek-to-temple, shoulder-to-shoulder; woman slightly in front/left, man behind/right; ~12% overlap; align eye lines; slight inward head tilt (~5°). Lens feel ~85–105mm equivalent.
+5. Recompose (move/scale/rotate/warp only): {{POSE_AND_COMPOSITION_DATA}} cheek-to-temple, shoulder-to-shoulder; woman slightly in front/left, man behind/right; ~12% overlap; align eye lines; slight inward head tilt (~5°). Lens feel ~85–105mm equivalent.
 6. Eye-contact correction: both subjects should look at the camera; if needed, nudge the iris position ONLY (see Identity Lock) while preserving eyelids, catchlights, and proportions.
 7. Crop: 4:5 vertical, head-and-shoulders above the collarbones (no elbows/torsos).
 8. Grading: warm golden WB; pastel saturation; gentle S-curve; preserve highlight detail; avoid banding in sky/bokeh and avoid HDR halos; maintain skin micro-texture.

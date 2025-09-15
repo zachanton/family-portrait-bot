@@ -2,6 +2,7 @@
 import asyncio
 import random
 import uuid
+import re
 from contextlib import suppress
 
 import asyncpg
@@ -119,6 +120,20 @@ async def _calculate_and_update_similarity_caption(
     except Exception:
         log.exception("An error occurred in the background similarity scoring task.")
 
+def _cleanup_ai_text(text: str) -> str:
+    """
+    Aggressively cleans and sanitizes AI-generated text to be safe for prompts.
+    Normalizes quotes, whitespace, and repeated punctuation.
+    """
+    if not text:
+        return ""
+    
+    text = re.sub(r'["“”‘’`]', "'", text)
+    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r'([.,!?])\1+', r'\1', text)
+    text = re.sub(r'\s+([.,!?])', r'\1', text)
+    return text.strip()
+
 
 async def run_generation_worker(
     bot: Bot,
@@ -161,7 +176,6 @@ async def run_generation_worker(
         gen_data = {**user_data, **db_data, "type": GenerationType.GROUP_PHOTO.value, "quality_level": quality_level}
         await generations_repo.update_generation_request_status(db, request_id, "processing")
 
-        # --- Step 1: Prepare composite and get initial Identity Lock (runs once) ---
         pipeline = GroupPhotoPipeline(bot, gen_data, log, status.update, cache_pool)
         pipeline_output = await pipeline.prepare_data()
         composite_image_url = pipeline_output.request_payload.get("image_urls", [None])[0]
@@ -174,12 +188,14 @@ async def run_generation_worker(
         identity_lock_text = prompt_enhancer.format_enhanced_data_as_text(initial_identity_data) if initial_identity_data else "IDENTITY LOCK (must match the source)"
         log.info("Initial identity lock created.", text_length=len(identity_lock_text))
         
-        # --- Step 2: Loop to generate the photoshoot sequence ---
-        last_successful_result = None
         last_sent_message = None
         source_image_url = composite_image_url
         source_generation_id = None
         
+        strategy = get_prompt_strategy(tier_config.client)
+        style_payload = strategy.create_group_photo_payload(style=chosen_style)
+        prompt_template = style_payload.get("prompt", "")
+
         for i in range(generation_count):
             current_iteration = i + 1
             log_task = log.bind(style=chosen_style, sequence=f"{current_iteration}/{generation_count}")
@@ -187,18 +203,14 @@ async def run_generation_worker(
             
             await status.update(_("🎨 Generating shot {current} of {total}...").format(current=current_iteration, total=generation_count))
             
-            strategy = get_prompt_strategy(tier_config.client)
             current_payload = pipeline_output.request_payload.copy()
             current_payload["image_urls"] = [source_image_url]
+            current_payload.update(style_payload)
 
+            pose_composition_text = ""
             if i == 0:
-                # FIRST FRAME: Use the initial style prompt with the pre-computed identity lock.
-                style_payload = strategy.create_group_photo_payload(style=chosen_style)
-                prompt_template = style_payload.get("prompt", "")
-                final_prompt = prompt_template.replace("{{IDENTITY_LOCK_DATA}}", identity_lock_text)
-                current_payload.update(style_payload)
+                pose_composition_text = "Subjects are posed naturally, cheek-to-temple and shoulder-to-shoulder, with a slight inward head tilt, looking at the camera."
             else:
-                # SUBSEQUENT FRAMES: Use the advanced continuation prompt.
                 if not source_image_url:
                     log_task.warning("Skipping frame as previous one failed.")
                     continue
@@ -206,7 +218,6 @@ async def run_generation_worker(
                 await status.update(_("🎬 Directing the next shot..."))
                 translated_style_name = get_translated_style_name(chosen_style)
                 
-                # Fetch new identity and pose data in parallel based on the LAST generated image.
                 identity_task = prompt_enhancer.get_enhanced_prompt_data(source_image_url)
                 next_frame_task = prompt_enhancer.get_next_frame_data(source_image_url, translated_style_name)
                 refreshed_identity_data, next_frame_data = await asyncio.gather(identity_task, next_frame_task)
@@ -216,23 +227,24 @@ async def run_generation_worker(
                     log_task.info("Identity lock refreshed for sequence.", text_length=len(identity_lock_text))
 
                 if not next_frame_data:
-                    log_task.warning("Failed to get next frame data. Falling back to simple style prompt.")
-                    style_payload = strategy.create_group_photo_payload(style=chosen_style)
-                    prompt_template = style_payload.get("prompt", "")
-                    final_prompt = prompt_template.replace("{{IDENTITY_LOCK_DATA}}", identity_lock_text)
-                    current_payload.update(style_payload)
+                    log_task.warning("Could not get next frame data. Re-using default pose.")
+                    pose_composition_text = "Subjects are posed naturally, cheek-to-temple and shoulder-to-shoulder, with a slight inward head tilt, looking at the camera."
                 else:
                     pose_composition_text = prompt_enhancer.format_next_frame_data_as_text(next_frame_data)
-                    continuation_payload = strategy.create_photoshoot_continuation_payload()
-                    prompt_template = continuation_payload.get("prompt", "")
-                    prompt_with_identity = prompt_template.replace("{{IDENTITY_LOCK_DATA}}", identity_lock_text)
-                    final_prompt = prompt_with_identity.replace("{{POSE_AND_COMPOSITION_DATA}}", pose_composition_text)
-                    current_payload.update(continuation_payload)
 
+            temp_prompt = prompt_template.replace("{{IDENTITY_LOCK_DATA}}", identity_lock_text)
+            
+            if "{{POSE_AND_COMPOSITION_DATA}}" in temp_prompt:
+                 prompt_with_pose = temp_prompt.replace("{{POSE_AND_COMPOSITION_DATA}}", pose_composition_text)
+            else:
+                 log_task.warning("Prompt template is missing {{POSE_AND_COMPOSITION_DATA}} placeholder. Appending pose data.")
+                 prompt_with_pose = f"{temp_prompt}\n\n**NEW FRAME INSTRUCTIONS:**\n{pose_composition_text}"
+
+            final_prompt = _cleanup_ai_text(prompt_with_pose)
             current_payload["prompt"] = final_prompt
             current_payload["seed"] = random.randint(0, 2**32 - 1)
             
-            log_task.info("Final prompt prepared for generation", final_prompt_summary=final_prompt)
+            log_task.info("Final prompt prepared for generation", final_prompt_summary=final_prompt[:500] + "...")
 
             result, error_meta = await pipeline.run_generation(
                 pipeline_output, payload_override=current_payload
@@ -242,7 +254,6 @@ async def run_generation_worker(
                 log_task.error("AI service failed for one of the generations", meta=error_meta)
                 continue
 
-            last_successful_result = result
             translated_style_name = get_translated_style_name(chosen_style)
             caption_text = _("Style: {style_name} (Shot {current}/{total})").format(
                 style_name=translated_style_name, current=current_iteration, total=generation_count

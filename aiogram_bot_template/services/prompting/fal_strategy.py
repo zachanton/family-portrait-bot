@@ -16,9 +16,6 @@ from .styles import (
     PROMPT_WET_PLATE,
     PROMPT_POP_ART
 )
-# --- NEW IMPORT ---
-from .styles.photoshoot_continuation import PROMPT_PHOTOSHOOT_CONTINUATION
-
 
 STYLE_PROMPTS = {
     "old": PROMPT_OLD,
@@ -34,7 +31,6 @@ STYLE_PROMPTS = {
 }
 
 def get_translated_style_name(style: str) -> str:
-    # ... (this function remains unchanged) ...
     style_map = {
         "old": _("19th-century Studio Portrait"),
         "party_polaroid": _("Party Polaroid Portrait"),
@@ -62,15 +58,6 @@ class FalStrategy(PromptStrategy):
         prompt = STYLE_PROMPTS.get(style, PROMPT_DEFAULT)
         
         return {
-            "prompt": prompt.replace('\n', ' '),
+            "prompt": prompt,
             "temperature": 0.3, 
-        }
-
-    def create_photoshoot_continuation_payload(self) -> Dict[str, Any]:
-        """
-        Returns the prompt and parameters for generating the next frame in a photoshoot.
-        """
-        return {
-            "prompt": PROMPT_PHOTOSHOOT_CONTINUATION.replace('\n', ' '),
-            "temperature": 0.3,
         }
