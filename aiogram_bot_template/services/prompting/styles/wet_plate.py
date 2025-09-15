@@ -8,13 +8,7 @@ HARD CONSTRAINTS
 * Full-bleed output: fill the canvas to every edge with image content. No borders, frames, soft ovals, added vignettes, paper textures, scratches, plate edges, stickers, watermarks, stains, or transparency.
 * Exactly two people visible; no duplicates or mirrored copies; no other recognizable faces in the background.
 
-IDENTITY LOCK (must match the source)
-* Keep face width and jaw/chin geometry; do not slim or reshape faces.
-* Preserve inter-pupillary distance, eyelid shapes and eye aperture; only minimal iris re-positioning for eye contact (≤ 10% of iris diameter, no redraw).
-* Keep eyebrow thickness/angle, nose bridge & tip shape, lip fullness & natural corner asymmetry.
-* Preserve skin micro-texture (freckles/pores/stubble); no beauty smoothing.
-* Keep ear shape and earring pierce positions; jewelry may be simplified but not relocated.
-* If glasses are present, preserve exact frame geometry (size, rim thickness, lens proportions, nose-pad position).
+{{IDENTITY_LOCK_DATA}}
 
 STYLE TARGET — “Wet-Plate Collodion Tonality (Tintype-Inspired)”
 * Monochrome tonality: cool, silvery highlights and slightly cooler shadows; rich midtones; fine film-like grain. No sepia or brown tinting.

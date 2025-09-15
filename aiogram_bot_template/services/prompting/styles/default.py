@@ -8,13 +8,7 @@ PROMPT_DEFAULT = """
 * **Full-bleed output:** fill the canvas to every edge with image content. **No borders, frames, soft ovals, vignettes, flat gray/white panels, gradients, stickers, watermarks, or transparency.**
 * **Exactly two people** visible; no duplicates or mirrored copies.
 
-**IDENTITY LOCK (must match the source)**
-
-* Keep **face width and jaw/chin geometry**; do not slim or reshape faces.
-* Preserve **inter-pupillary distance**, **eyelid shapes** and eye aperture; only minimal iris re-positioning for eye contact (**≤ 10% of iris diameter**, no redraw).
-* Keep **eyebrow thickness/angle**, **nose bridge & tip shape**, **lip fullness & natural corner asymmetry**.
-* Preserve **skin micro-texture** (freckles/pores/stubble); no beauty smoothing.
-* Keep **glasses geometry** (frame size, rim thickness, lens height/width, nose-pad position) and **cap/brim shape & logo orientation** exactly.
+{{IDENTITY_LOCK_DATA}}
 
 **STEP-BY-STEP ACTIONS**
 

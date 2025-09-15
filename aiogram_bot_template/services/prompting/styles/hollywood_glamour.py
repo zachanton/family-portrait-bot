@@ -8,12 +8,7 @@ HARD CONSTRAINTS
 * Full-bleed output: fill the canvas to every edge with image content. No borders, frames, soft ovals, vignettes, flat gray/white panels, gradients, stickers, watermarks, or transparency.
 * Exactly two people visible; no duplicates or mirrored copies.
 
-IDENTITY LOCK (must match the source)
-* Keep face width and jaw/chin geometry; do not slim or reshape faces.
-* Preserve inter-pupillary distance, eyelid shapes and eye aperture; only minimal iris re-positioning for eye contact (≤ 10% of iris diameter, no redraw).
-* Keep eyebrow thickness/angle, nose bridge & tip shape, lip fullness & natural corner asymmetry.
-* Preserve skin micro-texture (freckles/pores/stubble); no beauty smoothing.
-* Keep ear shape and earring pierce positions; jewelry may be simplified but not relocated.
+{{IDENTITY_LOCK_DATA}}
 
 STYLE TARGET — “1930s Hollywood Glamour (Black-and-White)”
 * Monochrome conversion with rich tonal separation: deep blacks, luminous midtones, clean highlights; fine film-like grain; no color tinting (no sepia).
