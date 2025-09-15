@@ -242,7 +242,7 @@ async def run_generation_worker(
 
             final_prompt = _cleanup_ai_text(prompt_with_pose)
             current_payload["prompt"] = final_prompt
-            current_payload["seed"] = random.randint(0, 2**32 - 1)
+            current_payload["seed"] = random.randint(0, 1000)
             
             log_task.info("Final prompt prepared for generation", final_prompt_summary=final_prompt[:500] + "...")
 

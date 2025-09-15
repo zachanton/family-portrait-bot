@@ -1,8 +1,8 @@
 """Initial database schema
 
-Revision ID: a66e2d50cff2
+Revision ID: aeeebdf3e72a
 Revises: 
-Create Date: 2025-09-07 16:49:07.601603
+Create Date: 2025-09-15 16:18:03.188519
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'a66e2d50cff2'
+revision: str = 'aeeebdf3e72a'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -67,6 +67,7 @@ def upgrade() -> None:
     sa.Column('quality_level', sa.Integer(), nullable=True),
     sa.Column('trial_type', sa.String(length=50), nullable=True),
     sa.Column('seed', sa.BigInteger(), nullable=True),
+    sa.Column('style', sa.String(length=50), nullable=True),
     sa.Column('result_image_unique_id', sa.String(), nullable=True),
     sa.Column('result_message_id', sa.BigInteger(), nullable=True),
     sa.Column('result_file_id', sa.String(), nullable=True),
@@ -76,8 +77,12 @@ def upgrade() -> None:
     sa.Column('generation_time_ms', sa.Integer(), nullable=True),
     sa.Column('api_request_payload', sa.JSON(), nullable=True),
     sa.Column('api_response_payload', sa.JSON(), nullable=True),
+    sa.Column('enhanced_prompt', sa.Text(), nullable=True),
+    sa.Column('sequence_index', sa.Integer(), nullable=True, comment='The 0-indexed position of this image in a photoshoot sequence.'),
+    sa.Column('source_generation_id', sa.Integer(), nullable=True, comment='The ID of the previous generation in the sequence, used as a source.'),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
     sa.ForeignKeyConstraint(['request_id'], ['generation_requests.id'], ),
+    sa.ForeignKeyConstraint(['source_generation_id'], ['generations.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_generations_request_id'), 'generations', ['request_id'], unique=False)
