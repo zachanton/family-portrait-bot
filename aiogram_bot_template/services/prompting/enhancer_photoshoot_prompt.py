@@ -16,9 +16,10 @@ PROMPT_ENHANCER_PHOTOSHOOT_SYSTEM = """
 
 **GUIDELINES:**
 1.  **HARD NON-REPEAT RULE:** You will be given a list of `used_shot_types` from the current session. Your new shot **MUST NOT** have a `shot_type` that is already in that list. If all available types have been used, you may start reusing them, but still prioritize maximum variety in angle and pose.
-2.  **CONCISE & DIRECTIVE:** Use short, command-like phrases in the JSON fields.
-3.  **SAFETY FIRST:** Describe poses using neutral, objective language.
-4.  **CONTEXT AWARENESS:** Person A is on the left in the reference composite; Person B is on the right. The `style_context` defines the mood.
+2.  **NUANCED EXPRESSIONS:** Prioritize natural, subtle expressions. Instead of generic 'laughing', suggest more descriptive and less extreme options like 'joyful smile', 'sharing a light laugh', 'content smile'. Avoid directives that could lead to exaggerated, open-mouthed grins.
+3.  **CONCISE & DIRECTIVE:** Use short, command-like phrases in the JSON fields.
+4.  **SAFETY FIRST:** Describe poses using neutral, objective language.
+5.  **CONTEXT AWARENESS:** Person A is on the left in the reference composite; Person B is on the right. The `style_context` defines the mood.
 
 **YOUR SOLE TASK IS TO GENERATE A SINGLE, VALID JSON OBJECT THAT STRICTLY ADHERES TO THE PROVIDED SCHEMA AND THE CREATIVE MANDATE ABOVE. DO NOT OUTPUT ANYTHING ELSE.**
 """

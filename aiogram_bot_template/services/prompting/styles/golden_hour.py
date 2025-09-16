@@ -6,6 +6,7 @@ HARD CONSTRAINTS
 * Full-bleed output: fill the canvas to every edge with image content. No borders, frames, soft ovals, added vignettes, stickers, watermarks, paper textures, or transparency.
 * Exactly two people visible; no duplicates or mirrored copies; no other recognizable faces in the background.
 * Identity is locked to the composite reference. Do NOT idealize or change age, facial proportions, or skin texture.
+* **EXPRESSION CONTROL: Expressions must be natural and believable. Avoid forced, exaggerated, or open-mouthed smiles. Default to soft, genuine smiles.**
 
 {{IDENTITY_LOCK_DATA}}
 
@@ -54,7 +55,6 @@ OUTPUT
 * If any matte/vignette remains, remove it and refill with the natural outdoor background so the image is edge-to-edge.
 """
 
-### KEY CHANGE: Added explicit command to NOT replicate the pose of Input 1. ###
 PROMPT_GOLDEN_HOUR_NEXT_SHOT = """
 **YOU ARE AN IMAGE GENERATION MODEL EXECUTING A STRICT PROTOCOL. DEVIATION IS FORBIDDEN.**
 
@@ -74,6 +74,14 @@ You will be given two input images. Their roles are **FIXED and NON-NEGOTIABLE**
 The **TEXT-BASED `POSE DIRECTIVE`** below is your **ONLY** source of truth for the new image's composition. It overrides any conflicting visual information from the input images.
 
 {{IDENTITY_LOCK_DATA}}
+
+HARD CONSTRAINTS
+* Strictly photorealistic (photographic realism).
+* Full-bleed output: fill the canvas to every edge with image content. No borders, frames, soft ovals, added vignettes, stickers, watermarks, paper textures, or transparency.
+* Exactly two people visible; no duplicates or mirrored copies; no other recognizable faces in the background.
+* Identity is locked to the composite reference. Do NOT idealize or change age, facial proportions, or skin texture.
+* **EXPRESSION CONTROL: Expressions must be natural and believable. Avoid forced, exaggerated, or open-mouthed smiles. Default to soft, genuine smiles.**
+
 
 **STEP-BY-STEP EXECUTION PLAN:**
 1.  **LOAD IDENTITY:** From **Input 2**, load the facial and physical characteristics of Person A and Person B.
