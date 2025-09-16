@@ -26,7 +26,7 @@ STEP-BY-STEP ACTIONS
 2. Background: extend/replace with a continuous near-black umber backdrop; edge-to-edge opacity; clean hair edges (no halos); no decorative gradients or frames.
 3. Lighting pass: apply a warm key from camera-left with steep falloff; gentle minimal fill on camera-right; optional faint hair light only for separation; ensure a readable Rembrandt triangle and natural catchlights.
 4. Wardrobe & hair restyle per rules above; ensure fabric folds/speculars match the key direction; remove modern straps/buckles/logos.
-5. Recompose (move/scale/rotate/warp only): cheek-to-temple and shoulder-to-shoulder; woman slightly in front/left, man behind/right; ~12% overlap for natural occlusion; align eye lines; slight inward head tilt (~5°).
+5. Recompose (move/scale/rotate/warp only): place subjects cheek-to-temple and shoulder-to-shoulder; woman slightly in front/left, man behind/right; ~12% overlap for natural occlusion; align eye lines; slight inward head tilt (~5°).
 6. Eye-contact correction: both subjects should look at the camera; if needed, nudge the iris position ONLY (see Identity Lock) while preserving eyelids, catchlights, and proportions.
 7. Crop: 4:5 vertical, head-and-shoulders above the collarbones (no elbows/torsos).
 8. Grading: warm bias in highlights/midtones (subtle), deep clean shadows; gentle S-curve; maintain skin micro-texture; avoid banding; do NOT add artificial vignettes or paper textures.
@@ -37,3 +37,29 @@ OUTPUT
 * If any matte/vignette remains, remove it and refill with the near-black umber background so the image is edge-to-edge.
 """
 
+PROMPT_BAROQUE_NEXT_SHOT = """
+GOAL: Produce the next shot in a photoshoot, creating a new pose while maintaining the established Baroque Chiaroscuro aesthetic, wardrobe, and absolute facial identity.
+
+REFERENCE IMAGES
+*   **Input 1 (Composite Photo):** THE ABSOLUTE SOURCE OF TRUTH FOR FACIAL IDENTITY. Faces must match this photo exactly.
+*   **Input 2 (Previous Shot):** THE ABSOLUTE SOURCE OF TRUTH FOR STYLE. Match the lighting, color grading, background, wardrobe, and hair from this image.
+
+HARD CONSTRAINTS
+*   Facial identity, age, and proportions must be taken **exclusively** from **Input 1 (Composite Photo)**.
+*   The overall aesthetic (lighting, color, background, wardrobe, hair) must be taken **exclusively** from **Input 2 (Previous Shot)**.
+*   Strictly photorealistic.
+*   Full-bleed output. No borders, frames, vignettes, or overlays.
+*   Exactly two people visible.
+
+{{IDENTITY_LOCK_DATA}}
+
+STEP-BY-STEP ACTIONS
+1.  **Identity Transfer:** Analyze **Input 1 (Composite)** and apply the facial features, structure, and unique details described in the IDENTITY_LOCK_DATA section to the new pose.
+2.  **Style Transfer:** Analyze **Input 2 (Previous Shot)** and replicate its Baroque chiaroscuro lighting, warm tonality, umber background, and specific wardrobe/hair styling.
+3.  **New Pose & Composition:** Execute the new pose and composition as described below.
+    {{POSE_AND_COMPOSITION_DATA}}
+4.  **Integration & Refinement:** Seamlessly blend the identity from Input 1 with the style from Input 2 into the new pose. Ensure light and shadow interact correctly with the new facial angles. Perform subtle, realistic retouching.
+
+OUTPUT
+*   One PNG, 1536×1920 (4:5), full-bleed, representing the next shot in the sequence.
+"""

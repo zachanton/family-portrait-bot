@@ -14,7 +14,8 @@ from .styles import (
     PROMPT_COLOR_GEL,
     PROMPT_VOGUE,
     PROMPT_WET_PLATE,
-    PROMPT_POP_ART
+    PROMPT_POP_ART,
+    PROMPT_GOLDEN_HOUR_NEXT_SHOT
 )
 
 STYLE_PROMPTS = {
@@ -29,6 +30,22 @@ STYLE_PROMPTS = {
     "wet_plate": PROMPT_WET_PLATE,
     "pop_art": PROMPT_POP_ART,
 }
+
+# New dictionary for "next shot" prompts
+STYLE_PROMPTS_NEXT = {
+    "golden_hour": PROMPT_GOLDEN_HOUR_NEXT_SHOT,
+
+    "old": PROMPT_OLD,
+    "party_polaroid": PROMPT_PARTY_POLAROID,
+    "hollywood_glamour": PROMPT_HOLLYWOOD_GLAMOUR,
+    "color_gel": PROMPT_COLOR_GEL,
+    "vogue": PROMPT_VOGUE,
+    "retro_motel": PROMPT_RETRO_MOTEL,
+    "baroque": PROMPT_BAROQUE,
+    "wet_plate": PROMPT_WET_PLATE,
+    "pop_art": PROMPT_POP_ART,
+}
+
 
 def get_translated_style_name(style: str) -> str:
     style_map = {
@@ -60,4 +77,16 @@ class FalStrategy(PromptStrategy):
         return {
             "prompt": prompt,
             "temperature": 0.3, 
+        }
+
+    def create_group_photo_next_payload(self, style: str) -> Dict[str, Any]:
+        """
+        Returns a detailed prompt and optimized parameters for generating the next shot
+        in a group portrait sequence.
+        """
+        prompt = STYLE_PROMPTS_NEXT.get(style, PROMPT_DEFAULT)
+        
+        return {
+            "prompt": prompt,
+            "temperature": 0.45,
         }

@@ -1,155 +1,308 @@
 # aiogram_bot_template/services/clients/google_ai_client.py
 from __future__ import annotations
-
 import asyncio
-import re
-import time
-import random
-from io import BytesIO
-from typing import Any
+from typing import Any, Iterable, List
 from collections.abc import Awaitable, Callable
 
 import structlog
-from PIL import Image
 from pydantic import BaseModel
-from google import genai
-from google.genai import types, errors as genai_errors
+# PIL is not used directly here; keep import if other parts rely on it.
+from PIL import Image  # noqa: F401
 
 from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.services.utils import http_client
 
+# Official Google Gen AI SDK
+from google import genai
+from google.genai import types, errors as genai_errors
+
 logger = structlog.get_logger(__name__)
 
 
-class GoogleAIClientResponse(BaseModel):
-    image_bytes_list: list[bytes]
-    content_types: list[str]
+class GoogleGeminiClientResponse(BaseModel):
+    """
+    Standardized response from the Google Gemini client.
+    """
+    image_bytes: bytes
+    content_type: str = "image/png"
     response_payload: dict
+
     class Config:
         arbitrary_types_allowed = True
 
 
-class _TokenBucket:
-    def __init__(self, rpm: int) -> None:
-        self.rpm = max(1, rpm)
-        self.tokens = float(self.rpm)
-        self.updated = time.monotonic()
-        self._lock = asyncio.Lock()
-
-    async def acquire(self) -> None:
-        async with self._lock:
-            now = time.monotonic()
-            elapsed = now - self.updated
-            self.tokens = min(self.rpm, self.tokens + elapsed * (self.rpm / 60.0))
-            self.updated = now
-            if self.tokens < 1.0:
-                deficit = 1.0 - self.tokens
-                await asyncio.sleep(deficit * 60.0 / self.rpm)
-                self.tokens = 0.0
-                self.updated = time.monotonic()
-            self.tokens -= 1.0
-
-
-def _extract_retry_seconds_from_error(e: Exception) -> float:
-    s = str(e)
-    m = re.search(r'"retryDelay"\s*:\s*"(\d+)s"', s)
-    return float(m.group(1)) if m else 0.0
+def _redact_inline_data_in_dict(obj: Any) -> Any:
+    """
+    Recursively redact huge binary inline_data in dicts produced by SDK .to_dict(),
+    replacing `inline_data.data` with a short descriptor to keep logs small.
+    """
+    if isinstance(obj, dict):
+        new_obj = {}
+        for k, v in obj.items():
+            if k == "inline_data" and isinstance(v, dict):
+                data = v.get("data")
+                mime = v.get("mime_type") or v.get("mimeType")
+                size_desc = f"<{len(data)} bytes>" if isinstance(data, (bytes, bytearray)) else "<redacted>"
+                new_obj[k] = {"mime_type": mime, "data": size_desc}
+            else:
+                new_obj[k] = _redact_inline_data_in_dict(v)
+        return new_obj
+    if isinstance(obj, list):
+        return [_redact_inline_data_in_dict(x) for x in obj]
+    return obj
 
 
-async def _download_image_bytes(url: str) -> tuple[bytes, str]:
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
-    sess = await http_client.session()
-    async with sess.get(url, headers=headers) as resp:
-        resp.raise_for_status()
-        data = await resp.read()
-        try:
-            with Image.open(BytesIO(data)) as im:
-                mime = Image.MIME.get(im.format) or "image/png"
-        except Exception:
-            mime = "image/png"
-    return data, mime
+def _serialize_response(response: types.GenerateContentResponse) -> dict:
+    """
+    Safely serializes the GenerateContentResponse object to a dict for logging.
+    Robust against missing/None attributes and avoids dumping megabytes of base64.
+    """
+    if not response:
+        return {}
+
+    try:
+        out: dict[str, Any] = {}
+
+        # candidates
+        candidates_data = []
+        for cand in getattr(response, "candidates", []) or []:
+            cand_dict: dict[str, Any] = {}
+            fr = getattr(cand, "finish_reason", None)
+            cand_dict["finish_reason"] = getattr(fr, "name", "UNKNOWN")
+            # ratings
+            ratings = getattr(cand, "safety_ratings", None) or []
+            cand_dict["safety_ratings"] = [
+                r.to_dict() for r in ratings if hasattr(r, "to_dict")
+            ]
+            # content (redacted)
+            content = getattr(cand, "content", None)
+            if content and hasattr(content, "to_dict"):
+                cdict = content.to_dict()
+                cand_dict["content"] = _redact_inline_data_in_dict(cdict)
+            candidates_data.append(cand_dict)
+
+        out["candidates"] = candidates_data
+
+        # prompt feedback
+        feedback = getattr(response, "prompt_feedback", None)
+        if feedback:
+            ratings = getattr(feedback, "safety_ratings", None) or []
+            out["prompt_feedback"] = {
+                "safety_ratings": [r.to_dict() for r in ratings if hasattr(r, "to_dict")]
+            }
+
+        return out
+    except Exception as e:
+        logger.warning(
+            "Could not fully serialize Gemini response, falling back to string.",
+            error=str(e),
+        )
+        return {"error": "Could not serialize response", "content": str(response)}
 
 
-def _build_parts_from_images(images: list[tuple[bytes, str]], prompt: str) -> list[types.Part]:
-    parts: list[types.Part] = [types.Part.from_text(text=prompt)]
-    for data, mime in images:
-        parts.append(types.Part.from_bytes(data=data, mime_type=mime))
-    return parts
+async def _fetch_images_as_parts(urls: Iterable[str]) -> List[types.Part]:
+    """
+    Downloads images from URLs and converts them into Gemini API Part objects.
+    This uses types.Part.from_bytes as per official SDK examples.
+    """
+    results: List[types.Part] = []
+    if not urls:
+        return results
+
+    session = await http_client.session()
+
+    async def fetch(url: str) -> types.Part:
+        async with session.get(url, timeout=60) as resp:
+            resp.raise_for_status()
+            mime = resp.headers.get("Content-Type", "").split(";")[0].strip() or "image/png"
+            data = await resp.read()
+            return types.Part.from_bytes(data=data, mime_type=mime)
+
+    return await asyncio.gather(*(fetch(u) for u in urls))
 
 
-def _collect_image_parts_from_response(response) -> list[tuple[bytes, str]]:
-    out: list[tuple[bytes, str]] = []
-    for cand in getattr(response, "candidates", []) or []:
-        content = getattr(cand, "content", None)
-        if not content: continue
-        for part in getattr(content, "parts", []) or []:
-            inline = getattr(part, "inline_data", None)
-            if inline and getattr(inline, "data", None):
-                mime = getattr(inline, "mime_type", "image/png")
-                out.append((inline.data, mime))
-    return out
+def _model_supports_image_output(model_name: str) -> bool:
+    """
+    Heuristic: Gemini 2.5 'image' variants (including *-image-preview) support interleaved IMAGE output.
+    """
+    lower = (model_name or "").lower()
+    return "-image" in lower  # covers "-image" and "-image-preview"
+
+
+def _pick_best_inline_image(parts: List[Any]) -> tuple[bytes, str] | None:
+    """
+    Scan all parts and return the largest inline image (by byte length).
+    Returns (bytes, content_type) or None.
+    """
+    best: tuple[int, bytes, str] | None = None
+    for p in parts or []:
+        inline = getattr(p, "inline_data", None)
+        if inline and getattr(inline, "data", None):
+            data: bytes = inline.data
+            mime = getattr(inline, "mime_type", None) or "image/png"
+            size = len(data) if isinstance(data, (bytes, bytearray)) else 0
+            if best is None or size > best[0]:
+                best = (size, data, mime)
+    if best:
+        _, data, mime = best
+        return data, mime
+    return None
 
 
 class _ImagesNamespace:
+    """
+    Handles direct image generation via the Gemini API.
+    Public behavior preserved: .generate(...) returns GoogleGeminiClientResponse or raises.
+    """
+    DEFAULT_MODEL = "gemini-1.5-flash-latest"  # keep legacy default to avoid breaking callers
+
     def __init__(self) -> None:
         api_key = settings.api_urls.google_api_key
         if not api_key:
-            raise RuntimeError("Missing API key for Google Gemini. Set env var API_URLS__GOOGLE_API_KEY.")
-        self.genai_client = genai.Client(api_key=api_key.get_secret_value())
-        self.async_models = self.genai_client.aio.models
-        logger.info("Google Gemini client configured and authenticated.")
-        rpm = getattr(settings, "google_genai_rpm_limit", 10)
-        self._limiter = _TokenBucket(rpm=rpm)
+            raise RuntimeError(
+                "Missing API key for Google Gemini. Set API_URLS__GOOGLE_API_KEY."
+            )
+        self._client = genai.Client(api_key=api_key.get_secret_value())
+        logger.info("GoogleGeminiClient initialized for image generation.")
 
-    async def _status(self, cb: Callable[[str], Awaitable[None]] | None, msg: str) -> None:
-        if cb:
-            try: await cb(msg)
-            except Exception: logger.warning("status_callback failed", msg=msg)
+    async def generate(
+        self,
+        status_callback: Callable[[str], Awaitable[None]] | None = None,
+        **kwargs: Any,
+    ) -> GoogleGeminiClientResponse:
+        """
+        Generates an image using the Google Gemini API.
 
-    async def generate(self, status_callback: Callable[[str], Awaitable[None]] | None = None, **kwargs: Any) -> GoogleAIClientResponse:
-        model_name: str = kwargs.pop("model", "gemini-2.5-flash-image-preview")
-        prompt: str = kwargs.get("prompt", "")
-        image_urls: list[str] = kwargs.get("image_urls", []) or []
-        if single_url := kwargs.get("image_url"):
-            image_urls.append(single_url)
+        Kwargs respected (non-breaking):
+          - model: str
+          - prompt: str
+          - image_urls: list[str]
+          - temperature, top_p, top_k, max_output_tokens, candidate_count
+          - response_modalities: list[str] or None (will be forced to include ["TEXT","IMAGE"] if missing)
+        """
+        model = kwargs.pop("model", self.DEFAULT_MODEL)
+        prompt = kwargs.pop("prompt", "")
+        image_urls = kwargs.pop("image_urls", [])
 
-        await self._status(status_callback, f"Preparing request for {model_name}")
-        images = await asyncio.gather(*[_download_image_bytes(u) for u in image_urls])
-        parts = _build_parts_from_images(list(images), prompt)
-        contents = parts or [types.Part.from_text(text=prompt)]
-        cfg = types.GenerateContentConfig(temperature=kwargs.get("temperature", 0.8), seed=kwargs.get("seed"))
+        if status_callback:
+            await status_callback("Preparing your request for Gemini...")
 
-        max_retries = 5
-        for attempt in range(max_retries):
-            await self._limiter.acquire()
-            try:
-                await self._status(status_callback, "Calling Gemini API...")
-                response = await self.async_models.generate_content(model=model_name, contents=contents, config=cfg)
-                images_out = _collect_image_parts_from_response(response)
-                if not images_out:
-                    reason = "UNKNOWN"
-                    if response.candidates: reason = response.candidates[0].finish_reason.name
-                    raise ValueError(f"Gemini API returned no image data. Finish reason: {reason}")
+        contents: List[Any] = []
+        if image_urls:
+            parts = await _fetch_images_as_parts(image_urls)
+            contents.extend(parts)
+        if prompt:
+            contents.append(prompt)
 
-                return GoogleAIClientResponse(
-                    image_bytes_list=[b for b, _ in images_out],
-                    content_types=[m for _, m in images_out],
-                    response_payload={"text": getattr(response, "text", "")},
+        # Ensure we request IMAGE output per current docs.
+        # If caller passed response_modalities, extend/normalize; otherwise enforce ["TEXT","IMAGE"].
+        rm = kwargs.pop("response_modalities", None)
+        if not rm:
+            response_modalities = ["IMAGE"]
+        else:
+            # normalize and ensure IMAGE is included
+            response_modalities = [str(x).upper() for x in rm]
+            if "IMAGE" not in response_modalities:
+                response_modalities.append("IMAGE")
+
+        gen_config = types.GenerateContentConfig(
+            temperature=kwargs.pop("temperature", 0.6),
+            top_p=kwargs.pop("top_p", 0.95),
+            top_k=kwargs.pop("top_k", 32),
+            max_output_tokens=kwargs.pop("max_output_tokens", None),
+            candidate_count=kwargs.pop("candidate_count", 1),
+            response_modalities=response_modalities,  # critical for image output
+        )
+
+        log = logger.bind(model=model, response_modalities=response_modalities)
+        if not _model_supports_image_output(model):
+            log.warning(
+                "Selected model might not support image output. Consider a '*-image' variant like 'gemini-2.5-flash-image-preview'."
+            )
+
+        log.info("Sending request to Gemini API for image generation.")
+        if status_callback:
+            await status_callback("Calling the Gemini API...")
+
+        try:
+            response = await self._client.aio.models.generate_content(
+                model=model,
+                contents=contents,
+                config=gen_config,
+            )
+        except genai_errors.APIError as e:
+            log.error("Gemini API error occurred during image generation", error=e)
+            raise
+
+        try:
+            if not response or not getattr(response, "candidates", None):
+                log.error(
+                    "Gemini returned an empty or invalid response object.",
+                    payload=str(response),
                 )
-            except genai_errors.APIError as e:
-                is_rate_limit = "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e)
-                if is_rate_limit and attempt < max_retries - 1:
-                    delay = max(1.0, _extract_retry_seconds_from_error(e)) * (2 ** attempt) + random.uniform(0, 1)
-                    await self._status(status_callback, f"Rate limited. Retrying in {delay:.1f}s...")
-                    await asyncio.sleep(delay)
-                    continue
-                logger.exception("Gemini API Error after retries or for a non-retriable reason.")
-                raise e
-        raise RuntimeError("Failed to get a response from Gemini after all retries.")
+                raise ValueError("Gemini returned an empty or invalid response.")
+
+            candidate = response.candidates[0]
+
+            # Defensive checks
+            content = getattr(candidate, "content", None)
+            if not content or not getattr(content, "parts", None):
+                finish_reason = (
+                    candidate.finish_reason.name
+                    if getattr(candidate, "finish_reason", None)
+                    else "UNKNOWN"
+                )
+                log.error(
+                    "Gemini response candidate has no content.",
+                    reason=finish_reason,
+                    payload=_serialize_response(response),
+                )
+                raise ValueError(
+                    f"Gemini response candidate was empty. Finish reason: {finish_reason}"
+                )
+
+            parts = content.parts
+            picked = _pick_best_inline_image(parts)
+
+            if not picked:
+                # Gather diagnostics for easier debugging.
+                finish_reason = (
+                    candidate.finish_reason.name
+                    if getattr(candidate, "finish_reason", None)
+                    else "UNKNOWN"
+                )
+                part_kinds = [
+                    "inline_data" if getattr(p, "inline_data", None) else
+                    "file_data" if getattr(p, "file_data", None) else
+                    "text" if getattr(p, "text", None) else
+                    "other"
+                    for p in parts
+                ]
+                log.error(
+                    "Gemini response did not contain an inline image.",
+                    reason=finish_reason,
+                    part_kinds=part_kinds,
+                    payload=_serialize_response(response),
+                )
+                raise ValueError(f"No inline_data image in response. Finish reason: {finish_reason}")
+
+            image_bytes, content_type = picked
+
+            return GoogleGeminiClientResponse(
+                image_bytes=image_bytes,
+                content_type=content_type or "image/png",
+                response_payload=_serialize_response(response),
+            )
+        except (IndexError, KeyError, ValueError) as e:
+            log.error(
+                "Failed to parse image from Gemini response",
+                error=str(e),
+                payload=_serialize_response(response),
+            )
+            raise ValueError("Could not parse a valid image from the Gemini API response.") from e
 
 
-class GoogleAIClient:
+class GoogleGeminiClient:
+    """A client for Google's Gemini API, focusing on image generation."""
     def __init__(self, **_kwargs: Any) -> None:
         self.images = _ImagesNamespace()

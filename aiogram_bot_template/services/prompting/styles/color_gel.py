@@ -36,3 +36,30 @@ OUTPUT
 * One PNG, 1536×1920 (4:5), full-bleed with no vignettes/ovals/overlays.
 * If any matte/vignette remains, remove it and refill with the gel-lit seamless so the image is edge-to-edge.
 """
+
+PROMPT_COLOR_GEL_NEXT_SHOT = """
+GOAL: Produce the next shot in a photoshoot, creating a new pose while maintaining the established 1980s Color-Gel aesthetic, wardrobe, and absolute facial identity.
+
+REFERENCE IMAGES
+*   **Input 1 (Composite Photo):** THE ABSOLUTE SOURCE OF TRUTH FOR FACIAL IDENTITY. Faces must match this photo exactly.
+*   **Input 2 (Previous Shot):** THE ABSOLUTE SOURCE OF TRUTH FOR STYLE. Match the lighting, color grading, background, wardrobe, and hair from this image.
+
+HARD CONSTRAINTS
+*   Facial identity, age, and proportions must be taken **exclusively** from **Input 1 (Composite Photo)**.
+*   The overall aesthetic (lighting, color, background, wardrobe, hair) must be taken **exclusively** from **Input 2 (Previous Shot)**.
+*   Strictly photorealistic.
+*   Full-bleed output. No borders, frames, vignettes, or overlays.
+*   Exactly two people visible.
+
+{{IDENTITY_LOCK_DATA}}
+
+STEP-BY-STEP ACTIONS
+1.  **Identity Transfer:** Analyze **Input 1 (Composite)** and apply the facial features, structure, and unique details described in the IDENTITY_LOCK_DATA section to the new pose.
+2.  **Style Transfer:** Analyze **Input 2 (Previous Shot)** and replicate its bold 80s color-gel lighting, saturated tonality, gradient background, and specific wardrobe/hair styling.
+3.  **New Pose & Composition:** Execute the new pose and composition as described below.
+    {{POSE_AND_COMPOSITION_DATA}}
+4.  **Integration & Refinement:** Seamlessly blend the identity from Input 1 with the style from Input 2 into the new pose. Ensure light and shadow interact correctly with the new facial angles. Perform subtle, realistic retouching.
+
+OUTPUT
+*   One PNG, 1536×1920 (4:5), full-bleed, representing the next shot in the sequence.
+"""

@@ -10,13 +10,15 @@ from aiogram.utils.i18n import gettext as _
 from pydantic import BaseModel
 
 from .clients.fal_async_client import FalAsyncClient
-# --- NEW: Import the new client and its response model ---
 from .clients.openrouter_client import OpenRouterClient, OpenRouterClientResponse
+# --- NEW: Import the new client and its response model ---
+from .clients.google_ai_client import GoogleGeminiClient, GoogleGeminiClientResponse
 
 logger = structlog.get_logger(__name__)
 
-# ... (_guess_mime function remains the same) ...
+
 def _guess_mime(data: bytes) -> str:
+    """Guesses the MIME type of image data."""
     kind = imghdr.what(None, data)
     if kind == "png":
         return "image/png"
@@ -29,7 +31,6 @@ def _guess_mime(data: bytes) -> str:
 
 
 class GenerationResult(BaseModel):
-    # ... (class remains the same) ...
     image_bytes: bytes
     content_type: str
     request_payload: dict
@@ -62,7 +63,6 @@ async def generate_image_with_reference(
         client_response: Any
 
         if isinstance(ai_client, FalAsyncClient):
-            # ... (this block remains the same) ...
             model_id = request_payload.pop("model")
 
             async def fal_status_adapter(status: dict) -> None:
@@ -80,26 +80,22 @@ async def generate_image_with_reference(
             )
             metadata["response_payload"] = client_response.get("response")
         
-        # --- NEW: Handler for our new OpenRouterClient ---
         elif isinstance(ai_client, OpenRouterClient):
             log.debug("Using OpenRouterClient for generation.")
-            # For OpenRouter, the status callback is simpler
             if status_callback:
                 await status_callback(_("🎨 Generating your portrait..."))
             client_response = await ai_client.images.generate(**request_payload)
             metadata["response_payload"] = client_response.response_payload
-
+        
+        # --- UPDATED: Generic check for clients that support status_callback ---
         elif "status_callback" in ai_client.images.generate.__code__.co_varnames:
-            # ... (this block remains the same) ...
             client_response = await ai_client.images.generate(**request_payload, status_callback=status_callback)
             metadata["response_payload"] = client_response.response_payload
         else:
-            # ... (this block remains the same) ...
             client_response = await ai_client.images.generate(**request_payload)
             metadata["response_payload"] = client_response.response_payload
 
     except Exception as e:
-        # ... (this block remains the same) ...
         log.exception("An error occurred during image generation")
         metadata["generation_time_ms"] = int((time.monotonic() - start_time) * 1000)
         metadata["response_payload"] = {"error": str(e)}
@@ -112,30 +108,29 @@ async def generate_image_with_reference(
         content_type: str | None = None
 
         if isinstance(client_response, dict):
-            # ... (FalAsyncClient logic) ...
+            # FalAsyncClient logic
             log.debug("Adapting response from FalAsyncClient.")
             image_bytes = client_response.get("image_bytes")
             content_type = client_response.get("content_type")
 
-        # --- NEW: Logic for OpenRouterClientResponse ---
+        # --- NEW: Logic for GoogleGeminiClientResponse ---
+        elif isinstance(client_response, GoogleGeminiClientResponse):
+            log.debug("Adapting response from GoogleGeminiClient.")
+            image_bytes = client_response.image_bytes
+            content_type = client_response.content_type
+            
         elif isinstance(client_response, OpenRouterClientResponse):
             log.debug("Adapting response from OpenRouterClient.")
             image_bytes = client_response.image_bytes
             content_type = client_response.content_type
 
-        elif hasattr(client_response, "image_bytes_list") and client_response.image_bytes_list:
-            # ... (Multi-image logic for native Google AI) ...
-            log.debug("Adapting response from multi-image client.", count=len(client_response.image_bytes_list))
-            image_bytes = client_response.image_bytes_list[0]
-            content_type = client_response.content_types[0]
         elif hasattr(client_response, "image_bytes"):
-            # ... (Single-image logic for Mock/Local) ...
+            # Single-image logic for Mock/Local
             log.debug("Adapting response from single-image client.")
             image_bytes = client_response.image_bytes
             content_type = client_response.content_type
 
         if not image_bytes:
-            # ... (this block remains the same) ...
             log.error("Client response is missing image data.", response=client_response)
             if "response_payload" not in metadata or not metadata["response_payload"]:
                 metadata["response_payload"] = {"error": "Invalid or empty response from AI client."}

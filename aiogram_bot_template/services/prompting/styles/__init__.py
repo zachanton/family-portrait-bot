@@ -1,7 +1,7 @@
 from .default import PROMPT_DEFAULT
 from .retro_motel import PROMPT_RETRO_MOTEL
 from .baroque import PROMPT_BAROQUE
-from .golden_hour import PROMPT_GOLDEN_HOUR
+from .golden_hour import PROMPT_GOLDEN_HOUR, PROMPT_GOLDEN_HOUR_NEXT_SHOT
 from .old import PROMPT_OLD
 from .party_polaroid import PROMPT_PARTY_POLAROID
 from .hollywood_glamour import PROMPT_HOLLYWOOD_GLAMOUR
@@ -22,5 +22,7 @@ __all__ = [
     "PROMPT_VOGUE",
     "PROMPT_WET_PLATE",
     "PROMPT_POP_ART",
+
+    "PROMPT_GOLDEN_HOUR_NEXT_SHOT",
 
 ]
