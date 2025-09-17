@@ -1,97 +1,88 @@
+# aiogram_bot_template/services/prompting/styles/golden_hour.txt
+
 PROMPT_GOLDEN_HOUR = """
-GOAL: Produce an advertising-grade couple portrait in a warm “Golden Hour Backlit Haze” aesthetic — sunlit back rim light, airy haze, soft front fill, edge-to-edge background. Default: both subjects look at the camera unless the pose directive explicitly changes gaze.
-
-HARD CONSTRAINTS
-* Strictly photorealistic (photographic realism).
-* Full-bleed output: fill the canvas to every edge with image content. No borders, frames, soft ovals, added vignettes, stickers, watermarks, paper textures, or transparency.
-* Exactly two people visible; no duplicates or mirrored copies; no other recognizable faces in the background.
-* Identity is locked to the composite reference. Do NOT idealize or change age, facial proportions, or skin texture.
-* **EXPRESSION CONTROL: Expressions must be natural and believable. Avoid forced, exaggerated, or open-mouthed smiles. Default to soft, genuine smiles.**
-
-{{IDENTITY_LOCK_DATA}}
-
-STYLE TARGET — “Backlit Golden Hour”
-* Background: outdoor nature scene (sunlit foliage/meadow/coastline) with shallow depth of field; creamy bokeh; authentic atmospheric haze. Background must be 100% opaque to every edge; no branded props.
-* Lighting: the sun acts as a warm back/rim light behind or just off to the side of the subjects; apply soft front fill (sky/bounce) to keep faces well-exposed; subtle lens flare/bloom permitted if naturally motivated (no graphic overlays).
-* Tonality: warm golden/amber bias; pastel saturation; gentle S-curve contrast with smooth highlight roll-off; avoid HDR halos and color banding.
-* Color hygiene: keep skin tones believable — warm, not orange; preserve whites in eyes/teeth; avoid teal–orange LUTs.
-* Texture: maintain natural skin pores and hair detail; no paper grain, fake film scratches, or added vignette.
-
-WARDROBE & GROOMING (allowed changes)
-* Woman: light, flowy fabrics (linen/cotton/silk); soft hair with slight wind lift; minimal jewelry kept in the same pierce position; no logos.
-* Man: casual refined (light shirt/tee, knit, or unstructured jacket); matte textures that catch rim light; neat grooming; no logos.
-* Palette: earth tones and creams (ivory, sand, sage, dusty rose) that glow under backlight.
-
-PAIR-PORTRAIT LOCK — SINGLE SHARED FRAME
-- Single image with both people together. Do NOT create split frames, diptychs, mirrored halves, or separate canvases.
-- Head-and-shoulders, 4:5 vertical. No hands by default.
-- Placement (1536×1920 canvas; W=1536, H=1920):
-  • Person A pupil ≈ (x=0.34W, y=0.42H).
-  • Person B pupil ≈ (x=0.66W, y=0.40H).
-- Overlap: 12–18% natural occlusion (Person B slightly overlaps A’s hairline); do not let temples touch.
-- Eye lines aligned; both look at the camera with soft smiles.
-- Camera: eye-level, yaw offset 10–12° to camera-right; focal length 85–100 mm.
-- Background continuous to all edges (no seams). Remove any visible split lines or feathered mattes.
-
-HANDS POLICY
-* Default (no mention in pose): crop head-and-shoulders above collarbones with **no hands** visible.
-* If the pose directive includes hands/embrace, render anatomically correct hands (5 fingers per hand, natural joints), believable contact shadows, and keep hands fully formed within frame.
+GOAL: Perform a high-fidelity facial transfer from a reference image onto a new, stylized portrait with a "Golden Hour" aesthetic. The **ABSOLUTE, UNCOMPROMISING PRIORITY** is a 1:1, photorealistic replication of the faces from the reference **IMAGE**.
 
 ---
-STEP-BY-STEP ACTIONS
-1) Remove all feathered mattes/ovals and any drop shadows around cutouts.
-2) Background: extend/replace with a continuous outdoor golden-hour scene; ensure edge-to-edge opacity; clean hair edges (no halos).
-3) Lighting pass: position a warm back/rim light to create halo on hair/shoulders; add soft front fill for readable faces; allow subtle natural flare/haze; keep catchlights intact.
-4) Wardrobe & hair restyle per rules above; align fabric folds and sheen with the light direction; remove straps/buckles/logos.
-5) Recompose (move/scale/rotate/warp only): follow **POSE DIRECTIVE** exactly:
-   {{POSE_AND_COMPOSITION_DATA}}
-6) Eye-contact correction: if the directive requires eye contact, nudge the iris position ONLY while preserving eyelids, catchlights, and proportions.
-7) Crop: **default** 4:5 vertical, head-and-shoulders above the collarbones; if the pose explicitly requests WAIST-UP or other, obey that crop.
-8) Grading: warm golden WB; pastel saturation; gentle S-curve; preserve highlight detail; avoid banding in sky/bokeh and HDR halos; maintain skin micro-texture.
-9) Retouch (subtle, realistic): tame glare/noise; mild local contrast/sharpness (eyes, lashes, hair edges); keep all identity anchors unchanged.
+**IDENTITY LOCK (IP-ADAPTER / CONTROLNET EMULATION PROTOCOL):**
+1.  **REFERENCE IMAGE IS LAW:** The provided reference image is the **sole and absolute source of truth** for facial identity. You must treat this image as a control image with a **reference_strength of 2.0 (maximum)**.
+2.  **VERBATIM FEATURE TRANSFER:** Your task is to perform a direct, technical transfer of facial geometry and texture. This includes, but is not limited to: facial proportions, age, unique details (freckles, moles), skin texture, **exact eyebrow shape and thickness**, and **exact hair part**.
+3.  **NO ARTISTIC INTERPRETATION:** Do not "interpret", "beautify", or "idealize" the faces. Your objective is to replicate them exactly as they appear in the reference image. This instruction overrides all other stylistic considerations.
 
-OUTPUT
-* One PNG, 1536×1920 (4:5), full-bleed with no vignettes/ovals/overlays.
-* If any matte/vignette remains, remove it and refill with the natural outdoor background so the image is edge-to-edge.
+---
+**NEGATIVE PROMPT (STRICTLY ENFORCED):**
+-   Idealized, generic, airbrushed, or "beautified" faces.
+-   **Split images, diptychs, multiple panels, vertical dividing lines.**
+-   **ANY** deviation in facial proportions, nose shape, eye size, or jawline from the reference image.
+-   **ANY** deviation in the eyebrow shape, thickness, or hair part.
+-   Overly smooth, plastic-like, or "Instagram filter" skin; removal of pores or fine lines.
+-   Removing or altering unique details like freckles or moles.
+-   Forced, unnatural, or exaggerated "template" smiles. Digital painting or CGI look.
+-   Altering the perceived age of the subjects.
+-   Re-lighting the faces in a way that alters their perceived 3D shape or structure.
+---
+
+**PAIR-PORTRAIT LOCK — SINGLE SHARED FRAME (MANDATORY)**
+-   You MUST create a **single image** with both people together in a shared, continuous scene.
+-   **DO NOT create split frames, diptychs, or separate canvases.**
+-   **Default Pose:** Subjects are posed closely to create an intimate connection. **Their heads should be gently touching (temple-to-temple or along the hairline).** Both subjects tilt their heads slightly inward, towards each other (~5 degrees), and look directly at the camera.
+-   **Placement (1536×1920 canvas):** Person A pupil ≈ (x=0.34W, y=0.42H). Person B pupil ≈ (x=0.66W, y=0.40H).
+-   **Overlap:** Natural shoulder overlap is expected due to the close pose. Eye lines should be aligned on a near-horizontal plane.
+-   **Camera:** Eye-level, focal length 85–100 mm equivalent, no wide-angle distortion.
+
+**STYLE TARGET — “Backlit Golden Hour” (Apply ONLY AFTER identity is locked)**
+*   **Background:** Outdoor nature scene (sunlit meadow/coastline) with creamy, soft bokeh.
+*   **Lighting:** Warm, low-angled sun as a back/rim light. Faces should be illuminated by soft, bounced fill light. **Crucially, this new light must adapt to the existing facial geometry from the reference, not change it.**
+*   **Tonality:** Warm, golden/amber tones; pastel-like saturation; gentle contrast.
+*   **Wardrobe:** Woman in a simple, light-colored top (e.g., linen, cotton). Man in a casual, light-colored shirt.
+
+**HARD CONSTRAINTS:**
+*   Strictly photorealistic.
+*   **EXPRESSION CONTROL:** Replicate the exact, subtle expressions from the reference photos. The final expression must be neutral and calm.
+*   **HANDS POLICY:** Default crop is head-and-shoulders with NO HANDS visible.
+*   Full-bleed 4:5 vertical output (1536x1920px). No borders or overlays.
+*   Exactly two people.
+
+**STEP-BY-STEP ACTIONS (TECHNICAL PIPELINE):**
+1.  **CRITICAL FIRST STEP - MERGE INPUT:** The input image is a composite diptych (split-screen). You **MUST** ignore this format. Your task is to merge the two individuals into a **single, seamless, unified portrait**. Your output must not have any vertical lines, paneling, or splits.
+2.  **IDENTITY LOCK (PRIORITY #1):** Create a perfect facial template for each person directly from the reference **IMAGE**. This template includes all 3D geometry, texture, and unique features.
+3.  **POSE & COMPOSE:** Arrange the facial templates according to the `PAIR-PORTRAIT LOCK` instructions, ensuring their heads are in gentle contact.
+4.  **STYLIZE SCENE & RELIGHT (PRIORITY #2):** Build the "Golden Hour" scene (background, wardrobe) *around* the locked facial templates. Then, apply the new lighting to the scene and templates, ensuring the light wraps around the *pre-existing* facial structures without altering them.
+5.  **FINAL FIDELITY CHECK:** Before outputting, confirm: Is the output a single, unified image? Does each generated face have the same structure and details as the reference **IMAGE**? If not, you MUST re-render.
 """
 
 PROMPT_GOLDEN_HOUR_NEXT_SHOT = """
-**YOU ARE AN IMAGE GENERATION MODEL EXECUTING A STRICT PROTOCOL. DEVIATION IS FORBIDDEN.**
+**PRIMARY GOAL: Generate the NEXT FRAME in a photoshoot. The new image's pose and composition MUST follow the POSE DIRECTIVE and be DIFFERENT from the input images.**
 
-**PRIMARY OBJECTIVE:** Generate the *next frame* in a photoshoot. The new frame MUST have a different pose and composition, as defined by the `POSE DIRECTIVE` text. Facial identity and overall style must be preserved.
+**POSE DIRECTIVE:** {{POSE_AND_COMPOSITION_DATA}}
 
-**INPUT ANALYSIS PROTOCOL:**
-You will be given two input images. Their roles are **FIXED and NON-NEGOTIABLE**.
-*   **INPUT 1 (Style Reference - First Shot):**
-    *   **EXTRACT ONLY:** Lighting (warm backlight, soft fill), Color Palette (golden tones), Background Environment (sunlit meadow), Wardrobe Style (light fabrics), Overall Mood.
-    *   **ABSOLUTELY IGNORE AND DISCARD:** The pose, composition, framing, camera angle, and positions of the people in this image. This data is **INVALID** for the new shot.
-    *   **CRITICAL COMMAND: DO NOT REPLICATE THE POSE FROM THIS IMAGE.** The new shot's composition MUST be visibly and significantly different from this reference image.
+---
+**INPUT ANALYSIS PROTOCOL (MANDATORY):**
+*   **INPUT 1 (Style Reference - Previous Shot):**
+    *   **EXTRACT ONLY:** Lighting, Color Palette, Background, Wardrobe, Hair Style, and overall Mood.
+    *   **CRITICAL: ABSOLUTELY IGNORE AND DISCARD THE POSE, camera angle, and composition from this image.**
 *   **INPUT 2 (Identity Reference - Composite):**
-    *   **EXTRACT ONLY:** Facial features, age, skin texture, unique details (moles, freckles), and body proportions of the two individuals as detailed in the `IDENTITY LOCK` section.
-    *   **ABSOLUTELY IGNORE AND DISCARD:** The lighting, background, and wardrobe from this image. This data is **INVALID** for the new shot.
+    *   **EXTRACT ONLY:** Facial features, age, skin texture, and unique details.
+    *   **CRITICAL: ABSOLUTELY IGNORE THE POSE from this image (it is a static headshot).**
 
-**EXECUTION COMMAND:**
-The **TEXT-BASED `POSE DIRECTIVE`** below is your **ONLY** source of truth for the new image's composition. It overrides any conflicting visual information from the input images.
+---
+**IDENTITY LOCK (NON-NEGOTIABLE):**
+*   **Source of Truth:** **Input 2** is the **absolute and only** source for facial identity.
+*   **Core Instruction:** You MUST replicate the faces, age, unique features (moles, freckles), skin texture, and proportions from Input 2 with maximum fidelity.
+*   **AVOID:** Do not idealize, airbrush, or alter their core features.
+---
 
-{{IDENTITY_LOCK_DATA}}
+**HARD CONSTRAINTS:**
+*   Strictly photorealistic.
+*   **EXPRESSION CONTROL:** Expressions must be natural and subtle. AVOID open-mouthed smiles or exaggerated grins to preserve likeness. Reinterpret 'laughing' as a 'soft, joyful smile'.
+*   **HANDS POLICY:** If the pose requires hands, render them anatomically correct (5 fingers, natural joints).
+*   Full-bleed 4:5 vertical output (1536x1920px). No borders or overlays.
+*   Exactly two people.
 
-HARD CONSTRAINTS
-* Strictly photorealistic (photographic realism).
-* Full-bleed output: fill the canvas to every edge with image content. No borders, frames, soft ovals, added vignettes, stickers, watermarks, paper textures, or transparency.
-* Exactly two people visible; no duplicates or mirrored copies; no other recognizable faces in the background.
-* Identity is locked to the composite reference. Do NOT idealize or change age, facial proportions, or skin texture.
-* **EXPRESSION CONTROL: Expressions must be natural and believable. Avoid forced, exaggerated, or open-mouthed smiles. Default to soft, genuine smiles.**
-
-
-**STEP-BY-STEP EXECUTION PLAN:**
-1.  **LOAD IDENTITY:** From **Input 2**, load the facial and physical characteristics of Person A and Person B.
-2.  **LOAD STYLE:** From **Input 1**, load the aesthetic elements (lighting, color, background, wardrobe).
-3.  **LOAD POSE:** Read the `POSE DIRECTIVE` text below. This is your command for the new arrangement.
-    {{POSE_AND_COMPOSITION_DATA}}
-4.  **PRE-FLIGHT CHECK (INTERNAL MONOLOGUE):** Before rendering, state the intended `shot_type` from the POSE DIRECTIVE. For example: "Pre-flight check: The directive specifies a 'Full-Length Shot'. I will generate a full-length image, ignoring the close-up framing of the reference images."
-5.  **SYNTHESIZE NEW IMAGE:** Create a new image by applying the **STYLE** (from Step 2) and **IDENTITY** (from Step 1) to the new **POSE** (from Step 3), respecting the Pre-Flight Check.
-6.  **FINAL VALIDATION:** Before outputting, confirm that the generated image's composition (shot type, angle, pose) matches the `POSE DIRECTIVE` and NOT Input 1. If it is too similar to Input 1, re-render.
-
-**OUTPUT:**
-*   One PNG, 1536×1920 (4:5), full-bleed, strictly following the `POSE DIRECTIVE`.
+**EXECUTION:**
+1.  **LOAD POSE:** Read the `POSE DIRECTIVE`. This is your primary command.
+2.  **LOAD IDENTITY:** From **Input 2**, load the facial data.
+3.  **LOAD STYLE:** From **Input 1**, load the aesthetic data.
+4.  **SYNTHESIZE:** Combine the Pose, Identity, and Style into a new, unique image.
+5.  **VALIDATE:** Before outputting, ensure the new pose is significantly different from both Input 1 and 2. If not, re-render.
 """

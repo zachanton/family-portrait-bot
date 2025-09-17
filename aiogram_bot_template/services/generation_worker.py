@@ -170,17 +170,14 @@ async def run_generation_worker(
             await _send_debug_image(bot=bot, chat_id=chat_id, redis=cache_pool, image_uid=composite_uid, caption="DEBUG: Composite image (Identity Source)")
 
         await status.update(_("✍️ Analyzing facial features for the photoshoot..."))
-        initial_identity_data = await prompt_enhancer.get_enhanced_prompt_data(image_url=composite_image_url)
+        initial_identity_data = None
+        # initial_identity_data = await prompt_enhancer.get_enhanced_prompt_data(image_url=composite_image_url)
         identity_lock_text = prompt_enhancer.format_enhanced_data_as_text(initial_identity_data) if initial_identity_data else "IDENTITY LOCK: Faces must match the reference image."
         log.info("Persistent identity lock created for the photoshoot.", text_length=len(identity_lock_text))
         
         last_sent_message = None
         previous_shot_url = None
         source_generation_id = None
-        first_successful_shot_url = None
-        
-        # --- KEY CHANGE: List to store used shot types for the session ---
-        used_shot_types: list[str] = []
         
         strategy = get_prompt_strategy(tier_config.client)
         
@@ -195,26 +192,23 @@ async def run_generation_worker(
             if i == 0:
                 await status.update(_("🎨 Generating shot {current} of {total}...").format(current=current_iteration, total=generation_count))
                 pose_composition_text = "Subjects are posed naturally, cheek-to-temple and shoulder-to-shoulder, with a slight inward head tilt, both looking at the camera. ~12% overlap for natural occlusion; align eye lines."
-                # The first shot is implicitly a 'Close-Up'
-                used_shot_types.append('Close-Up')
             
                 style_payload = strategy.create_group_photo_payload(style=chosen_style)
                 prompt_template = style_payload.get("prompt", "")
                 current_payload["image_urls"] = [composite_image_url]
             else:
-                if not previous_shot_url or not first_successful_shot_url:
-                    log_task.error("Cannot proceed with photoshoot, a required previous frame failed.")
+                if not previous_shot_url:
+                    log_task.error("Cannot proceed with photoshoot, the first frame failed.")
                     break
 
                 await status.update(_("🎬 Directing the next shot ({current}/{total})...").format(current=current_iteration, total=generation_count))
                 
                 translated_style_name = get_translated_style_name(chosen_style)
                 
-                # --- KEY CHANGE: Pass the list of used shot types to the enhancer ---
+                # --- KEY CHANGE: Always get a new random pose, without memory ---
                 next_frame_data = await prompt_enhancer.get_next_frame_data(
                     previous_shot_url, 
                     translated_style_name,
-                    used_shot_types=used_shot_types
                 )
 
                 if not next_frame_data:
@@ -222,13 +216,12 @@ async def run_generation_worker(
                     pose_composition_text = "Subjects are posed naturally, cheek-to-temple and shoulder-to-shoulder, with a slight inward head tilt, both looking at the camera. ~12% overlap for natural occlusion; align eye lines."
                 else:
                     pose_composition_text = prompt_enhancer.format_next_frame_data_as_text(next_frame_data)
-                    # --- KEY CHANGE: Add the new shot type to our memory ---
-                    used_shot_types.append(next_frame_data.camera.shot_type)
 
                 style_payload = strategy.create_group_photo_next_payload(style=chosen_style)
                 prompt_template = style_payload.get("prompt", "")
                 
-                current_payload["image_urls"] = [first_successful_shot_url, composite_image_url]
+                # --- KEY CHANGE: Inputs are now always the first shot (style) and composite (identity) ---
+                current_payload["image_urls"] = [previous_shot_url, composite_image_url]
                 
             temp_prompt = prompt_template.replace("{{IDENTITY_LOCK_DATA}}", identity_lock_text)
             final_prompt = temp_prompt.replace("{{POSE_AND_COMPOSITION_DATA}}", pose_composition_text)
@@ -245,10 +238,7 @@ async def run_generation_worker(
 
             if not result:
                 log_task.error("AI service failed for this frame", meta=error_meta)
-                # If a frame fails, we shouldn't add its intended shot_type to the used list
-                # as it was never shown to the user.
                 if i > 0:
-                    used_shot_types.pop() # Remove the last added shot_type
                     await bot.send_message(chat_id, _("Sorry, there was a problem creating the next shot. The photoshoot will end here."))
                 break
 
@@ -265,10 +255,9 @@ async def run_generation_worker(
 
             await image_cache.cache_image_bytes(result_image_unique_id, result.image_bytes, result.content_type, cache_pool)
             
-            previous_shot_url = image_cache.get_cached_image_proxy_url(result_image_unique_id)
-            
+            # --- KEY CHANGE: Only store the URL of the *first* shot for style reference ---
             if i == 0:
-                first_successful_shot_url = previous_shot_url
+                previous_shot_url = image_cache.get_cached_image_proxy_url(result_image_unique_id)
             
             log_entry = generations_repo.GenerationLog(
                 request_id=request_id, type=GenerationType.GROUP_PHOTO.value, status="completed",

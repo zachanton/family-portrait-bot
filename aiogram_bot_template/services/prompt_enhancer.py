@@ -229,12 +229,10 @@ async def get_enhanced_prompt_data(image_url: str) -> EnhancedPromptData | None:
 
 async def get_next_frame_data(
     image_url: str, 
-    style_context: str, 
-    used_shot_types: list[str] | None = None
+    style_context: str
 ) -> NextFrameData | None:
     """
     Calls a vision model to get structured commands for the next frame in a photoshoot.
-    Now includes memory of all previously used shot types to ensure variety.
     """
     if not settings.prompt_enhancer.enabled:
         logger.debug("Prompt enhancer is disabled in settings.")
@@ -252,21 +250,12 @@ async def get_next_frame_data(
         
         schema_definition = NextFrameData.model_json_schema()
 
-        # --- KEY CHANGE: Add list of used shot types to the user prompt ---
-        if used_shot_types:
-            used_types_str = ", ".join(f"'{t}'" for t in used_shot_types)
-            user_prompt_text = (
-                f"This is the last shot. The overall style is '{style_context}'.\n"
-                f"**CRITICAL:** The following shot_types have already been used: [{used_types_str}]. Your new JSON response MUST use a different `shot_type`.\n\n"
-                f"Generate JSON for the next shot according to the system prompt and this schema.\n\n"
-                f"SCHEMA:\n```json\n{json.dumps(schema_definition, indent=2)}\n```"
-            )
-        else: # First "next" shot, no used types yet
-            user_prompt_text = (
-                f"This is the last shot. The overall style is '{style_context}'. "
-                f"Generate JSON for the next shot according to the system prompt and this schema.\n\n"
-                f"SCHEMA:\n```json\n{json.dumps(schema_definition, indent=2)}\n```"
-            )
+        user_prompt_text = (
+            f"This is the last shot. The overall style is '{style_context}'.\n"
+            f"**CRITICAL:** Your new JSON response MUST describe a pose and composition that is different from the one in the image.\n\n"
+            f"Generate JSON for the next shot according to the system prompt and this schema.\n\n"
+            f"SCHEMA:\n```json\n{json.dumps(schema_definition, indent=2)}\n```"
+        )
 
         user_message_content = [
             {"type": "text", "text": user_prompt_text},
@@ -298,13 +287,6 @@ async def get_next_frame_data(
         try:
             json_data = json.loads(response_text)
             validated_data = NextFrameData.model_validate(json_data)
-            
-            if used_shot_types and validated_data.camera.shot_type in used_shot_types:
-                log.warning(
-                    "Enhancer model repeated a shot_type despite instructions.",
-                    repeated_shot_type=validated_data.camera.shot_type
-                )
-
             log.info("Successfully validated next frame data.")
             return validated_data
         except (json.JSONDecodeError, Exception) as e:
