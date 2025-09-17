@@ -4,7 +4,6 @@ from aiogram.utils.i18n import gettext as _
 
 from .base_strategy import PromptStrategy
 from .styles import (
-    PROMPT_DEFAULT,
     PROMPT_RETRO_MOTEL,
     PROMPT_GOLDEN_HOUR,
     PROMPT_BAROQUE,
@@ -67,7 +66,7 @@ class FalStrategy(PromptStrategy):
         Returns a detailed prompt and optimized parameters for generating a group portrait,
         based on the selected style.
         """
-        prompt = STYLE_PROMPTS.get(style, PROMPT_DEFAULT)
+        prompt = STYLE_PROMPTS.get(style, PROMPT_GOLDEN_HOUR)
         
         return {
             "prompt": prompt,
@@ -79,9 +78,9 @@ class FalStrategy(PromptStrategy):
         Returns a detailed prompt and optimized parameters for generating the next shot
         in a group portrait sequence.
         """
-        prompt = STYLE_PROMPTS_NEXT.get(style, PROMPT_DEFAULT)
+        prompt = STYLE_PROMPTS_NEXT.get(style, PROMPT_GOLDEN_HOUR_NEXT_SHOT)
         
         return {
             "prompt": prompt,
-            "temperature": 0.45,
+            "temperature": 0.5,
         }

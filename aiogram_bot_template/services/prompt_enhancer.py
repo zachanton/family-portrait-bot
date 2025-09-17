@@ -14,7 +14,6 @@ logger = structlog.get_logger(__name__)
 
 class WardrobeAndGrooming(BaseModel):
     """Describes a consistent wardrobe and grooming style for one person throughout the photoshoot."""
-    # --- REMOVED: hair_style field is gone ---
     upper_body_outfit: str = Field(..., description="A detailed description of the TOP part of the outfit. E.g., 'Simple, cream-colored linen blouse with short sleeves', 'Casual, light-blue button-down shirt made of cotton'.")
     lower_body_outfit: str = Field(..., description="A detailed description of the BOTTOM part of the outfit. E.g., 'Flowing beige maxi skirt', 'Dark denim jeans'.")
     accessories: str = Field(..., description="Minimal accessories. E.g., 'Small pearl stud earrings', 'No visible accessories'.")
@@ -31,7 +30,6 @@ class PhotoshootPlan(BaseModel):
     person_b_style: WardrobeAndGrooming
     poses: list[PoseDetails] = Field(..., description="A list of diverse and creative poses for the entire photoshoot, one for each shot.")
 
-# ... (get_photoshoot_plan function remains the same) ...
 async def get_photoshoot_plan(
     image_url: str,
     style_context: str,
@@ -102,7 +100,6 @@ async def get_photoshoot_plan(
         return None
 
 
-# --- MODIFIED: format_photoshoot_plan_for_prompt no longer includes hair ---
 def format_photoshoot_plan_for_prompt(plan: PhotoshootPlan, body_part: str = "full") -> str:
     """
     Formats the wardrobe and grooming part of the plan for injection into a prompt.

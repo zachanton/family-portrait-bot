@@ -93,13 +93,11 @@ async def run_generation_worker(
                 caption="DEBUG: Composite image (Identity Source)"
             )
 
-        # --- 2. Generate the entire photoshoot plan at the beginning ---
         await status.update(_("✍️ Directing your photoshoot..."))
         chosen_style = 'golden_hour' 
         translated_style_name = get_translated_style_name(chosen_style)
         style_context_for_planner = STYLE_DESCRIPTIONS.get(chosen_style, "A beautiful couple portrait.")
 
-        # The plan is now used for creative shots (from the 2nd one onwards)
         photoshoot_plan = await prompt_enhancer.get_photoshoot_plan(
             image_url=composite_image_url,
             style_context=style_context_for_planner,
@@ -114,8 +112,7 @@ async def run_generation_worker(
         
         log.info("Photoshoot plan created successfully.", plan=photoshoot_plan.model_dump())
         
-        # --- 3. Loop through the planned shots ---
-        master_shot_url = None # Will store the URL of the first, perfect shot
+        master_shot_url = None
         last_sent_message = None
         source_generation_id = None
         strategy = get_prompt_strategy(tier_config.client)
@@ -130,21 +127,17 @@ async def run_generation_worker(
             final_prompt: str
 
             if i == 0:
-                # --- PHASE 1: "MASTER SHOT" - Use a hardcoded, compatible pose ---
                 log_task.info("Preparing first shot (Master Shot) with a safe, compatible pose.")
                 
-                # The wardrobe comes from the plan, but the pose does not.
                 wardrobe_text = prompt_enhancer.format_photoshoot_plan_for_prompt(photoshoot_plan, body_part="upper")
                 
                 style_payload = strategy.create_group_photo_payload(style=chosen_style)
                 prompt_template = style_payload.get("prompt", "")
                 
-                # Inject only the wardrobe into the template. The pose is already hardcoded in the template.
                 final_prompt = prompt_template.replace("{{PHOTOSHOOT_PLAN_DATA}}", wardrobe_text)
                 
                 current_payload["image_urls"] = [composite_image_url]
             else:
-                # --- PHASE 2: "CREATIVE SHOTS" - Use the plan and the master shot ---
                 log_task.info("Preparing next creative shot.")
                 
                 if not master_shot_url:
@@ -153,7 +146,6 @@ async def run_generation_worker(
                     break
 
                 wardrobe_text = prompt_enhancer.format_photoshoot_plan_for_prompt(photoshoot_plan, body_part="full")
-                # Use the creative pose from the plan (index i-1 because poses are 0-indexed and we skip the first)
                 pose_details = photoshoot_plan.poses[i-1] 
                 pose_text = prompt_enhancer.format_pose_for_prompt(pose_details)
 
@@ -163,7 +155,6 @@ async def run_generation_worker(
                 temp_prompt = prompt_template.replace("{{PHOTOSHOOT_PLAN_DATA}}", wardrobe_text)
                 final_prompt = temp_prompt.replace("{{POSE_AND_COMPOSITION_DATA}}", pose_text)
                 
-                # Use the first generated shot as the reference for identity
                 current_payload["image_urls"] = [master_shot_url]
             
             current_payload.update(style_payload)
@@ -182,7 +173,6 @@ async def run_generation_worker(
                     await bot.send_message(chat_id, _("Sorry, there was a problem creating the next shot. The photoshoot will end here."))
                 break
 
-            # --- Process and send the generated image ---
             caption_text = _("Style: {style_name} (Shot {current}/{total})").format(
                 style_name=translated_style_name, current=current_iteration, total=generation_count
             )
@@ -192,7 +182,6 @@ async def run_generation_worker(
             result_image_unique_id = last_sent_message.photo[-1].file_unique_id
             await image_cache.cache_image_bytes(result_image_unique_id, result.image_bytes, result.content_type, cache_pool)
 
-            # Save the URL of the first shot to use as a reference for all subsequent shots
             if i == 0:
                 master_shot_url = image_cache.get_cached_image_proxy_url(result_image_unique_id)
 
