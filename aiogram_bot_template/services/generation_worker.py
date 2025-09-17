@@ -1,8 +1,6 @@
 # aiogram_bot_template/services/generation_worker.py
 import asyncio
 import random
-import uuid
-import re
 from contextlib import suppress
 
 import asyncpg
@@ -19,18 +17,12 @@ from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.db.db_api.storages import PostgresConnection
 from aiogram_bot_template.db.repo import generations as generations_repo
 from aiogram_bot_template.keyboards.inline import next_step
-from aiogram_bot_template.services import (
-    image_cache,
-    prompt_enhancer,
-    similarity_scorer,
-)
-from aiogram_bot_template.services.google_sheets_logger import GoogleSheetsLogger
+from aiogram_bot_template.services import image_cache, prompt_enhancer
 from aiogram_bot_template.services.pipelines.group_photo import GroupPhotoPipeline
 from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.utils.status_manager import StatusMessageManager
 from aiogram_bot_template.services.prompting.factory import get_prompt_strategy
-from aiogram_bot_template.services.prompting.fal_strategy import STYLE_PROMPTS, get_translated_style_name
-
+from aiogram_bot_template.services.prompting.fal_strategy import STYLE_PROMPTS, STYLE_DESCRIPTIONS, get_translated_style_name
 
 async def _send_debug_image(
     bot: Bot, chat_id: int, redis: Redis, image_uid: str, caption: str
@@ -43,79 +35,6 @@ async def _send_debug_image(
             await bot.send_photo(chat_id=chat_id, photo=photo, caption=caption)
     except Exception as e:
         structlog.get_logger(__name__).warning("Failed to send debug image", error=str(e))
-
-async def _calculate_and_update_similarity_caption(
-    bot: Bot,
-    chat_id: int,
-    message_id: int,
-    original_caption: str,
-    cache_pool: Redis,
-    log: structlog.typing.FilteringBoundLogger,
-    gen_data: dict,
-    result_image_bytes: bytes,
-):
-    """
-    Calculates similarity scores and updates the message caption in the background.
-    """
-    try:
-        log.info("Starting background similarity scoring.")
-        photos_collected = gen_data.get("photos_collected", [])
-        photo1_uid = photos_collected[0].get("file_unique_id")
-        photo2_uid = photos_collected[1].get("file_unique_id")
-
-        if not photo1_uid or not photo2_uid:
-            log.warning("Could not find original UIDs for similarity scoring.")
-            return
-
-        photo1_bytes, _ = await image_cache.get_cached_image_bytes(photo1_uid, cache_pool)
-        photo2_bytes, _ = await image_cache.get_cached_image_bytes(photo2_uid, cache_pool)
-
-        if not photo1_bytes or not photo2_bytes:
-            log.warning("Could not retrieve original photos from cache for similarity scoring.")
-            return
-
-        left_gen_bytes, right_gen_bytes = similarity_scorer.crop_generated_image(
-            result_image_bytes
-        )
-
-        if not left_gen_bytes or not right_gen_bytes:
-            log.warning("Failed to crop generated image for similarity scoring.")
-            return
-
-        score1_task = similarity_scorer.get_face_similarity_score(
-            single_image_bytes=photo1_bytes, pair_image_bytes=left_gen_bytes
-        )
-        score2_task = similarity_scorer.get_face_similarity_score(
-            single_image_bytes=photo2_bytes, pair_image_bytes=right_gen_bytes
-        )
-        score1, score2 = await asyncio.gather(score1_task, score2_task)
-        
-        score1_percent = ((score1 + 1) / 2) if score1 is not None else None
-        score2_percent = ((score2 + 1) / 2) if score2 is not None else None
-
-        score1_str = f"{score1_percent:.1%}" if score1_percent is not None else "N/A"
-        score2_str = f"{score2_percent:.1%}" if score2_percent is not None else "N/A"
-
-        debug_caption = (
-            f"\n\n---\n"
-            f"<b>Debug Info:</b>\n"
-            f"Similarity (Person 1): {score1_str}\n"
-            f"Similarity (Person 2): {score2_str}"
-        )
-        new_caption = original_caption + debug_caption
-
-        with suppress(TelegramBadRequest):
-            await bot.edit_message_caption(
-                chat_id=chat_id, message_id=message_id, caption=new_caption
-            )
-        log.info(
-            "Successfully updated caption with similarity scores.",
-            score1=score1_str,
-            score2=score2_str,
-        )
-
-    except Exception:
-        log.exception("An error occurred in the background similarity scoring task.")
 
 
 async def run_generation_worker(
@@ -147,91 +66,112 @@ async def run_generation_worker(
         generation_count = tier_config.count
         if generation_count <= 0:
             raise ValueError("Tier count must be a positive number.")
-            
-        chosen_style = random.choice(list(STYLE_PROMPTS.keys()))
-        chosen_style = 'golden_hour'
-        log.info("Photoshoot plan created", style=chosen_style, count=generation_count)
 
+        await generations_repo.update_generation_request_status(db, request_id, "processing")
+
+        # --- 1. Prepare base data and composite image ---
         db_data = await generations_repo.get_request_details_with_sources(db, request_id)
         if not db_data:
             raise ValueError(f"GenerationRequest with id={request_id} not found in DB.")
 
         gen_data = {**user_data, **db_data, "type": GenerationType.GROUP_PHOTO.value, "quality_level": quality_level}
-        await generations_repo.update_generation_request_status(db, request_id, "processing")
-
+        
         pipeline = GroupPhotoPipeline(bot, gen_data, log, status.update, cache_pool)
         pipeline_output = await pipeline.prepare_data()
         
         composite_image_url = pipeline_output.request_payload.get("image_urls", [None])[0]
         if not composite_image_url:
             raise ValueError("Composite image URL could not be determined.")
-        
+            
+        # --- DEBUG: Send the composite image to the user ---
         if composite_uid := pipeline_output.metadata.get("composite_uid"):
-            await _send_debug_image(bot=bot, chat_id=chat_id, redis=cache_pool, image_uid=composite_uid, caption="DEBUG: Composite image (Identity Source)")
+            await _send_debug_image(
+                bot=bot,
+                chat_id=chat_id,
+                redis=cache_pool,
+                image_uid=composite_uid,
+                caption="DEBUG: Composite image (Identity Source)"
+            )
 
-        await status.update(_("✍️ Analyzing facial features for the photoshoot..."))
-        initial_identity_data = None
-        # initial_identity_data = await prompt_enhancer.get_enhanced_prompt_data(image_url=composite_image_url)
-        identity_lock_text = prompt_enhancer.format_enhanced_data_as_text(initial_identity_data) if initial_identity_data else "IDENTITY LOCK: Faces must match the reference image."
-        log.info("Persistent identity lock created for the photoshoot.", text_length=len(identity_lock_text))
+        # --- 2. Generate the entire photoshoot plan at the beginning ---
+        await status.update(_("✍️ Directing your photoshoot..."))
+        chosen_style = 'golden_hour' 
+        translated_style_name = get_translated_style_name(chosen_style)
+        style_context_for_planner = STYLE_DESCRIPTIONS.get(chosen_style, "A beautiful couple portrait.")
+
+        # The plan is now used for creative shots (from the 2nd one onwards)
+        photoshoot_plan = await prompt_enhancer.get_photoshoot_plan(
+            image_url=composite_image_url,
+            style_context=style_context_for_planner,
+            shot_count=generation_count,
+        )
+
+        if not photoshoot_plan:
+            log.error("Failed to generate a photoshoot plan. Aborting generation.")
+            await status.update(_("Sorry, I couldn't plan the photoshoot. Please try again."))
+            await asyncio.sleep(3)
+            raise RuntimeError("Photoshoot planning failed.")
         
+        log.info("Photoshoot plan created successfully.", plan=photoshoot_plan.model_dump())
+        
+        # --- 3. Loop through the planned shots ---
+        master_shot_url = None # Will store the URL of the first, perfect shot
         last_sent_message = None
-        previous_shot_url = None
         source_generation_id = None
-        
         strategy = get_prompt_strategy(tier_config.client)
-        
+
         for i in range(generation_count):
             current_iteration = i + 1
             log_task = log.bind(style=chosen_style, sequence=f"{current_iteration}/{generation_count}")
-            log_task.info("Starting generation of a photoshoot frame.")
+            
+            await status.update(_("🎨 Generating shot {current} of {total}...").format(current=current_iteration, total=generation_count))
             
             current_payload = pipeline_output.request_payload.copy()
-            
-            pose_composition_text: str
+            final_prompt: str
+
             if i == 0:
-                await status.update(_("🎨 Generating shot {current} of {total}...").format(current=current_iteration, total=generation_count))
-                pose_composition_text = "Subjects are posed naturally, cheek-to-temple and shoulder-to-shoulder, with a slight inward head tilt, both looking at the camera. ~12% overlap for natural occlusion; align eye lines."
-            
+                # --- PHASE 1: "MASTER SHOT" - Use a hardcoded, compatible pose ---
+                log_task.info("Preparing first shot (Master Shot) with a safe, compatible pose.")
+                
+                # The wardrobe comes from the plan, but the pose does not.
+                wardrobe_text = prompt_enhancer.format_photoshoot_plan_for_prompt(photoshoot_plan, body_part="upper")
+                
                 style_payload = strategy.create_group_photo_payload(style=chosen_style)
                 prompt_template = style_payload.get("prompt", "")
+                
+                # Inject only the wardrobe into the template. The pose is already hardcoded in the template.
+                final_prompt = prompt_template.replace("{{PHOTOSHOOT_PLAN_DATA}}", wardrobe_text)
+                
                 current_payload["image_urls"] = [composite_image_url]
             else:
-                if not previous_shot_url:
-                    log_task.error("Cannot proceed with photoshoot, the first frame failed.")
+                # --- PHASE 2: "CREATIVE SHOTS" - Use the plan and the master shot ---
+                log_task.info("Preparing next creative shot.")
+                
+                if not master_shot_url:
+                    log.warning("Master shot URL is not available, ending photoshoot early.")
+                    await bot.send_message(chat_id, _("Could not create the first shot, so the photoshoot cannot continue."))
                     break
 
-                await status.update(_("🎬 Directing the next shot ({current}/{total})...").format(current=current_iteration, total=generation_count))
-                
-                translated_style_name = get_translated_style_name(chosen_style)
-                
-                # --- KEY CHANGE: Always get a new random pose, without memory ---
-                next_frame_data = await prompt_enhancer.get_next_frame_data(
-                    previous_shot_url, 
-                    translated_style_name,
-                )
-
-                if not next_frame_data:
-                    log_task.warning("Could not get next frame data from enhancer. Re-using default pose as fallback.")
-                    pose_composition_text = "Subjects are posed naturally, cheek-to-temple and shoulder-to-shoulder, with a slight inward head tilt, both looking at the camera. ~12% overlap for natural occlusion; align eye lines."
-                else:
-                    pose_composition_text = prompt_enhancer.format_next_frame_data_as_text(next_frame_data)
+                wardrobe_text = prompt_enhancer.format_photoshoot_plan_for_prompt(photoshoot_plan, body_part="full")
+                # Use the creative pose from the plan (index i-1 because poses are 0-indexed and we skip the first)
+                pose_details = photoshoot_plan.poses[i-1] 
+                pose_text = prompt_enhancer.format_pose_for_prompt(pose_details)
 
                 style_payload = strategy.create_group_photo_next_payload(style=chosen_style)
                 prompt_template = style_payload.get("prompt", "")
                 
-                # --- KEY CHANGE: Inputs are now always the first shot (style) and composite (identity) ---
-                current_payload["image_urls"] = [previous_shot_url, composite_image_url]
+                temp_prompt = prompt_template.replace("{{PHOTOSHOOT_PLAN_DATA}}", wardrobe_text)
+                final_prompt = temp_prompt.replace("{{POSE_AND_COMPOSITION_DATA}}", pose_text)
                 
-            temp_prompt = prompt_template.replace("{{IDENTITY_LOCK_DATA}}", identity_lock_text)
-            final_prompt = temp_prompt.replace("{{POSE_AND_COMPOSITION_DATA}}", pose_composition_text)
+                # Use the first generated shot as the reference for identity
+                current_payload["image_urls"] = [master_shot_url]
             
             current_payload.update(style_payload)
             current_payload["prompt"] = final_prompt
             current_payload["seed"] = random.randint(1, 1_000_000)
             
-            log_task.info("Final prompt prepared for generation", final_prompt_summary=final_prompt)
-
+            log_task.info("Final prompt prepared for generation", final_prompt=final_prompt)
+            
             result, error_meta = await pipeline.run_generation(
                 pipeline_output, payload_override=current_payload
             )
@@ -242,45 +182,42 @@ async def run_generation_worker(
                     await bot.send_message(chat_id, _("Sorry, there was a problem creating the next shot. The photoshoot will end here."))
                 break
 
-            translated_style_name = get_translated_style_name(chosen_style)
+            # --- Process and send the generated image ---
             caption_text = _("Style: {style_name} (Shot {current}/{total})").format(
                 style_name=translated_style_name, current=current_iteration, total=generation_count
             )
-
             photo = BufferedInputFile(result.image_bytes, f"photoshoot_{current_iteration}.png")
             last_sent_message = await bot.send_photo(chat_id=chat_id, photo=photo, caption=caption_text)
 
             result_image_unique_id = last_sent_message.photo[-1].file_unique_id
-            result_file_id = last_sent_message.photo[-1].file_id
-
             await image_cache.cache_image_bytes(result_image_unique_id, result.image_bytes, result.content_type, cache_pool)
-            
-            # --- KEY CHANGE: Only store the URL of the *first* shot for style reference ---
+
+            # Save the URL of the first shot to use as a reference for all subsequent shots
             if i == 0:
-                previous_shot_url = image_cache.get_cached_image_proxy_url(result_image_unique_id)
-            
+                master_shot_url = image_cache.get_cached_image_proxy_url(result_image_unique_id)
+
+            # --- Log the generation to DB ---
             log_entry = generations_repo.GenerationLog(
                 request_id=request_id, type=GenerationType.GROUP_PHOTO.value, status="completed",
                 quality_level=quality_level, trial_type=trial_type, seed=current_payload["seed"], style=chosen_style,
-                generation_time_ms=result.generation_time_ms, 
+                generation_time_ms=result.generation_time_ms,
                 api_request_payload=result.request_payload,
-                api_response_payload=result.response_payload, 
+                api_response_payload=result.response_payload,
                 enhanced_prompt=final_prompt,
                 result_image_unique_id=result_image_unique_id,
-                result_message_id=last_sent_message.message_id, result_file_id=result_file_id,
-                caption=caption_text,
-                sequence_index=i,
-                source_generation_id=source_generation_id
+                result_message_id=last_sent_message.message_id, result_file_id=last_sent_message.photo[-1].file_id,
+                caption=caption_text, sequence_index=i, source_generation_id=source_generation_id
             )
             source_generation_id = await generations_repo.create_generation_log(db, log_entry)
 
+        # --- Finalize the flow ---
         await status.delete()
 
         if not last_sent_message:
-             await bot.send_message(chat_id, _("Unfortunately, there was an issue with the generation and your photoshoot could not be completed. Please try again with /start."))
-             await generations_repo.update_generation_request_status(db, request_id, "failed_all_frames")
+             await bot.send_message(chat_id, _("Unfortunately, there was an issue and your photoshoot could not be completed. Please try again with /start."))
+             await generations_repo.update_generation_request_status(db, request_id, "failed")
         else:
-            await bot.send_message(chat_id, _("Your photoshoot is complete! What would you like to do next?"), 
+            await bot.send_message(chat_id, _("Your photoshoot is complete! What would you like to do next?"),
                 reply_markup=next_step.get_next_step_keyboard("continue", request_id)
             )
             await generations_repo.update_generation_request_status(db, request_id, "completed")
