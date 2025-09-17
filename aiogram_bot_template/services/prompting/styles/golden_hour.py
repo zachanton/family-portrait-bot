@@ -10,11 +10,10 @@ PROMPT_GOLDEN_HOUR = """
     "engine_hint": "IP-Adapter/ControlNet",
     "fidelity_strength": 2.5,
     "instructions": [
-        "The provided composite image is the non-negotiable source of truth for all facial and head features, including hair.",
+        "The provided composite image is the non-negotiable source of truth for all facial and head features.",
         "Perform a direct, technical transfer. This is a replication task, not a creative one.",
         "Do not interpret, idealize, beautify, or stylize the faces. Replicate them as they are.",
         "The final head positions, angles, and tilts in the output MUST be a 1:1 technical replica of the source image. Do not rotate or tilt the heads.",
-        "Pay special attention to the man's broader, more square jawline; do not make his face narrower or more oval."
     ],
     "feature_lockdown_list": {
         "hair_style_and_color": "Replicate 1:1. NO alterations. Match the man's damp, pushed-back hair exactly.",
@@ -48,7 +47,7 @@ PROMPT_GOLDEN_HOUR = """
 **POSE DIRECTIVE:**
 - **Shot Type:** Waist-up medium shot.
 - **Pose & Interaction:** A natural and realistic couple portrait. Person A (man) and Person B (woman) are sitting or standing closely together, shoulder to shoulder. Their bodies are turned slightly towards each other. This body pose must be adapted to be physically plausible with the UNALTERED head positions from the source image.
-- **Expression & Mood:** Replicate EACH person's expression from the reference photo EXACTLY. The man has a calm, neutral expression. The woman has a warm, joyful smile.
+- **Expression & Mood:** Replicate EACH person's expression from the reference photo EXACTLY.
 
 //--- DIRECTIVE: SCENE & STYLE ---
 {
