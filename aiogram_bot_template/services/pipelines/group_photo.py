@@ -11,8 +11,9 @@ class GroupPhotoPipeline(BasePipeline):
     
     async def prepare_data(self) -> PipelineOutput:
         """
-        Prepares a single composite image from two source photos.
-        The composite will be used for all subsequent generation variations.
+        Prepares two composite images from two source photos:
+        1. A full composite for the main generation.
+        2. A faces-only composite for potential future use.
         """
         await self.update_status_func("Preparing your group portrait... 👨‍👩‍👧")
 
@@ -34,14 +35,18 @@ class GroupPhotoPipeline(BasePipeline):
 
         await self.update_status_func("Creating a composite draft... 🖼️")
         
-        composite_bytes, left_aligned_bytes, right_aligned_bytes = photo_processing.create_composite_image(photo1_bytes, photo2_bytes)
-        if not composite_bytes:
+        composite_bytes, faces_only_bytes = photo_processing.create_composite_image(photo1_bytes, photo2_bytes)
+        if not composite_bytes or not faces_only_bytes:
             raise RuntimeError("Failed to create a composite image draft.")
 
-        composite_uid = f"composite_{self.gen_data.get('request_id', uuid.uuid4().hex)}"
+        request_id_str = self.gen_data.get('request_id', uuid.uuid4().hex)
+        composite_uid = f"composite_{request_id_str}"
         await image_cache.cache_image_bytes(composite_uid, composite_bytes, "image/jpeg", self.cache_pool)
         
-        self.log.info("Cached composite image", uid=composite_uid)
+        faces_only_uid = f"faces_only_{request_id_str}"
+        await image_cache.cache_image_bytes(faces_only_uid, faces_only_bytes, "image/jpeg", self.cache_pool)
+        
+        self.log.info("Cached composite and faces-only images", composite_uid=composite_uid, faces_only_uid=faces_only_uid)
         
         image_urls = [image_cache.get_cached_image_proxy_url(composite_uid)]
 
@@ -50,7 +55,6 @@ class GroupPhotoPipeline(BasePipeline):
         if not tier_config:
             raise ValueError(f"Tier configuration for quality level {quality_level} not found.")
 
-        # Create a base payload. Style and seed will be injected by the worker for each generation.
         strategy = get_prompt_strategy(tier_config.client)
         prompt_payload = strategy.create_group_photo_payload(style=None) 
 
@@ -61,6 +65,9 @@ class GroupPhotoPipeline(BasePipeline):
         }
         
         caption = _("✨ Here is your beautiful group portrait!")
-        metadata = { "composite_uid": composite_uid }
+        metadata = { 
+            "composite_uid": composite_uid,
+            "faces_only_uid": faces_only_uid,
+        }
         
         return PipelineOutput(request_payload=request_payload, caption=caption, metadata=metadata)

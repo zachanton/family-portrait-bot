@@ -61,6 +61,14 @@ class BasePipeline(ABC):
         )
         
         payload = payload_override or pipeline_output.request_payload.copy()
+
+        generation_config = getattr(settings, gen_type_enum.value)
+        tier_config = generation_config.tiers.get(quality_level)
+        image_key = tier_config.image_payload_key
+
+        if "image_urls" in payload and image_key != "image_urls":
+            image_value = payload.pop("image_urls")
+            payload[image_key] = image_value
         
         result, error_meta = await ai_service.generate_image_with_reference(
             payload,

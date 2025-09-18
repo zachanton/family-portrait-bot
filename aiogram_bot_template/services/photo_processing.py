@@ -19,6 +19,12 @@ FOREHEAD_TOP, CHIN_BOTTOM = 10, 152
 LEFT_EYE_OUTER, RIGHT_EYE_OUTER = 263, 33
 LEFT_FACE_OUTER, RIGHT_FACE_OUTER = 234, 454  # cheek extremes
 
+# NEW: Indices for the face oval contour, used for the faces-only composite
+FACE_OVAL_LANDMARK_INDICES = [
+    10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109
+]
+
+
 # --- Pipeline parameters ---
 # Face scale normalization: geometric mean of IOD and forehead→chin height
 TARGET_FACE_METRIC_PX = 220.0
@@ -162,6 +168,9 @@ def _save_face_debug_overlay(img_bgr: np.ndarray, person_data: Dict, title: str)
 # --- Rotate to eyes-horizontal and compute alpha-based clearances + rotated face points ---
 
 def _rotate_build_rgba_and_stats(person_data: Dict) -> Dict:
+    """
+    MODIFIED: Now also returns ALL rotated face landmarks.
+    """
     img_bgr = person_data["image_bgr"]
     mask = person_data["segmentation_mask"]
     h, w = img_bgr.shape[:2]
@@ -184,21 +193,25 @@ def _rotate_build_rgba_and_stats(person_data: Dict) -> Dict:
     rot_rgba = cv2.warpAffine(person_rgba, M, (w, h), flags=cv2.INTER_LINEAR, borderValue=(0, 0, 0, 0))
     eyes_rot = M @ np.array([center_eyes[0], center_eyes[1], 1.0], dtype=np.float32)
 
-    # Rotate key face points
-    def _rot(pt):
-        return M @ np.array([pt[0], pt[1], 1.0], dtype=np.float32)
+    # Rotate ALL face points
+    lm_hom = np.hstack([lm_px, np.ones((lm_px.shape[0], 1))])
+    rotated_landmarks = (M @ lm_hom.T).T
+
+    # Rotate key face points for head bounds calculation
+    def _rot(pt_idx):
+        return rotated_landmarks[pt_idx]
     rot_pts = {
-        "forehead": _rot(lm_px[FOREHEAD_TOP]),
-        "chin": _rot(lm_px[CHIN_BOTTOM]),
-        "cheek_L": _rot(lm_px[LEFT_FACE_OUTER]),
-        "cheek_R": _rot(lm_px[RIGHT_FACE_OUTER]),
+        "forehead": _rot(FOREHEAD_TOP),
+        "chin": _rot(CHIN_BOTTOM),
+        "cheek_L": _rot(LEFT_FACE_OUTER),
+        "cheek_R": _rot(RIGHT_FACE_OUTER),
     }
 
     # Alpha bounds (whole person bbox)
     a = rot_rgba[:, :, 3]
     ys, xs = np.where(a > 10)
     if len(ys) == 0:
-        top_y = 0; bot_y = h - 1; left_x = 0; right_x = w - 1
+        top_y, bot_y, left_x, right_x = 0, h - 1, 0, w - 1
     else:
         top_y, bot_y = int(ys.min()), int(ys.max())
         left_x, right_x = int(xs.min()), int(xs.max())
@@ -216,6 +229,7 @@ def _rotate_build_rgba_and_stats(person_data: Dict) -> Dict:
         "bounds": {"top_y": top_y, "bot_y": bot_y, "left_x": left_x, "right_x": right_x},
         "clearances": {"up": up_clear, "down": down_clear},
         "rot_face_pts": rot_pts,
+        "rot_landmarks": rotated_landmarks
     }
 
 
@@ -306,30 +320,85 @@ def _head_bounds_x_in_crop(
 
     return int(np.clip(xmin, 0, crop_w - 1)), int(np.clip(xmax, 0, crop_w - 1))
 
+# --- CORRECTED Function for faces-only composite ---
+def _create_faces_only_composite(L_data: Dict, R_data: Dict) -> np.ndarray:
+    """
+    Creates a new composite image containing only the faces of the two individuals
+    on a neutral background, aligned and normalized.
+    """
+    # Helper to create a soft-edged, cropped RGBA face from landmarks
+    def extract_face_rgba(data: Dict) -> np.ndarray:
+        img_bgr = data["rot_bgr"]
+        h, w = img_bgr.shape[:2]
+        landmarks = data["rot_landmarks"]
+        oval_points = landmarks[FACE_OVAL_LANDMARK_INDICES].astype(np.int32)
+
+        x, y, bw, bh = cv2.boundingRect(oval_points)
+
+        # Add padding to the crop to include soft edges
+        pad = int(max(bw, bh) * 0.15)
+        x1, y1 = max(0, x - pad), max(0, y - pad)
+        x2, y2 = min(w, x + bw + pad), min(h, y + bh + pad)
+
+        # Crop the image and adjust landmarks to the new coordinate system
+        cropped_bgr = img_bgr[y1:y2, x1:x2]
+        oval_points_cropped = oval_points - np.array([x1, y1])
+
+        mask = np.zeros(cropped_bgr.shape[:2], dtype=np.uint8)
+        cv2.fillConvexPoly(mask, cv2.convexHull(oval_points_cropped), 255)
+        mask = cv2.GaussianBlur(mask, (31, 31), 10)
+
+        face_rgba = cv2.cvtColor(cropped_bgr, cv2.COLOR_BGR2BGRA)
+        face_rgba[:, :, 3] = mask
+        return face_rgba
+
+    face_L_rgba = extract_face_rgba(L_data)
+    face_R_rgba = extract_face_rgba(R_data)
+
+    # Align faces vertically by their center
+    h_L, w_L = face_L_rgba.shape[:2]
+    h_R, w_R = face_R_rgba.shape[:2]
+    y_offset = (h_L // 2) - (h_R // 2)
+
+    margin = int(max(L_data['head_h'], R_data['head_h']) * 0.20)
+    canvas_w = w_L + w_R + margin
+    
+    # Canvas height must accommodate the tallest face and any vertical offset
+    canvas_h = max(h_L + abs(y_offset) if y_offset < 0 else h_L, h_R + abs(y_offset) if y_offset > 0 else h_R) + margin * 2
+    canvas = np.full((int(canvas_h), int(canvas_w), 3), 128, dtype=np.uint8) # Neutral gray background
+
+    # Position faces on the canvas
+    paste_y_L = margin + max(0, -y_offset)
+    paste_x_L = 0
+    paste_y_R = margin + max(0, y_offset)
+    paste_x_R = w_L + margin
+
+    canvas = paste_transparent(canvas, face_L_rgba, paste_x_L, paste_y_L)
+    canvas = paste_transparent(canvas, face_R_rgba, paste_x_R, paste_y_R)
+    return canvas
 
 # --- Main ---
 
 def create_composite_image(
     p1_bytes: bytes,
     p2_bytes: bytes
-) -> Tuple[Optional[bytes], Optional[bytes], Optional[bytes]]:
+) -> Tuple[Optional[bytes], Optional[bytes]]:
     """
-    Build composite with controlled head gap and also return pre-merge aligned portraits WITH background.
+    Build composite with controlled head gap and a separate faces-only composite.
 
     Args:
         p1_bytes: right photo bytes (woman; will be placed in front)
         p2_bytes: left photo bytes (man)
 
     Returns:
-        composite_jpeg: final composite as JPEG bytes (no alpha)
-        left_aligned_jpeg: left aligned portrait (BGR) as JPEG bytes WITH background
-        right_aligned_jpeg: right aligned portrait (BGR) as JPEG bytes WITH background
-        On failure returns (None, None, None).
+        composite_jpeg: final full composite as JPEG bytes.
+        faces_only_jpeg: final faces-only composite as JPEG bytes.
+        On failure returns (None, None).
     """
     p1_bgr = load_image_bgr_from_bytes(p1_bytes)  # right (woman)
     p2_bgr = load_image_bgr_from_bytes(p2_bytes)  # left (man)
     if p1_bgr is None or p2_bgr is None:
-        return None, None, None
+        return None, None
 
     try:
         # --- Initial analysis
@@ -369,7 +438,13 @@ def create_composite_image(
         # --- Rotate and collect stats + face points
         L = _rotate_build_rgba_and_stats(d2s)
         R = _rotate_build_rgba_and_stats(d1s)
+        
+        # --- NEW: Generate the faces-only composite ---
+        faces_only_composite_bgr = _create_faces_only_composite(L, R)
+        logger.info("Generated faces-only composite.", size=(faces_only_composite_bgr.shape[1], faces_only_composite_bgr.shape[0]))
 
+
+        # --- VVV OLD LOGIC FOR FULL COMPOSITE VVV ---
         # Common vertical crop from eyes (consistent framing)
         up_L, down_L = L["clearances"]["up"], L["clearances"]["down"]
         up_R, down_R = R["clearances"]["up"], R["clearances"]["down"]
@@ -399,11 +474,11 @@ def create_composite_image(
             crop, pad_left, pad_top = _pad_crop_with_offsets(rot_img, x1, y1, x2, y2)
             return crop, x1, y1, pad_left, pad_top
 
-        # Background crops (WITH background) — эти же кадры вернём пользователю
+        # Background crops (WITH background)
         left_bg, lx1, ly1, lpadx, lpady = crop_from_eyes_with_offsets(L["rot_bgr"], L["eyes_xy"])
         right_bg, rx1, ry1, rpadx, rpady = crop_from_eyes_with_offsets(R["rot_bgr"], R["eyes_xy"])
 
-        # Person crops (RGBA) для наложения поверх фона в композите
+        # Person crops (RGBA) for pasting over the background
         left_person_rgba, _, _, _, _ = crop_from_eyes_with_offsets(L["rot_rgba"], L["eyes_xy"])
         right_person_rgba, _, _, _, _ = crop_from_eyes_with_offsets(R["rot_rgba"], R["eyes_xy"])
 
@@ -413,22 +488,22 @@ def create_composite_image(
             equal_height=(left_bg.shape[0] == right_bg.shape[0])
         )
 
-        # --- HEAD bounds inside the crops (ignore torso/shoulders)
+        # HEAD bounds inside the crops (ignore torso/shoulders)
         lhx0, lhx1 = _head_bounds_x_in_crop(
             L["rot_rgba"], L["rot_face_pts"], lx1, ly1, lpadx, lpady,
             left_bg.shape[1], left_bg.shape[0], L["head_h"]
         )
-        rhx0, rhx1 = _head_bounds_x_in_crop(
+        rhx0, rh1 = _head_bounds_x_in_crop(
             R["rot_rgba"], R["rot_face_pts"], rx1, ry1, rpadx, rpady,
             right_bg.shape[1], right_bg.shape[0], R["head_h"]
         )
 
         head_margin_px = int(max(HEAD_MARGIN_PX_MIN, HEAD_MARGIN_RATIO_OF_HEADH * head_h_avg))
         logger.info("head_strip_bounds_x",
-            left_head_x=(lhx0, lhx1), right_head_x=(rhx0, rhx1), head_margin_px=head_margin_px
+            left_head_x=(lhx0, lhx1), right_head_x=(rhx0, rh1), head_margin_px=head_margin_px
         )
 
-        # --- Adaptive seam by HEAD boxes: enforce a margin between heads
+        # Adaptive seam by HEAD boxes: enforce a margin between heads
         w_left, w_right = left_bg.shape[1], right_bg.shape[1]
         base_overlap = int(min(w_left, w_right) * OVERLAP_RATIO)
 
@@ -449,7 +524,7 @@ def create_composite_image(
             right_start_x=right_x
         )
 
-        # --- Compose BACKGROUND
+        # Compose BACKGROUND
         h = left_bg.shape[0]
         final_w = w_left + w_right - overlap_px
         composite_bg = np.zeros((h, final_w, 3), dtype=np.uint8)
@@ -470,7 +545,7 @@ def create_composite_image(
         _soften_vertical_band(composite_bg, right_x, SEAM_SOFTEN_PX, SEAM_SOFTEN_SIGMA)
         logger.info("seam_soften", seam_x=right_x, width_px=SEAM_SOFTEN_PX, sigma=SEAM_SOFTEN_SIGMA)
 
-        # --- Paste PEOPLE: woman (right) MUST be in front; bodies may overlap
+        # Paste PEOPLE: woman (right) MUST be in front; bodies may overlap
         final_image = paste_transparent(composite_bg, left_person_rgba, 0, 0)
         final_image = paste_transparent(final_image, right_person_rgba, right_x, 0)
 
@@ -506,14 +581,13 @@ def create_composite_image(
 
         # --- Encode outputs
         composite_jpeg = convert_bgr_to_jpeg_bytes(final_image)
-        left_aligned_jpeg = convert_bgr_to_jpeg_bytes(left_bg)
-        right_aligned_jpeg = convert_bgr_to_jpeg_bytes(right_bg)
+        faces_only_jpeg = convert_bgr_to_jpeg_bytes(faces_only_composite_bgr)
 
-        return composite_jpeg, left_aligned_jpeg, right_aligned_jpeg
+        return composite_jpeg, faces_only_jpeg
 
     except Exception:
         logger.exception("A critical error occurred in create_composite_image.")
-        return None, None, None
+        return None, None
 
 
 def crop_generated_image(image_bytes: bytes) -> Tuple[Optional[bytes], Optional[bytes]]:

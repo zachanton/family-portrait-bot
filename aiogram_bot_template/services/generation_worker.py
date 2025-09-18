@@ -83,14 +83,22 @@ async def run_generation_worker(
         if not composite_image_url:
             raise ValueError("Composite image URL could not be determined.")
             
-        # --- DEBUG: Send the composite image to the user ---
+        # --- DEBUG: Send both composite images to the user ---
         if composite_uid := pipeline_output.metadata.get("composite_uid"):
             await _send_debug_image(
                 bot=bot,
                 chat_id=chat_id,
                 redis=cache_pool,
                 image_uid=composite_uid,
-                caption="DEBUG: Composite image (Identity Source)"
+                caption="DEBUG: Full Composite (Style + Initial Identity)"
+            )
+        if faces_only_uid := pipeline_output.metadata.get("faces_only_uid"):
+            await _send_debug_image(
+                bot=bot,
+                chat_id=chat_id,
+                redis=cache_pool,
+                image_uid=faces_only_uid,
+                caption="DEBUG: Faces-Only Composite (Strict Identity Source)"
             )
 
         await status.update(_("✍️ Directing your photoshoot..."))
@@ -104,11 +112,16 @@ async def run_generation_worker(
             shot_count=generation_count,
         )
 
-        if not photoshoot_plan:
-            log.error("Failed to generate a photoshoot plan. Aborting generation.")
+        # --- ADDED: Robustness check for the photoshoot plan ---
+        if not photoshoot_plan or len(photoshoot_plan.poses) < generation_count:
+            log.error(
+                "Failed to generate a valid photoshoot plan or not enough poses.",
+                expected=generation_count,
+                got=len(photoshoot_plan.poses) if photoshoot_plan else 0,
+            )
             await status.update(_("Sorry, I couldn't plan the photoshoot. Please try again."))
             await asyncio.sleep(3)
-            raise RuntimeError("Photoshoot planning failed.")
+            raise RuntimeError("Photoshoot planning failed or returned insufficient poses.")
         
         log.info("Photoshoot plan created successfully.", plan=photoshoot_plan.model_dump())
         
@@ -116,6 +129,12 @@ async def run_generation_worker(
         last_sent_message = None
         source_generation_id = None
         strategy = get_prompt_strategy(tier_config.client)
+        
+        faces_only_uid = pipeline_output.metadata.get("faces_only_uid")
+        if not faces_only_uid:
+            raise RuntimeError("faces_only_uid is missing from pipeline metadata.")
+        faces_only_url = image_cache.get_cached_image_proxy_url(faces_only_uid)
+
 
         for i in range(generation_count):
             current_iteration = i + 1
@@ -127,18 +146,23 @@ async def run_generation_worker(
             final_prompt: str
 
             if i == 0:
-                log_task.info("Preparing first shot (Master Shot) with a safe, compatible pose.")
+                log_task.info("Preparing first shot (Master Shot) with a single composite reference.")
                 
+                # The first shot uses the "safe" pose from the plan (index 0)
+                pose_details_first_shot = photoshoot_plan.poses[0]
+                pose_text_first_shot = prompt_enhancer.format_pose_for_prompt(pose_details_first_shot)
                 wardrobe_text = prompt_enhancer.format_photoshoot_plan_for_prompt(photoshoot_plan, body_part="upper")
                 
                 style_payload = strategy.create_group_photo_payload(style=chosen_style)
                 prompt_template = style_payload.get("prompt", "")
                 
-                final_prompt = prompt_template.replace("{{PHOTOSHOOT_PLAN_DATA}}", wardrobe_text)
+                # Inject BOTH wardrobe and the safe pose into the master prompt
+                temp_prompt = prompt_template.replace("{{PHOTOSHOOT_PLAN_DATA}}", wardrobe_text)
+                final_prompt = temp_prompt.replace("**POSE DIRECTIVE:**", pose_text_first_shot) # A bit of a hack, but works for this structure
                 
-                current_payload["image_urls"] = [composite_image_url]
+                current_payload["image_urls"] = [composite_image_url, faces_only_url]
             else:
-                log_task.info("Preparing next creative shot.")
+                log_task.info("Preparing next creative shot using dual reference images.")
                 
                 if not master_shot_url:
                     log.warning("Master shot URL is not available, ending photoshoot early.")
@@ -146,7 +170,9 @@ async def run_generation_worker(
                     break
 
                 wardrobe_text = prompt_enhancer.format_photoshoot_plan_for_prompt(photoshoot_plan, body_part="full")
-                pose_details = photoshoot_plan.poses[i-1] 
+                
+                # --- CORRECTED LOGIC: Use the correct pose index for the current shot ---
+                pose_details = photoshoot_plan.poses[i] 
                 pose_text = prompt_enhancer.format_pose_for_prompt(pose_details)
 
                 style_payload = strategy.create_group_photo_next_payload(style=chosen_style)
@@ -155,7 +181,8 @@ async def run_generation_worker(
                 temp_prompt = prompt_template.replace("{{PHOTOSHOOT_PLAN_DATA}}", wardrobe_text)
                 final_prompt = temp_prompt.replace("{{POSE_AND_COMPOSITION_DATA}}", pose_text)
                 
-                current_payload["image_urls"] = [master_shot_url]
+                current_payload["image_urls"] = [master_shot_url, faces_only_url]
+                log_task.info("Using dual image URLs for generation", urls=current_payload["image_urls"])
             
             current_payload.update(style_payload)
             current_payload["prompt"] = final_prompt
@@ -185,7 +212,6 @@ async def run_generation_worker(
             if i == 0:
                 master_shot_url = image_cache.get_cached_image_proxy_url(result_image_unique_id)
 
-            # --- Log the generation to DB ---
             log_entry = generations_repo.GenerationLog(
                 request_id=request_id, type=GenerationType.GROUP_PHOTO.value, status="completed",
                 quality_level=quality_level, trial_type=trial_type, seed=current_payload["seed"], style=chosen_style,

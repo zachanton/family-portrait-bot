@@ -68,6 +68,9 @@ class GenerationConfig(BaseModel):
 
 class GoogleConfig(BaseModel):
     sheet_id: str | None = None
+    project_id: str | None = None  # ID вашего проекта в Google Cloud
+    location: str | None = None    # Регион, например, "us-central1"
+    sheet_id: str | None = None
     service_account_creds_json: SecretStr | None = None
 
 class PromptEnhancerConfig(BaseModel):

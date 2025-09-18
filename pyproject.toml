@@ -69,6 +69,8 @@ gspread-asyncio = "^2.0.0"
 mediapipe = "^0.10.21"
 insightface = ">=0.7"
 onnxruntime = "*" # Or a specific version if you prefer
+google-cloud-aiplatform = "^1.114.0"
+google-auth = "^2.40.3"
 
 
 [tool.poetry.group.local-ml]

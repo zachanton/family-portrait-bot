@@ -1,128 +1,79 @@
 # aiogram_bot_template/services/prompting/styles/golden_hour.txt
 PROMPT_GOLDEN_HOUR = """
-// TECHNICAL PROMPT FOR IMAGE GENERATION v5.0
-// GOAL: High-fidelity facial transfer onto a stylized "Golden Hour" scene. Identity replication is the absolute priority over artistic interpretation.
+**OUTPUT FIRST**
+Create a **vertical 4:5 (1536×1920) professional portrait**, single image, strictly photorealistic. **External camera (not a selfie).**
 
-//--- CONFIGURATION: FACIAL INTEGRITY LOCK ---
-{
-    "identity_source": "provided_image",
-    "mode": "strict_replication",
-    "engine_hint": "IP-Adapter/ControlNet",
-    "fidelity_strength": 2.5,
-    "instructions": [
-        "The provided composite image is the non-negotiable source of truth for all facial and head features.",
-        "Perform a direct, technical transfer. This is a replication task, not a creative one.",
-        "Do not interpret, idealize, beautify, or stylize the faces. Replicate them as they are.",
-        "The final head positions, angles, and tilts in the output MUST be a 1:1 technical replica of the source image. Do not rotate or tilt the heads.",
-    ],
-    "feature_lockdown_list": {
-        "hair_style_and_color": "Replicate 1:1. NO alterations. Match the man's damp, pushed-back hair exactly.",
-        "face_shape": "Replicate 1:1. NO alterations.",
-        "jawline_and_chin": "Replicate 1:1. NO alterations.",
-        "nose_shape_and_size": "Replicate 1:1. NO alterations.",
-        "lip_shape_and_fullness": "Replicate 1:1. NO alterations.",
-        "eyebrow_shape_and_thickness": "Replicate 1:1. NO alterations.",
-        "skin_texture_and_details": "Replicate 1:1. Preserve all unique features, including stubble and skin pores."
-    }
-}
+**References**
+* **Image A:** base composite — two people as positioned.
+* **Image B:** tight face crops — identity authority.
 
-//--- CONFIGURATION: NEGATIVE PROMPTS (Strictly Enforced) ---
-[
-    "beautified faces", "idealized faces", "generic model-like features", "airbrushed skin", "face smoothing", "perfect skin",
-    "slimmer face", "softened jawline", "symmetrical face", "narrower face", "oval face on man", "elongated face",
-    "rotated head", "tilted head", "different head angle",
-    "styled hair", "dry hair", "different hairstyle", "voluminous hair",
-    "smiling man", "grinning man",
-    "any modification to nose, lips, or eyebrows from the reference",
-    "any change to hairstyle or hair color from the reference",
-    "altering perceived age",
-    "split images", "diptychs", "panels", "collage",
-    "deformed hands", "mutated hands", "extra fingers",
-    "digital painting", "CGI look",
-    "closed mouth if reference is smiling"
-]
+**Edit intent**
+Rebuild **bodies, wardrobe and scene** for a warm golden-hour couple portrait. **Do not alter facial identity.**
 
-//--- DIRECTIVE: FIRST SHOT COMPOSITION ---
-// This is a safe, hardcoded pose to ensure maximum fidelity for the first "Master" shot.
-**POSE DIRECTIVE:**
-- **Shot Type:** Waist-up medium shot.
-- **Pose & Interaction:** A natural and realistic couple portrait. Person A (man) and Person B (woman) are sitting or standing closely together, shoulder to shoulder. Their bodies are turned slightly towards each other. This body pose must be adapted to be physically plausible with the UNALTERED head positions from the source image.
-- **Expression & Mood:** Replicate EACH person's expression from the reference photo EXACTLY.
+**Identity locks (must keep)**
+1) **Geometry lock (B > A if conflicting):** preserve craniofacial proportions from Image B — face outline, cheekbones, jawline/chin, inter-ocular distance, eyelid crease/eye shape, nose bridge/tip/width/length, philtrum & lip outline/fullness.  
+2) **Texture lock:** keep natural **skin texture** (pores, freckles, moles, beard stubble, under-eye texture), asymmetry and tooth shade; **no beautification/AI smoothing**.  
+3) **Hair lock (minimal change):** keep **hairline shape and apparent length**; only light grooming/wind and small tone shifts from lighting; **no new fringe/parting/braids/volume jumps**.  
+4) **Gaze lock:** **both subjects look straight into the camera**; align pupils to the lens; preserve eyelid tension and expression; keep catchlights plausible (soft elliptical highlight ~10–11 o’clock); no cross-eye.
 
-//--- DIRECTIVE: SCENE & STYLE ---
-{
-    "style_name": "Backlit Golden Hour",
-    "background": "Outdoor nature scene (sunlit meadow or coastline) with creamy, soft bokeh.",
-    "lighting": "Warm, low-angled sun as a back/rim light. Faces illuminated by soft, bounced fill light.",
-    "tonality": "Warm, golden/amber tones; pastel-like saturation; gentle contrast."
-}
-
-//--- DIRECTIVE: WARDROBE ---
-// Apply consistently as per the plan. The model will replicate hair from the source image.
+**What may change**
+5) **Bodies only:** build natural neck/shoulders/arms/torso connecting to the fixed heads; achieve proximity/intimacy via **body pose**, not face reshaping.  
+6) **Wardrobe (keep plan & colorway):**
 {{PHOTOSHOOT_PLAN_DATA}}
 
-//--- FINAL OUTPUT SPECIFICATIONS ---
-{
-    "realism": "Strictly photorealistic",
-    "expression": "Replicate each person's individual expression from the reference photo exactly.",
-    "format": "PNG",
-    "resolution": "1536x1920",
-    "aspect_ratio": "4:5 vertical",
-    "bleed": "full_bleed",
-    "overlays": "none",
-    "subject_count": 2
-}
+**Scene, optics & light**
+7) Golden-hour meadow; sun just above horizon behind subjects; **warm rim light + soft bounced fill camera-left**; consistent shadows/occlusions on hair/shoulders.  
+8) **Camera:** eye-level; lens look ≈ **85 mm FF at f/2.0–2.8**, subject distance ~2–3 m; shallow DOF, creamy bokeh.  
+9) **Framing:** {{SHOT_SIZE:=waist-up}}. Keep **left/right order** as in Image A.
+
+**Avoid (hard)**
+Resculpted faces; changed face width/eye size/lip shape; altered hair **length or hairline**; different people; heavy skin smoothing; CGI/illustration look; multi-panel/text.
+
+**File**
+PNG, **1536×1920**, full bleed.
 """
+
 
 # --- PROMPT FOR SUBSEQUENT SHOTS ---
 PROMPT_GOLDEN_HOUR_NEXT_SHOT = """
-// TECHNICAL PROMPT FOR IMAGE GENERATION v5.0 (Next Shot)
-// GOAL: Generate the next frame in a sequence, maintaining identity and style continuity.
+**OUTPUT FIRST**
+Create a **vertical 4:5 (1536×1920) professional portrait**, single image, strictly photorealistic. **External camera (not a selfie).**
 
-//--- CONFIGURATION: FACIAL INTEGRITY LOCK ---
-{
-    "identity_source": "previous_shot_image",
-    "mode": "strict_replication",
-    "engine_hint": "IP-Adapter/ControlNet",
-    "fidelity_strength": 2.0,
-    "instructions": [
-        "The faces and hair in the provided previous shot are the absolute source of truth for identity.",
-        "Replicate facial features 1:1. No beautification or alteration is permitted."
-    ]
-}
+**References**
+* **Image A:** previous master frame — style/wardrobe/lighting & character continuity.
+* **Image B:** tight face crops — identity authority.
 
-//--- CONFIGURATION: NEGATIVE PROMPTS (Strictly Enforced) ---
-[
-    "blurry or indistinct faces",
-    "faces that do not match the previous shot",
-    "deformed hands", "mutated hands", "extra fingers", "missing fingers", "fused fingers",
-    "intertwined fingers", "interlaced fingers"
-]
+**Goal**
+Generate the **next photo from the same photoshoot**. Same two people, **same wardrobe** as in Image A. Preserve **facial identity** per Image B. **Both subjects look into the camera.**
 
-//--- DIRECTIVE: POSE & COMPOSITION ---
+**Series invariants (do not change)**
+1) **Identity geometry & texture** from B (outline, proportions, eyelids, nose, lips; freckles, pores, stubble, tooth shade).
+2) **Hairline & length unchanged**; only light wind/grooming.
+3) **Wardrobe continuity:** same items/materials/colors from A; keep accessory placement if present.
+4) **Subject order:** left person in A stays left; right stays right.
+5) **Lighting continuity:** golden-hour rim from behind + soft bounce camera-left; shadows consistent with sun.
+6) Strictly photorealistic, single image, no text/panels.
+
+**POSE BLUEPRINT**
 {{POSE_AND_COMPOSITION_DATA}}
 
-//--- DIRECTIVE: SCENE & STYLE (RECREATION) ---
-{
-    "style_name": "Backlit Golden Hour",
-    "background": "Outdoor nature scene (sunlit meadow or coastline) with creamy, soft bokeh.",
-    "lighting": "Warm, low-angled sun as a back/rim light. Faces illuminated by soft, bounced fill light.",
-    "tonality": "Warm, golden/amber tones; pastel-like saturation; gentle contrast."
-}
-
-//--- DIRECTIVE: WARDROBE ---
-// Apply consistently as per the plan. The model will replicate hair from the source image.
+**WARDROBE**
 {{PHOTOSHOOT_PLAN_DATA}}
 
-//--- FINAL OUTPUT SPECIFICATIONS ---
-{
-    "realism": "Strictly photorealistic",
-    "hands_policy": "Render anatomically correct if visible",
-    "format": "PNG",
-    "resolution": "1536x1920",
-    "aspect_ratio": "4:5 vertical",
-    "bleed": "full_bleed",
-    "overlays": "none",
-    "subject_count": 2
-}
+**Hands & fingers (anatomical realism — must keep)**
+- Correct **finger count and separation** on each visible hand; **no fusing, duplication, or missing fingers**.
+- Natural **bone/joint articulation** (MCP/PIP/DIP); no impossible bends; thumbs oriented anatomically (medial side).
+- Realistic **scale and proportions** of palms and phalanges; consistent left/right handedness.
+- Where hands **touch/intersect** (holding, hugging, hand-over-hand): enforce **proper occlusion order**, subtle **contact shadows**, and **slight skin compression** at pressure points; **no geometry clipping** through bodies or clothes.
+- Maintain **skin texture** (creases, knuckles, tendons, veins) and **nails** with plausible shape/length; avoid plastic/airbrushed look.
+- If accessories (rings/bracelets) are present in A, keep them on the **same fingers/sides**.
+
+**Optics & framing**
+Eye-level camera; lens look ≈ **85 mm FF at f/2.0–2.8**; shallow DOF with creamy bokeh. Framing: {{SHOT_SIZE:=waist-up or full-length}} per blueprint.
+
+**Hard avoid**
+Any change to facial proportions; eye enlargement/whitening; hair **length/hairline** change; different clothes/colors; heavy smoothing/beautification; CGI/illustration look; **merged, extra, missing, or overly bent fingers; mitten-like hands; nail artifacts; hand/body clipping**; extra people; split images.
+
+**File**
+PNG, **1536×1920**, full bleed.
 """
