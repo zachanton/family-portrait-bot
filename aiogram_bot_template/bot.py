@@ -34,6 +34,7 @@ from aiogram_bot_template.handlers import (
     quality_handler,
     settings as settings_handler,
     utility,
+    child_params_handler,
 )
 
 
@@ -104,6 +105,7 @@ def setup_handlers(dp: Dispatcher) -> None:
     dp.include_router(settings_handler.router)
     dp.include_router(utility.router)
     dp.include_router(photo_handler.router)
+    dp.include_router(child_params_handler.router)
     dp.include_router(quality_handler.router)
     dp.include_router(payment_handler.router)
     dp.include_router(next_step_handler.router)

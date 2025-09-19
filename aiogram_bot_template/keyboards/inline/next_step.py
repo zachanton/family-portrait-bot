@@ -10,7 +10,7 @@ def get_next_step_keyboard(continue_key: str, request_id: int) -> InlineKeyboard
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
-                text=_("🔁 More Variations"),
+                text=_("🔁 Try again"),
                 callback_data=RetryGenerationCallback(request_id=request_id).pack()
             )
         ],

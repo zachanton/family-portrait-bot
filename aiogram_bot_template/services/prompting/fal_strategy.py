@@ -16,6 +16,8 @@ from .styles import (
     PROMPT_POP_ART,
     PROMPT_GOLDEN_HOUR_NEXT_SHOT
 )
+from .styles import PROMPT_CHILD_GENERATION
+
 
 STYLE_PROMPTS = {
     "old": PROMPT_OLD,
@@ -83,4 +85,18 @@ class FalStrategy(PromptStrategy):
         return {
             "prompt": prompt,
             "temperature": 0.5,
+        }
+
+    def create_child_generation_payload(self, description: str, child_gender: str, child_age: int, child_resemblance: str) -> Dict[str, Any]:
+        """
+        Creates the payload for generating a child's portrait.
+        """
+        prompt = PROMPT_CHILD_GENERATION.replace("{{CHILD_DESCRIPTION_DATA}}", description)
+        prompt = prompt.replace("{{child_age}}", child_age)
+        prompt = prompt.replace("{{child_gender}}", child_gender)
+        prompt = prompt.replace("{{child_resemblance}}", child_resemblance)
+        
+        return {
+            "prompt": prompt,
+            "temperature": 0.4, # Slightly more creative than a direct copy
         }

@@ -42,12 +42,22 @@ async def process_quality_selection(
 
     try:
         quality_val = int(cb.data.split(":", 1)[1])
-        await state.update_data(quality=quality_val)
+        await state.update_data(quality_level=quality_val)
     except (ValueError, IndexError):
         await cb.message.answer(_("An error occurred. Please start over with /cancel."))
         return
+    
 
-    tier_config = settings.group_photo.tiers.get(quality_val)
+    generation_type_str = user_data.get("generation_type")
+    if not generation_type_str:
+        await cb.message.answer(_("A critical error occurred (type missing). Please start over with /cancel."))
+        return
+    generation_type = GenerationType(generation_type_str)
+    
+    # Find the correct config based on type
+    generation_config = getattr(settings, generation_type.value)
+    tier_config = generation_config.tiers.get(quality_val)
+
     if not tier_config:
         await cb.message.answer(_("A configuration error occurred. Please start over with /cancel."))
         return
@@ -61,12 +71,15 @@ async def process_quality_selection(
 
     # Logic for the free tier
     if quality_val == 0:
-        has_used_trial = await users_repo.get_user_trial_status(db, user_id)
+        has_used_trial = await users_repo.get_user_trial_status(db, cb.from_user.id)
         
-        if not is_in_whitelist and has_used_trial:
+        if not (user_id in settings.free_trial_whitelist) and has_used_trial:
             await cb.message.answer(
                 _("Your free trial has already been used. Please choose a paid package to proceed:"),
-                reply_markup=quality_kb(is_trial_available=False)
+                reply_markup=quality_kb(
+                    generation_type=generation_type, 
+                    is_trial_available=False
+                )
             )
             return
 

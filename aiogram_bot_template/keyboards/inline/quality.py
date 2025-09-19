@@ -1,38 +1,50 @@
 # aiogram_bot_template/keyboards/inline/quality.py
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.i18n import gettext as _, ngettext
+
+# --- NEW: Import GenerationType to know which settings to use ---
+from aiogram_bot_template.data.constants import GenerationType
 from aiogram_bot_template.data.settings import settings
 
 def _get_translated_tier_name(q: int, count: int) -> str:
     """Returns a translatable string for a given quality tier."""
     if q == 0:
-        # Use ngettext for proper pluralization on the free tier as well
         return ngettext(
             "🎁 Free Trial ({count} Portrait)",
             "🎁 Free Trial ({count} Portraits)",
             count
         ).format(count=count)
     
-    # Using ngettext for proper pluralization
     return ngettext(
-        "✨ {count} Random Portrait",
-        "✨ {count} Random Portraits",
+        "✨ {count} Portrait",
+        "✨ {count} Portraits",
         count
     ).format(count=count)
 
-def quality_kb(is_trial_available: bool) -> InlineKeyboardMarkup:
+# --- REFACTORED: The function now accepts a generation_type ---
+def quality_kb(generation_type: GenerationType, is_trial_available: bool) -> InlineKeyboardMarkup:
     """
     Creates a keyboard for selecting a generation package.
+    Dynamically loads tiers based on the provided generation_type.
     Conditionally shows the Tier 0 (Free Trial) button.
     """
     rows: list[list[InlineKeyboardButton]] = []
+    
+    # --- DYNAMIC LOGIC: Get the correct config section (e.g., settings.child_generation) ---
+    try:
+        generation_config = getattr(settings, generation_type.value)
+    except AttributeError:
+        # Fallback or error handling if the config section doesn't exist
+        # This prevents the bot from crashing on a config error.
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=_("Error: Tiers not configured"), callback_data="config_error")]
+        ])
 
-    for q, tier in sorted(settings.group_photo.tiers.items()):
+    for q, tier in sorted(generation_config.tiers.items()):
         
         if q == 0:
             if not is_trial_available:
                 continue
-            # Pass the count to the translation function
             label = _get_translated_tier_name(q, tier.count)
             rows.append([InlineKeyboardButton(text=label, callback_data=f"quality:{q}")])
         else:

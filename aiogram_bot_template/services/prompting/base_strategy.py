@@ -21,3 +21,12 @@ class PromptStrategy(ABC):
         Creates the specific prompt and parameters for a subsequent shot in a photoshoot sequence.
         """
         raise NotImplementedError
+
+    @abstractmethod
+    def create_child_generation_payload(
+        self, description: str, gender: str, age: str, resemblance: str
+    ) -> Dict[str, Any]:
+        """
+        Creates the specific prompt and parameters for generating a child's portrait.
+        """
+        raise NotImplementedError

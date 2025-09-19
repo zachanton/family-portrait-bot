@@ -18,3 +18,12 @@ class RetryGenerationCallback(CallbackData, prefix="retry_gen"):
 class StyleCallback(CallbackData, prefix="style"):
     """Callback for selecting a generation style."""
     style_id: str
+
+class ChildGenderCallback(CallbackData, prefix="child_gender"):
+    gender: str
+
+class ChildAgeCallback(CallbackData, prefix="child_age"):
+    age: str
+
+class ChildResemblanceCallback(CallbackData, prefix="child_resemblance"):
+    resemblance: str

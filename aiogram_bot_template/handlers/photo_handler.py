@@ -8,79 +8,46 @@ from aiogram.utils.i18n import gettext as _
 from redis.asyncio import Redis
 
 from aiogram_bot_template.data.constants import ImageRole
-from aiogram_bot_template.data.settings import settings
-from aiogram_bot_template.db.db_api.storages import PostgresConnection
-from aiogram_bot_template.db.repo import generations as generations_repo
-from aiogram_bot_template.db.repo import users as users_repo
-from aiogram_bot_template.keyboards.inline.quality import quality_kb
 from aiogram_bot_template.services import image_cache
 from aiogram_bot_template.states.user import Generation
+# --- NEW: Import the new keyboard ---
+from aiogram_bot_template.keyboards.inline.gender import gender_kb
 
 router = Router(name="photo-handler")
 
-
-async def proceed_to_quality_selection(
-    message: Message, state: FSMContext, db_pool: asyncpg.Pool,
-    business_logger: structlog.typing.FilteringBoundLogger
-) -> None:
+# --- REFACTORED: This function now transitions to the child parameter selection flow ---
+async def proceed_to_child_params(message: Message, state: FSMContext) -> None:
     """
-    Finalizes the photo collection step, creates a request in the DB,
-    and shows the quality/package selection keyboard to the user.
+    After collecting photos, starts the child parameter selection flow
+    by asking for the gender.
     """
-    user_data = await state.get_data()
-    db = PostgresConnection(db_pool, logger=business_logger)
-    user_id = message.from_user.id
-
-    photos = user_data.get("photos_collected", [])
-    roles = [ImageRole.PHOTO_1, ImageRole.PHOTO_2]
-
-    source_images_dto = [
-        (p["file_unique_id"], p["file_id"], role)
-        for p, role in zip(photos, roles)
-    ]
-
-    draft = generations_repo.GenerationRequestDraft(
-        user_id=user_id, status="photos_collected", source_images=source_images_dto
-    )
-    request_id = await generations_repo.create_generation_request(db, draft)
-    await state.update_data(request_id=request_id)
-
-    is_in_whitelist = user_id in settings.free_trial_whitelist
-    has_used_trial = await users_repo.get_user_trial_status(db, user_id)
-    is_trial_available = is_in_whitelist or not has_used_trial
-
+    await state.set_state(Generation.choosing_child_gender)
     await message.answer(
-        _("Excellent, both photos are uploaded. Now, please choose your generation package:"),
-        reply_markup=quality_kb(is_trial_available=is_trial_available),
+        _("Great, I have both photos! Now, let's define your future child.\n\n"
+          "First, choose the desired gender:"),
+        reply_markup=gender_kb()
     )
-    await state.set_state(Generation.waiting_for_quality)
 
 
 @router.message(Generation.collecting_photos, F.photo)
 async def process_photo_input(
-    message: Message, state: FSMContext, bot: Bot, cache_pool: Redis,
-    db_pool: asyncpg.Pool, business_logger: structlog.typing.FilteringBoundLogger
+    message: Message, state: FSMContext, bot: Bot, cache_pool: Redis
 ) -> None:
-    """Handles receiving photos one by one using a robust download method."""
+    """Handles receiving photos one by one."""
     photo = message.photo[-1]
     status_msg = await message.answer(_("Processing your photo... ⏳"))
 
     try:
-        # --- CORRECTED & ROBUST FILE HANDLING ---
-        # Step 1: Get the file info object with a temporary file_path
         file_info = await bot.get_file(photo.file_id)
         if not file_info.file_path:
             await status_msg.edit_text(_("I couldn't get file information. Please try sending the photo again."))
             return
 
-        # Step 2: Immediately download the file using the fresh file_path
         file_io = await bot.download_file(file_info.file_path)
         original_image_bytes = file_io.read()
-        # --- END OF CORRECTION ---
 
         unique_id = photo.file_unique_id
         await image_cache.cache_image_bytes(unique_id, original_image_bytes, "image/jpeg", cache_pool)
-        business_logger.info("Cached original user photo", original_id=unique_id)
 
         data = await state.get_data()
         photos_collected = data.get("photos_collected", [])
@@ -99,8 +66,10 @@ async def process_photo_input(
             await status_msg.edit_text(_("Perfect! Now, please send the photo of the second person."))
         else:
             await status_msg.delete()
-            await proceed_to_quality_selection(message, state, db_pool, business_logger)
+            # --- REFACTORED: Call the new transition function ---
+            await proceed_to_child_params(message, state)
 
-    except Exception:
-        business_logger.exception("Failed to process photo")
+    except Exception as e:
+        # Use a proper logger in a real application
+        print(f"Error processing photo: {e}")
         await status_msg.edit_text(_("I couldn't process this image. Please try another one or /cancel."))

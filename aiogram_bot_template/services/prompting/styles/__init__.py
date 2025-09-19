@@ -10,6 +10,8 @@ from .vogue import PROMPT_VOGUE
 from .wet_plate import PROMPT_WET_PLATE
 from .pop_art import PROMPT_POP_ART
 
+from .child_generation import PROMPT_CHILD_GENERATION
+
 __all__ = [
     "PROMPT_DEFAULT",
     "PROMPT_RETRO_MOTEL",
@@ -24,5 +26,6 @@ __all__ = [
     "PROMPT_POP_ART",
 
     "PROMPT_GOLDEN_HOUR_NEXT_SHOT",
+    "PROMPT_CHILD_GENERATION",
 
 ]

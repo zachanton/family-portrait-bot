@@ -2,6 +2,7 @@
 import asyncio
 import random
 from contextlib import suppress
+from typing import Type
 
 import asyncpg
 import structlog
@@ -16,26 +17,41 @@ from aiogram_bot_template.data.constants import GenerationType
 from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.db.db_api.storages import PostgresConnection
 from aiogram_bot_template.db.repo import generations as generations_repo
-from aiogram_bot_template.keyboards.inline import next_step
-from aiogram_bot_template.services import image_cache, prompt_enhancer
+from aiogram_bot_template.keyboards.inline import feedback, next_step
+from aiogram_bot_template.services import image_cache
+from aiogram_bot_template.services.pipelines.base import BasePipeline
 from aiogram_bot_template.services.pipelines.group_photo import GroupPhotoPipeline
+# --- NEW: Import the new pipeline ---
+from aiogram_bot_template.services.pipelines.child_generation import ChildGenerationPipeline
 from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.utils.status_manager import StatusMessageManager
 from aiogram_bot_template.services.prompting.factory import get_prompt_strategy
-from aiogram_bot_template.services.prompting.fal_strategy import STYLE_PROMPTS, STYLE_DESCRIPTIONS, get_translated_style_name
 
-async def _send_debug_image(
-    bot: Bot, chat_id: int, redis: Redis, image_uid: str, caption: str
+# --- NEW: A map to select the correct pipeline ---
+PIPELINE_MAP: dict[str, Type[BasePipeline]] = {
+    GenerationType.GROUP_PHOTO.value: GroupPhotoPipeline,
+    GenerationType.CHILD_GENERATION.value: ChildGenerationPipeline,
+}
+
+async def _send_debug_composite_if_enabled(
+    bot: Bot, chat_id: int, redis: Redis, composite_uid: str | None, caption: str
 ):
-    """Fetches an image from cache and sends it to the user for debugging."""
+    """Sends the composite image to the user if debug mode is enabled in settings."""
+    if not settings.bot.send_debug_composites or not composite_uid:
+        return
+    
     try:
-        image_bytes, _ = await image_cache.get_cached_image_bytes(image_uid, redis)
+        image_bytes, _ = await image_cache.get_cached_image_bytes(composite_uid, redis)
         if image_bytes:
-            photo = BufferedInputFile(image_bytes, f"{image_uid}.jpg")
+            photo = BufferedInputFile(image_bytes, f"{composite_uid}.jpg")
             await bot.send_photo(chat_id=chat_id, photo=photo, caption=caption)
     except Exception as e:
-        structlog.get_logger(__name__).warning("Failed to send debug image", error=str(e))
-
+        # Use a proper logger to avoid crashing the worker
+        structlog.get_logger(__name__).warning(
+            "Failed to send debug composite image",
+            uid=composite_uid,
+            error=str(e)
+        )
 
 async def run_generation_worker(
     bot: Bot,
@@ -48,197 +64,163 @@ async def run_generation_worker(
 ) -> None:
     user_data = await state.get_data()
     request_id = user_data.get("request_id")
-    quality_level = user_data.get("quality")
+    quality_level = user_data.get("quality_level")
     trial_type = user_data.get("trial_type")
+    generation_type = user_data.get("generation_type")
 
-    log = business_logger.bind(req_id=request_id, chat_id=chat_id)
+    log = business_logger.bind(req_id=request_id, chat_id=chat_id, type=generation_type)
     db = PostgresConnection(db_pool, logger=log, decode_json=True)
     status = StatusMessageManager(bot, chat_id, status_message_id)
 
-    try:
-        if not request_id or quality_level is None:
-            raise ValueError("request_id or quality level not found in FSM state for worker.")
+    generation_id = None
+    last_sent_message = None
 
-        tier_config = settings.group_photo.tiers.get(quality_level)
+    try:
+        if not all([request_id, quality_level is not None, generation_type]):
+            raise ValueError("Missing critical data in FSM state for worker.")
+
+        pipeline_class = PIPELINE_MAP.get(generation_type)
+        if not pipeline_class:
+            raise ValueError(f"No pipeline found for generation type: {generation_type}")
+
+        generation_config = getattr(settings, generation_type)
+        tier_config = generation_config.tiers.get(quality_level)
         if not tier_config:
-            raise ValueError(f"Tier configuration for quality level {quality_level} not found.")
+            raise ValueError(f"Tier config not found for type={generation_type}, quality={quality_level}")
 
         generation_count = tier_config.count
-        if generation_count <= 0:
-            raise ValueError("Tier count must be a positive number.")
-
+        
         await generations_repo.update_generation_request_status(db, request_id, "processing")
 
-        # --- 1. Prepare base data and composite image ---
         db_data = await generations_repo.get_request_details_with_sources(db, request_id)
         if not db_data:
-            raise ValueError(f"GenerationRequest with id={request_id} not found in DB.")
+            raise ValueError(f"GenerationRequest id={request_id} not found.")
 
-        gen_data = {**user_data, **db_data, "type": GenerationType.GROUP_PHOTO.value, "quality_level": quality_level}
+        gen_data = {**user_data, **db_data}
+        gen_data['type'] = generation_type
         
-        pipeline = GroupPhotoPipeline(bot, gen_data, log, status.update, cache_pool)
+        pipeline = pipeline_class(bot, gen_data, log, status.update, cache_pool)
         pipeline_output = await pipeline.prepare_data()
-        
-        composite_image_url = pipeline_output.request_payload.get("image_urls", [None])[0]
-        if not composite_image_url:
-            raise ValueError("Composite image URL could not be determined.")
-            
-        # --- DEBUG: Send both composite images to the user ---
-        if composite_uid := pipeline_output.metadata.get("composite_uid"):
-            await _send_debug_image(
-                bot=bot,
-                chat_id=chat_id,
-                redis=cache_pool,
-                image_uid=composite_uid,
-                caption="DEBUG: Full Composite (Style + Initial Identity)"
-            )
-        if faces_only_uid := pipeline_output.metadata.get("faces_only_uid"):
-            await _send_debug_image(
-                bot=bot,
-                chat_id=chat_id,
-                redis=cache_pool,
-                image_uid=faces_only_uid,
-                caption="DEBUG: Faces-Only Composite (Strict Identity Source)"
-            )
 
-        await status.update(_("✍️ Directing your photoshoot..."))
-        chosen_style = 'golden_hour' 
-        translated_style_name = get_translated_style_name(chosen_style)
-        style_context_for_planner = STYLE_DESCRIPTIONS.get(chosen_style, "A beautiful couple portrait.")
-
-        photoshoot_plan = await prompt_enhancer.get_photoshoot_plan(
-            image_url=composite_image_url,
-            style_context=style_context_for_planner,
-            shot_count=generation_count,
+        await _send_debug_composite_if_enabled(
+            bot=bot,
+            chat_id=chat_id,
+            redis=cache_pool,
+            composite_uid=pipeline_output.metadata.get("composite_uid"),
+            caption="[DEBUG] This is the composite image sent to the AI."
         )
 
-        # --- ADDED: Robustness check for the photoshoot plan ---
-        if not photoshoot_plan or len(photoshoot_plan.poses) < generation_count:
-            log.error(
-                "Failed to generate a valid photoshoot plan or not enough poses.",
-                expected=generation_count,
-                got=len(photoshoot_plan.poses) if photoshoot_plan else 0,
-            )
-            await status.update(_("Sorry, I couldn't plan the photoshoot. Please try again."))
-            await asyncio.sleep(3)
-            raise RuntimeError("Photoshoot planning failed or returned insufficient poses.")
-        
-        log.info("Photoshoot plan created successfully.", plan=photoshoot_plan.model_dump())
-        
-        master_shot_url = None
-        last_sent_message = None
-        source_generation_id = None
-        strategy = get_prompt_strategy(tier_config.client)
-        
-        faces_only_uid = pipeline_output.metadata.get("faces_only_uid")
-        if not faces_only_uid:
-            raise RuntimeError("faces_only_uid is missing from pipeline metadata.")
-        faces_only_url = image_cache.get_cached_image_proxy_url(faces_only_uid)
+        await _send_debug_composite_if_enabled(
+            bot=bot,
+            chat_id=chat_id,
+            redis=cache_pool,
+            composite_uid=pipeline_output.metadata.get("faces_only_uid"),
+            caption="[DEBUG] This is the faces_only image sent to the AI."
+        )
 
+        loop_driver = pipeline_output.metadata.get("child_descriptions", [None] * generation_count)
 
-        for i in range(generation_count):
+        for i, item in enumerate(loop_driver):
             current_iteration = i + 1
-            log_task = log.bind(style=chosen_style, sequence=f"{current_iteration}/{generation_count}")
+            log_task = log.bind(sequence=f"{current_iteration}/{generation_count}")
             
-            await status.update(_("🎨 Generating shot {current} of {total}...").format(current=current_iteration, total=generation_count))
-            
-            current_payload = pipeline_output.request_payload.copy()
-            final_prompt: str
+            await status.update(_("🎨 Generating image {current} of {total}...").format(
+                current=current_iteration, total=generation_count
+            ))
 
-            if i == 0:
-                log_task.info("Preparing first shot (Master Shot) with a single composite reference.")
-                
-                # The first shot uses the "safe" pose from the plan (index 0)
-                pose_details_first_shot = photoshoot_plan.poses[0]
-                pose_text_first_shot = prompt_enhancer.format_pose_for_prompt(pose_details_first_shot)
-                wardrobe_text = prompt_enhancer.format_photoshoot_plan_for_prompt(photoshoot_plan, body_part="upper")
-                
-                style_payload = strategy.create_group_photo_payload(style=chosen_style)
-                prompt_template = style_payload.get("prompt", "")
-                
-                # Inject BOTH wardrobe and the safe pose into the master prompt
-                temp_prompt = prompt_template.replace("{{PHOTOSHOOT_PLAN_DATA}}", wardrobe_text)
-                final_prompt = temp_prompt.replace("**POSE DIRECTIVE:**", pose_text_first_shot) # A bit of a hack, but works for this structure
-                
-                current_payload["image_urls"] = [composite_image_url, faces_only_url]
-            else:
-                log_task.info("Preparing next creative shot using dual reference images.")
-                
-                if not master_shot_url:
-                    log.warning("Master shot URL is not available, ending photoshoot early.")
-                    await bot.send_message(chat_id, _("Could not create the first shot, so the photoshoot cannot continue."))
-                    break
+            payload_override = pipeline_output.request_payload.copy()
+            
+            if generation_type == GenerationType.CHILD_GENERATION.value and item:
+                strategy = get_prompt_strategy(tier_config.client)
+                child_payload = strategy.create_child_generation_payload(
+                    description=item,
+                    child_gender=user_data["child_gender"],
+                    child_age=user_data["child_age"],
+                    child_resemblance=user_data["child_resemblance"]
+                )
+                payload_override.update(child_payload)
+            
+            payload_override["seed"] = random.randint(1, 1_000_000)
 
-                wardrobe_text = prompt_enhancer.format_photoshoot_plan_for_prompt(photoshoot_plan, body_part="full")
-                
-                # --- CORRECTED LOGIC: Use the correct pose index for the current shot ---
-                pose_details = photoshoot_plan.poses[i] 
-                pose_text = prompt_enhancer.format_pose_for_prompt(pose_details)
+            final_prompt = payload_override.get("prompt", "Prompt not found in payload")
+            log_task.info(
+                "Final prompt for image generation model",
+                prompt_text=final_prompt
+            )
 
-                style_payload = strategy.create_group_photo_next_payload(style=chosen_style)
-                prompt_template = style_payload.get("prompt", "")
-                
-                temp_prompt = prompt_template.replace("{{PHOTOSHOOT_PLAN_DATA}}", wardrobe_text)
-                final_prompt = temp_prompt.replace("{{POSE_AND_COMPOSITION_DATA}}", pose_text)
-                
-                current_payload["image_urls"] = [master_shot_url, faces_only_url]
-                log_task.info("Using dual image URLs for generation", urls=current_payload["image_urls"])
-            
-            current_payload.update(style_payload)
-            current_payload["prompt"] = final_prompt
-            current_payload["seed"] = random.randint(1, 1_000_000)
-            
-            log_task.info("Final prompt prepared for generation", final_prompt=final_prompt)
-            
             result, error_meta = await pipeline.run_generation(
-                pipeline_output, payload_override=current_payload
+                pipeline_output, payload_override=payload_override
             )
 
             if not result:
                 log_task.error("AI service failed for this frame", meta=error_meta)
                 if i > 0:
-                    await bot.send_message(chat_id, _("Sorry, there was a problem creating the next shot. The photoshoot will end here."))
-                break
+                    await bot.send_message(chat_id, _("Sorry, there was a problem creating the next image."))
+                continue
 
-            caption_text = _("Style: {style_name} (Shot {current}/{total})").format(
-                style_name=translated_style_name, current=current_iteration, total=generation_count
-            )
-            photo = BufferedInputFile(result.image_bytes, f"photoshoot_{current_iteration}.png")
-            last_sent_message = await bot.send_photo(chat_id=chat_id, photo=photo, caption=caption_text)
+            photo = BufferedInputFile(result.image_bytes, f"generation_{current_iteration}.png")
+            last_sent_message = await bot.send_photo(chat_id=chat_id, photo=photo, caption=pipeline_output.caption)
 
-            result_image_unique_id = last_sent_message.photo[-1].file_unique_id
-            await image_cache.cache_image_bytes(result_image_unique_id, result.image_bytes, result.content_type, cache_pool)
-
-            if i == 0:
-                master_shot_url = image_cache.get_cached_image_proxy_url(result_image_unique_id)
+            unique_id = last_sent_message.photo[-1].file_unique_id
+            await image_cache.cache_image_bytes(unique_id, result.image_bytes, result.content_type, cache_pool)
 
             log_entry = generations_repo.GenerationLog(
-                request_id=request_id, type=GenerationType.GROUP_PHOTO.value, status="completed",
-                quality_level=quality_level, trial_type=trial_type, seed=current_payload["seed"], style=chosen_style,
+                request_id=request_id, type=generation_type, status="completed",
+                quality_level=quality_level, trial_type=trial_type, seed=payload_override["seed"],
                 generation_time_ms=result.generation_time_ms,
-                api_request_payload=result.request_payload,
-                api_response_payload=result.response_payload,
-                enhanced_prompt=final_prompt,
-                result_image_unique_id=result_image_unique_id,
-                result_message_id=last_sent_message.message_id, result_file_id=last_sent_message.photo[-1].file_id,
-                caption=caption_text, sequence_index=i, source_generation_id=source_generation_id
+                api_request_payload=result.request_payload, api_response_payload=result.response_payload,
+                result_image_unique_id=unique_id, result_message_id=last_sent_message.message_id,
+                result_file_id=last_sent_message.photo[-1].file_id, caption=pipeline_output.caption
             )
-            source_generation_id = await generations_repo.create_generation_log(db, log_entry)
+            generation_id = await generations_repo.create_generation_log(db, log_entry)
 
-        # --- Finalize the flow ---
         await status.delete()
 
-        if not last_sent_message:
-             await bot.send_message(chat_id, _("Unfortunately, there was an issue and your photoshoot could not be completed. Please try again with /start."))
-             await generations_repo.update_generation_request_status(db, request_id, "failed")
-        else:
-            await bot.send_message(chat_id, _("Your photoshoot is complete! What would you like to do next?"),
+        if not last_sent_message or not generation_id:
+            # Handle case where all generation attempts failed
+            await bot.send_message(
+                chat_id, 
+                _("Unfortunately, I couldn't create an image this time. Please try again with /start.")
+            )
+            await generations_repo.update_generation_request_status(db, request_id, "failed")
+            await state.clear()
+            return
+
+        # --- REFACTORED: Post-generation logic now depends on the generation type ---
+        await generations_repo.update_generation_request_status(db, request_id, "completed")
+        
+        if generation_type == GenerationType.CHILD_GENERATION.value:
+            # --- NEW LOGIC for Child Generation ---
+            # As requested, we skip the feedback step and go directly to the next actions.
+            await bot.send_message(
+                chat_id, 
+                _("Your generation is complete! What would you like to do next?"),
                 reply_markup=next_step.get_next_step_keyboard("continue", request_id)
             )
-            await generations_repo.update_generation_request_status(db, request_id, "completed")
+            await state.set_state(Generation.waiting_for_next_action)
 
-        await state.clear()
-        await state.set_state(Generation.waiting_for_next_action)
+        elif generation_type == GenerationType.GROUP_PHOTO.value:
+            # --- OLD LOGIC for Group Photo (and future features) ---
+            # Here we can still ask for feedback.
+            if generation_count == 1 and settings.collect_feedback:
+                await last_sent_message.edit_reply_markup(
+                    reply_markup=feedback.feedback_kb(generation_id, request_id, "continue")
+                )
+                await state.set_state(Generation.waiting_for_feedback)
+            else:
+                await bot.send_message(
+                    chat_id, 
+                    _("Your photoshoot is complete! What's next?"),
+                    reply_markup=next_step.get_next_step_keyboard("continue", request_id)
+                )
+                await state.set_state(Generation.waiting_for_next_action)
+        else:
+             # Default fallback
+            await bot.send_message(
+                chat_id, _("Done! Use /start to begin a new session."),
+            )
+            await state.clear()
+
 
     except Exception:
         log.exception("An unhandled error occurred in the generation worker.")
@@ -249,6 +231,10 @@ async def run_generation_worker(
             chat_id, _("😔 An unexpected error occurred. Please try again with /start.")
         )
         if request_id:
-            await generations_repo.update_generation_request_status(
-                db, request_id, "failed_internal"
-            )
+            await generations_repo.update_generation_request_status(db, request_id, "failed_internal")
+    finally:
+        # We now manage state explicitly in each branch, so a final clear might not be needed,
+        # but it's good for safety in case of an unexpected exit from the try block.
+        if state and (await state.get_state()) is not None:
+             if (await state.get_state()) not in [Generation.waiting_for_next_action, Generation.waiting_for_feedback]:
+                 await state.clear()

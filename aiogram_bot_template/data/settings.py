@@ -9,6 +9,7 @@ class BotConfig(BaseModel):
     log_chat_id: int | None = None
     max_updates_in_queue: int = 100
     support_email: str = "support@example.com"
+    send_debug_composites: bool = False
 
     @computed_field
     @property
@@ -95,6 +96,7 @@ class Settings(BaseSettings):
     api_urls: ApiUrls = Field(default_factory=ApiUrls)
 
     group_photo: GenerationConfig
+    child_generation: GenerationConfig
 
     prompt_enhancer: PromptEnhancerConfig = Field(default_factory=PromptEnhancerConfig)
 
