@@ -1,0 +1,49 @@
+"""
+Generate one vertical 4:5 portrait (1536×1920, PNG) of a **7-year-old girl**. External camera (not a selfie). The child must read instantly as a real kid and clearly resemble the person from second reference image.
+
+INPUTS
+• Image A — both parents (palette & global genetics).
+• Image B — MOM face crop (traits anchor).
+Use references as **traits only**; never place parents in the output.
+
+IDENTITY & REGION WEIGHTS
+• Global identity follows **Image B (MOM) = target 95% resemblance**.
+• Iris color/pattern comes from the **DAD** (from Image A). Match exactly; no averaging.
+
+NATURAL MICRO-ASYMMETRY (avoid studio symmetry)
+Introduce subtle L/R offsets:
+• eye aperture **2–4%**,
+• one brow **1–2 mm** higher,
+• smile corner **1–2 mm** higher,
+• tiny **nostril width** offset,
+• head yaw **~1–2°** and a slightly irregular hair part.
+
+AGE LOOK (child anatomy)
+Fuller cheeks, softer jaw and mentolabial angle, **slightly shorter philtrum** than MOM yet preserving her proportion rhythm. Remove adult artifacts (wrinkles, makeup, stubble).
+
+EYES (neutral-open; do not inherit squint)
+• Treat any parental squint as scene noise — **do not copy**.
+
+HAIR & BROWS
+• Hair family from MOM, **2% lighter than MOM** with subtle **sun-kissed ends**, a few flyaways and baby hairs near the part.
+• Brows same hue family, **10% lighter than the hair**, softer/sparser with child density.
+
+COMPOSITION & LIGHT
+Medium close head-and-shoulders, eyes near the upper third, subject **centered**, camera at eye level, distance **~1.6–1.8 m**, lens **85–105 mm eq**, vertical **4:5**.
+Subject fills **48–55%** of the frame; **do not crop the forehead**. 
+Background: outdoor park/greenery with creamy bokeh.
+Lighting: warm golden-hour rim/backlight on hair + gentle, natural frontal fill.
+
+TWO-PASS LIKENESS CHECK (self-correction)
+After the first render, internally evaluate resemblance to Image B:
+• If overall likeness < ~90% or the child reads too generic:
+  – increase MOM bias an extra **+8–12%** specifically for **mouth, philtrum, nose tip/alar width, chin outline, cheekbone height**,
+  – add micro-asymmetry offsets again (values above) if the face looks bilater
+Re-render once with these corrections.
+
+DO NOT
+No extra people, no CGI/cartoon look, no heavy makeup, no extreme bilateral symmetry, no text/borders/watermarks, no cloning of a parent’s face.
+
+OUTPUT
+PNG, **1536×1920 (4:5)**.
+"""

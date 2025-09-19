@@ -1,9 +1,12 @@
 # aiogram_bot_template/services/prompting/fal_strategy.py
 from typing import Dict, Any
 from aiogram.utils.i18n import gettext as _
+from pathlib import Path
 
 from .base_strategy import PromptStrategy
 from aiogram_bot_template.services.child_feature_enhancer import ChildGenerationHints
+# --- NEW: Import constants to map enum values to directory names ---
+from aiogram_bot_template.data.constants import ChildAge
 
 from .styles import (
     PROMPT_RETRO_MOTEL,
@@ -18,7 +21,8 @@ from .styles import (
     PROMPT_POP_ART,
     PROMPT_GOLDEN_HOUR_NEXT_SHOT
 )
-from .styles import PROMPT_CHILD_GENERATION
+# --- REMOVED: No longer importing a single child prompt ---
+# from .styles import PROMPT_CHILD_GENERATION
 
 
 STYLE_PROMPTS = {
@@ -65,6 +69,47 @@ class FalStrategy(PromptStrategy):
     """
     Prompt strategy for models like Fal.ai and Google Gemini.
     """
+
+    # --- NEW HELPER METHOD ---
+    def _get_child_prompt_template(
+        self, age: str, gender: str, resemblance: str
+    ) -> str:
+        """
+        Dynamically loads the correct prompt file based on the child's parameters.
+
+        Args:
+            age: The age value from the ChildAge enum (e.g., "2", "7", "14").
+            gender: The gender string (e.g., "boy", "girl").
+            resemblance: The resemblance string (e.g., "mom", "dad", "both").
+
+        Returns:
+            The content of the corresponding prompt file.
+
+        Raises:
+            FileNotFoundError: If the prompt file for the combination does not exist.
+        """
+        # Map the age value (e.g., "2") to the directory name (e.g., "infant")
+        try:
+            age_name = ChildAge(age).name.lower()
+        except ValueError:
+            # Fallback for safety, though it should always be a valid enum value
+            if age == "2": age_name = "infant"
+            elif age == "7": age_name = "child"
+            else: age_name = "teen"
+
+        prompt_path = (
+            Path(__file__).parent
+            / "styles"
+            / "child_generation"
+            / age_name
+            / gender
+            / f"{resemblance}.txt"
+        )
+        if not prompt_path.exists():
+            raise FileNotFoundError(f"Prompt file not found at: {prompt_path}")
+
+        return prompt_path.read_text(encoding="utf-8")
+
     def create_group_photo_payload(self, style: str) -> Dict[str, Any]:
         """
         Returns a detailed prompt and optimized parameters for generating a group portrait,
@@ -89,6 +134,7 @@ class FalStrategy(PromptStrategy):
             "temperature": 0.5,
         }
 
+    # --- MODIFIED METHOD ---
     def create_child_generation_payload(
         self,
         hints: ChildGenerationHints,
@@ -97,16 +143,23 @@ class FalStrategy(PromptStrategy):
         child_resemblance: str
     ) -> Dict[str, Any]:
         """
-        Creates the payload for generating a child's portrait using enhanced hints.
+        Creates the payload for generating a child's portrait using enhanced hints
+        and a dynamically loaded prompt template.
         """
-        # Форматируем подсказки в читаемый блок
+        # Format hints into a readable block
         hints_text = (
             f"**Genetic Guidance:** {hints.genetic_guidance}\n"
             f"**Facial Structure Notes:** {hints.facial_structure_notes}\n"
             f"**Distinguishing Features:** {hints.distinguishing_features}"
         )
 
-        prompt = PROMPT_CHILD_GENERATION.replace("{{ENHANCED_HINTS_DATA}}", hints_text)
+        # Dynamically load the correct prompt template
+        prompt = self._get_child_prompt_template(
+            age=child_age, gender=child_gender, resemblance=child_resemblance
+        )
+
+        # Replace placeholders in the loaded prompt
+        prompt = prompt.replace("{{ENHANCED_HINTS_DATA}}", hints_text)
         prompt = prompt.replace("{{child_age}}", child_age)
         prompt = prompt.replace("{{child_gender}}", child_gender)
         prompt = prompt.replace("{{child_resemblance}}", child_resemblance)
