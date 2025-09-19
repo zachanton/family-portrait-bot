@@ -4,6 +4,7 @@ from .base_strategy import PromptStrategy
 from .styles import PROMPT_DEFAULT
 from .styles.child_generation import PROMPT_CHILD_GENERATION
 from .fal_strategy import STYLE_PROMPTS, STYLE_PROMPTS_NEXT
+from aiogram_bot_template.services.child_feature_enhancer import ChildGenerationHints
 
 class MockStrategy(PromptStrategy):
     """
@@ -27,12 +28,12 @@ class MockStrategy(PromptStrategy):
         }
     
     def create_child_generation_payload(
-        self, description: str, gender: str, age: str, resemblance: str
+        self, hints: ChildGenerationHints, gender: str, age: str, resemblance: str
     ) -> Dict[str, Any]:
         """
         Creates the specific prompt and parameters for generating a child's portrait.
         """
-        prompt = PROMPT_CHILD_GENERATION.replace("{{CHILD_DESCRIPTION_DATA}}", description)
+        prompt = PROMPT_CHILD_GENERATION
         return {
             "prompt": f"Mock Child Gen: {prompt}",
             "temperature": 0.4,

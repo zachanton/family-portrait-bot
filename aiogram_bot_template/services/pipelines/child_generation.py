@@ -1,9 +1,10 @@
 # aiogram_bot_template/services/pipelines/child_generation.py
 import uuid
 from aiogram.utils.i18n import gettext as _
-from aiogram_bot_template.services import image_cache, photo_processing, child_description_generator
+from aiogram_bot_template.services import child_feature_enhancer, image_cache, photo_processing
 from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.services.prompting.factory import get_prompt_strategy
+from aiogram_bot_template.data.constants import ChildResemblance
 from .base import BasePipeline, PipelineOutput
 
 class ChildGenerationPipeline(BasePipeline):
@@ -25,7 +26,7 @@ class ChildGenerationPipeline(BasePipeline):
         if not p1_bytes or not p2_bytes:
             raise ValueError("Could not retrieve original image bytes from cache.")
 
-        composite_bytes, faces_only_bytes = photo_processing.create_composite_image(p1_bytes, p2_bytes)
+        composite_bytes, faces_only_bytes, mom_face_bytes, dad_face_bytes = photo_processing.create_composite_image(p1_bytes, p2_bytes)
         if not composite_bytes:
             raise RuntimeError("Failed to create a composite image of parents.")
 
@@ -35,9 +36,18 @@ class ChildGenerationPipeline(BasePipeline):
         await image_cache.cache_image_bytes(composite_uid, composite_bytes, "image/jpeg", self.cache_pool)
         composite_url = image_cache.get_cached_image_proxy_url(composite_uid)
 
-        faces_only_uid = f"faces_only__{request_id_str}"
-        await image_cache.cache_image_bytes(faces_only_uid, faces_only_bytes, "image/jpeg", self.cache_pool)
-        faces_only_url = image_cache.get_cached_image_proxy_url(faces_only_uid)
+        if self.gen_data["child_resemblance"]==ChildResemblance.BOTH:
+            faces_only_uid = f"faces_only__{request_id_str}"
+            await image_cache.cache_image_bytes(faces_only_uid, faces_only_bytes, "image/jpeg", self.cache_pool)
+            faces_only_url = image_cache.get_cached_image_proxy_url(faces_only_uid)
+        elif self.gen_data["child_resemblance"]==ChildResemblance.MOM:
+            faces_only_uid = f"mom_face__{request_id_str}"
+            await image_cache.cache_image_bytes(faces_only_uid, mom_face_bytes, "image/jpeg", self.cache_pool)
+            faces_only_url = image_cache.get_cached_image_proxy_url(faces_only_uid)
+        else: # ChildResemblance.DAD
+            faces_only_uid = f"dad_face__{request_id_str}"
+            await image_cache.cache_image_bytes(faces_only_uid, dad_face_bytes, "image/jpeg", self.cache_pool)
+            faces_only_url = image_cache.get_cached_image_proxy_url(faces_only_uid)
         
         quality_level = self.gen_data.get("quality_level", 1)
         tier_config = settings.child_generation.tiers.get(quality_level)
@@ -47,29 +57,22 @@ class ChildGenerationPipeline(BasePipeline):
 
         await self.update_status_func(_("Creating a genetic profile for the child... ✍️"))
         
-        child_descriptions = await child_description_generator.get_child_descriptions(
+        generation_hints = await child_feature_enhancer.get_child_generation_hints(
             image_url=composite_url,
             child_gender=self.gen_data["child_gender"],
             child_age=self.gen_data["child_age"],
             child_resemblance=self.gen_data["child_resemblance"],
-            child_count=generation_count
         )
 
-        if not child_descriptions or len(child_descriptions) < generation_count:
-            self.log.error("Failed to generate a sufficient number of child descriptions.",
-                           expected=generation_count, got=len(child_descriptions) if child_descriptions else 0)
-            raise RuntimeError("Could not generate the necessary creative descriptions for the child.")
+        if not generation_hints:
+            self.log.error("Failed to generate child feature hints.")
+            raise RuntimeError("Could not generate the necessary creative hints for the child.")
 
-        self.log.info("Generated child descriptions", child_count=len(child_descriptions))
-
-        self.log.info(
-            "Received child descriptions from generator", 
-            descriptions=child_descriptions
-        )
+        self.log.info("Generated child hints", hints=generation_hints.model_dump())
 
         strategy = get_prompt_strategy(tier_config.client)
         prompt_payload = strategy.create_child_generation_payload(
-            description=child_descriptions[0],
+            hints=generation_hints,
             child_gender=self.gen_data["child_gender"],
             child_age=self.gen_data["child_age"],
             child_resemblance=self.gen_data["child_resemblance"],
@@ -81,7 +84,7 @@ class ChildGenerationPipeline(BasePipeline):
         metadata = { 
             "composite_uid": composite_uid,
             "faces_only_uid": faces_only_uid,
-            "child_descriptions": child_descriptions
+            "generation_hints": generation_hints 
         }
         
         return PipelineOutput(request_payload=request_payload, caption=caption, metadata=metadata)

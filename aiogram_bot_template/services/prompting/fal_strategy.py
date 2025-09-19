@@ -3,6 +3,8 @@ from typing import Dict, Any
 from aiogram.utils.i18n import gettext as _
 
 from .base_strategy import PromptStrategy
+from aiogram_bot_template.services.child_feature_enhancer import ChildGenerationHints
+
 from .styles import (
     PROMPT_RETRO_MOTEL,
     PROMPT_GOLDEN_HOUR,
@@ -87,16 +89,29 @@ class FalStrategy(PromptStrategy):
             "temperature": 0.5,
         }
 
-    def create_child_generation_payload(self, description: str, child_gender: str, child_age: int, child_resemblance: str) -> Dict[str, Any]:
+    def create_child_generation_payload(
+        self,
+        hints: ChildGenerationHints,
+        child_gender: str,
+        child_age: str,
+        child_resemblance: str
+    ) -> Dict[str, Any]:
         """
-        Creates the payload for generating a child's portrait.
+        Creates the payload for generating a child's portrait using enhanced hints.
         """
-        prompt = PROMPT_CHILD_GENERATION.replace("{{CHILD_DESCRIPTION_DATA}}", description)
+        # Форматируем подсказки в читаемый блок
+        hints_text = (
+            f"**Genetic Guidance:** {hints.genetic_guidance}\n"
+            f"**Facial Structure Notes:** {hints.facial_structure_notes}\n"
+            f"**Distinguishing Features:** {hints.distinguishing_features}"
+        )
+
+        prompt = PROMPT_CHILD_GENERATION.replace("{{ENHANCED_HINTS_DATA}}", hints_text)
         prompt = prompt.replace("{{child_age}}", child_age)
         prompt = prompt.replace("{{child_gender}}", child_gender)
         prompt = prompt.replace("{{child_resemblance}}", child_resemblance)
         
         return {
             "prompt": prompt,
-            "temperature": 0.4, # Slightly more creative than a direct copy
+            "temperature": 0.4,
         }

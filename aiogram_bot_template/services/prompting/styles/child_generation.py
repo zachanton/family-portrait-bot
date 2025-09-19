@@ -1,35 +1,57 @@
-# aiogram_bot_template/services/prompting/styles/child_generation.py
-
 PROMPT_CHILD_GENERATION = """
-**GOAL:** Produce a high-quality, photorealistic portrait of a child, synthesized from the features of the two adults in the reference image, based on key parameters.
+Create ONE photorealistic portrait of a {{child_age}}-year-old {{child_gender}} from two adult references.
+At first glance the child must clearly resemble the {{child_resemblance}} (PRIMARY). The result must be a real kid, not an aged-down adult.
 
-**REFERENCE IMAGE:**
-* **Image A:** base composite — the absolute source of truth for parental facial features (eyes, nose, mouth, skin tone, hair texture).
-* **Image B:** tight face crops — identity authority. Tight crops of each parent’s face = identity anchors per region.
+INPUTS
+• Image A — both parents (global palette/skin range).
+• Image B — PRIMARY face crop (micro-traits anchor). Treat both as TRAITS ONLY.
 
-**HARD CONSTRAINTS:**
-*   **Create a NEW person (the child).** DO NOT simply blend or age-down the parents.
-*   The output must be a **single child's portrait**. No adults should be visible.
-*   Strictly **photorealistic**. No illustration, 3D, or cartoon styles.
-*   Full-bleed output: Fill the canvas to every edge. No borders, frames, vignettes, or text.
+SUBJECT
+• Exactly 1 person — the child. No background people.
 
-**KEY PARAMETERS (MUST ADHERE STRICTLY):**
-*   **Gender:** {{child_gender}}
-*   **Age Category:** {{child_age}}
-*   **Resemblance:** Primarily to {{child_resemblance}}
+RESEMBLANCE (very strong; prioritize Image B)
+• Global identity should read ~99% PRIMARY.
+• REGION LOCKS from Image B (PRIMARY) (weight 1.0): eye shape & canthus, brow shape (lightened for a child), smile & lip geometry, philtrum proportion, nose tip/width, chin contour, cheekbone layout, freckle map, hairline.
+• From SECONDARY ONLY: iris color & detailed pattern (match exactly; no averaging/hue drift).
+• Synthesize a new juvenile face; never paste/age-down a parent.
 
-**AESTHETIC & SCENE:**
-*   **Lighting:** Soft, flattering studio light (clamshell or softbox) to clearly illuminate facial features. Natural catchlights in the eyes.
-*   **Background:** Simple, out-of-focus background. A neutral studio seamless (gray, cream) or a soft-focus outdoor park setting is acceptable.
-*   **Pose & Expression:** A natural, forward-facing headshot or head-and-shoulders portrait. The child should be looking directly at the camera with a gentle, neutral expression or a soft smile.
-*   **Optics:** Lens look of an 85mm or 105mm portrait lens at f/1.8-f/2.8, creating a shallow depth of field.
+AGE LOOK
+• Child anatomy: rounder cheeks, softer jaw, shorter philtrum; remove adult artifacts (wrinkles, makeup, stubble). Average build.
 
-**STEP-BY-STEP ACTIONS:**
-1.  **Analyze Parents:** Deconstruct the facial features of both adults in the reference image.
-2.  **Synthesize Child:** Following the **KEY PARAMETERS** precisely, create a new, unique face that is a believable genetic combination of the parents' features.
-3.  **Render Portrait:** Place the generated child in the specified scene with professional lighting and camera settings.
-4.  **Finalize:** Ensure the final image is a 4:5 vertical portrait, cropped from the chest up.
+EYES (open, childlike — no squint)
+• Do **not** inherit parental squint/half-closed lids.
+• Keep PRIMARY eye **shape & canthal tilt**, but set a **neutral-open palpebral fissure**:
+  – height **+35–45%** vs. parent averages; width **+10–15%**.
+  – Upper lid covers **~1–2 mm** of the iris; lower lid tangent to iris or **0–0.5 mm** scleral show.
+  – No upper-sclera show (avoid startled look).
+• During the smile, **minimize orbicularis oculi compression**: cheeks may rise, but lids stay relaxed (avoid Duchenne squint and crow’s-feet).
+• Natural round catchlights; irises locked to the SECONDARY parent exactly (no averaging).
+• If eyes still read narrow → increase fissure height **+10%** and reduce cheek raise **−15%**, then re-render.
 
-**OUTPUT:**
-*   One PNG, 1536×1920 (4:5), full-bleed.
+TEETH & SMILE
+• Open, happy child smile with **only the upper teeth visible** (6–8). Do not show the lower row.
+• Teeth intact; tiny natural irregularities; not veneer-white. If unreliable → closed-lip smile.
+
+HAIR & BROWS (color rules)
+• Hair family from PRIMARY, ~20% lighter with soft sun-kissed ends; a few flyaways.
+• Brows same hue family, ~20% lighter than hair; sparser/softer.
+• Styling: girls — classic long child hair; boys — short neat child cut.
+
+SKIN & FRECKLES
+• Real skin texture (pores, mild sheen). Freckles follow PRIMARY’s pattern with natural variation; keep clean skin between spots.
+
+COMPOSITION (match the reference look)
+• Medium portrait with shoulders and upper chest visible; child centered, eye level.
+• Subject fills ~45–55% of frame height; generous headroom (~12–15%); do not crop the forehead.
+• Camera distance ~1.5–2.0 m; portrait look 85–105 mm equiv., shallow DoF (f/1.8–f/2.8).
+• Outdoor park/greenery background with creamy bokeh; warm backlight/rim plus gentle frontal fill; no people or strong structures.
+
+NATURAL MICRO-ASYMMETRY (avoid perfect symmetry)
+• Subtle left/right differences: eye aperture ≈2–4%, one brow ≈1–2 mm higher, smile corner ≈1–2 mm higher, tiny nostril width offset ≈2–3%, slight hair part irregularity. Keep it organic.
+
+DO-NOTS
+• No extra people, CGI/cartoon look, heavy makeup, braces, missing/broken teeth, borders/watermarks/text.
+
+OUTPUT
+• PNG, 1536×1920 (4:5).
 """

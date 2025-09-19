@@ -2,6 +2,9 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any
 
+from aiogram_bot_template.services.child_feature_enhancer import ChildGenerationHints
+
+
 class PromptStrategy(ABC):
     """
     Abstract base class for a prompt generation strategy.
@@ -24,7 +27,7 @@ class PromptStrategy(ABC):
 
     @abstractmethod
     def create_child_generation_payload(
-        self, description: str, gender: str, age: str, resemblance: str
+        self,  hints: ChildGenerationHints, gender: str, age: str, resemblance: str
     ) -> Dict[str, Any]:
         """
         Creates the specific prompt and parameters for generating a child's portrait.

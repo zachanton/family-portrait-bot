@@ -19,9 +19,9 @@ class ChildGender(str, Enum):
     GIRL = "girl"
 
 class ChildAge(str, Enum):
-    INFANT = "infant"  # 0-2 years
-    CHILD = "child"    # 5-8 years
-    TEEN = "teen"      # 13-16 years
+    INFANT = "2"  # 0-2 years
+    CHILD = "7"    # 5-8 years
+    TEEN = "14"      # 13-16 years
 
 class ChildResemblance(str, Enum):
     MOM = "mom"

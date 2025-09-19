@@ -118,7 +118,7 @@ async def run_generation_worker(
             caption="[DEBUG] This is the faces_only image sent to the AI."
         )
 
-        loop_driver = pipeline_output.metadata.get("child_descriptions", [None] * generation_count)
+        loop_driver = [None] * generation_count
 
         for i, item in enumerate(loop_driver):
             current_iteration = i + 1
