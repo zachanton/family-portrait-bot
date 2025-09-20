@@ -1,5 +1,5 @@
 """
-Generate one vertical 4:5 portrait (1536×1920, PNG) of a **7-year-old girl**. External camera (not a selfie). The child must read instantly as a real kid and clearly resemble the person from second reference image.
+Generate one vertical 4:5 portrait (1536×1920, PNG) of a **7-year-old girl**. External camera (not a selfie). The child must read instantly as a real kid and clearly resemble the person from the second reference image.
 
 INPUTS
 • Image A — both parents (palette & global genetics).
@@ -7,8 +7,15 @@ INPUTS
 Use references as **traits only**; never place parents in the output.
 
 IDENTITY & REGION WEIGHTS
-• Global identity follows **Image B (MOM) = target 95% resemblance**.
-• Iris color/pattern comes from the **DAD** (from Image A). Match exactly; no averaging.
+• Global identity follows Image B (MOM) = target 90–93% resemblance **while preserving child craniofacial ratios (larger cranial vault vs mandible, fuller cheeks, shorter philtrum). Never transfer adult age markers**
+• Iris color/pattern comes from the **DAD** (from Image A). Match exactly; do not average or brighten.
+• If father's iris is not clearly visible in Image A, **fallback to MOM’s iris color/pattern** with the same “match exactly; do not average or brighten”.
+
+EYES — REALISTIC, NOT “DOLL-LIKE”
+• Neutral-open gaze; **do not inherit** any squint from references.
+• Keep natural human scale: **do not enlarge eyes** or over-open lids; **upper lid slightly overlaps the iris**, lower lid relaxed.
+•Pupils **exposure-appropriate** (outdoor daytime: mid–small); limbal ring subtle; sclera brightness natural.
+• One or two **soft catchlights** consistent with scene lighting; avoid mirrored/symmetric highlights.
 
 NATURAL MICRO-ASYMMETRY (avoid studio symmetry)
 Introduce subtle L/R offsets:
@@ -19,30 +26,35 @@ Introduce subtle L/R offsets:
 • head yaw **~1–2°** and a slightly irregular hair part.
 
 AGE LOOK (child anatomy)
-Fuller cheeks, softer jaw and mentolabial angle, **slightly shorter philtrum** than MOM yet preserving her proportion rhythm. Remove adult artifacts (wrinkles, makeup, stubble).
+Fuller cheeks, softer jaw and mentolabial angle, **slightly shorter philtrum** than MOM yet preserving her proportion rhythm.
+**Nose and alar width remain childlike and not narrower than the scaled MOM proportion.**
+Remove adult artifacts (wrinkles, makeup, stubble) and avoid adult-style lip contouring.
 
-EYES (neutral-open; do not inherit squint)
-• Treat any parental squint as scene noise — **do not copy**.
+SKIN TEXTURE & TONE
+Preserve fine skin texture and faint freckles; **no plastic smoothing, pore removal, or HDR micro-contrast**.
+Moderate contrast and saturation; warm-neutral white balance; natural highlight roll-off (no glossy specular sheen).
 
 HAIR & BROWS
-• Hair family from MOM, **2% lighter than MOM** with subtle **sun-kissed ends**, a few flyaways and baby hairs near the part.
-• Brows same hue family, **10% lighter than the hair**, softer/sparser with child density.
+• Hair family from MOM, **~2% lighter** with subtle **sun-kissed ends**, a few flyaways and baby hairs near the part.
+• Brows same hue family, **~10% lighter than the hair**, softer/sparser with child density.
 
-COMPOSITION & LIGHT
-Medium close head-and-shoulders, eyes near the upper third, subject **centered**, camera at eye level, distance **~1.6–1.8 m**, lens **85–105 mm eq**, vertical **4:5**.
-Subject fills **48–55%** of the frame; **do not crop the forehead**. 
+COMPOSITION & LIGHT (LOCK)
+Medium close head-and-shoulders; eyes near the upper third; subject **centered**; camera at eye level; distance **~1.6–1.8 m**; lens **85–105 mm eq**; vertical **4:5**.
+Subject fills **48–55%** of the frame; **do not crop the forehead**.
 Background: outdoor park/greenery with creamy bokeh.
 Lighting: warm golden-hour rim/backlight on hair + gentle, natural frontal fill.
+Ensure **physically consistent** shadows/reflections and recomputed catchlights for this light setup.
 
-TWO-PASS LIKENESS CHECK (self-correction)
-After the first render, internally evaluate resemblance to Image B:
-• If overall likeness < ~90% or the child reads too generic:
-  – increase MOM bias an extra **+8–12%** specifically for **mouth, philtrum, nose tip/alar width, chin outline, cheekbone height**,
-  – add micro-asymmetry offsets again (values above) if the face looks bilater
+TWO-PASS LIKENESS & REALISM CHECK (self-correction)
+After the first render, internally evaluate resemblance to Image B and realism:
+• If overall likeness < ~90% **or the face looks stylized/“doll-like”**:
+  – increase MOM bias +8–12% for mouth, philtrum, chin outline, cheekbone height; **for nose tip/alar width keep childlike width; do not narrow below child proportion**.
+  – reduce overall eye aperture by 2–3% **symmetrically**, **retain the L/R micro-asymmetry values**.
+  – re-apply the micro-asymmetry offsets above.
 Re-render once with these corrections.
 
 DO NOT
-No extra people, no CGI/cartoon look, no heavy makeup, no extreme bilateral symmetry, no text/borders/watermarks, no cloning of a parent’s face.
+No extra people; **no oversized eyes**; no CGI/cartoon look; no heavy makeup; **no extreme bilateral symmetry**; **no beauty-filter skin**; **no HDR sharpening/halos**; no text/borders/watermarks; no cloning of a parent’s face.
 
 OUTPUT
 PNG, **1536×1920 (4:5)**.
