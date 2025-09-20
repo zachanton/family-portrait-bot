@@ -15,6 +15,12 @@ class RetryGenerationCallback(CallbackData, prefix="retry_gen"):
     """Callback to retry a request with a new seed."""
     request_id: int
 
+class ContinueWithImageCallback(CallbackData, prefix="continue_with_img"):
+    """Callback to proceed with a specific generated child image."""
+    generation_id: int
+    request_id: int
+    next_step_message_id: int
+
 class StyleCallback(CallbackData, prefix="style"):
     """Callback for selecting a generation style."""
     style_id: str

@@ -1,11 +1,13 @@
 # aiogram_bot_template/handlers/menu.py
 import asyncpg
 import structlog
-from aiogram import Router
+from aiogram import Bot, Router
 from aiogram.filters import Command, StateFilter, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from aiogram.utils.i18n import gettext as _
+from contextlib import suppress
+from aiogram.exceptions import TelegramBadRequest
 
 from aiogram_bot_template.db.db_api.storages import PostgresConnection
 from aiogram_bot_template.db.repo.users import add_or_update_user
@@ -14,8 +16,36 @@ from aiogram_bot_template.states.user import Generation
 router = Router(name="menu-handlers")
 
 
+# --- NEW HELPER FUNCTION ---
+async def _cleanup_selection_messages(bot: Bot, chat_id: int, state: FSMContext) -> None:
+    """
+    Removes the keyboards from previous child/image selection messages
+    and deletes the final action prompt to prevent users from interacting with an old state.
+    """
+    if not state:
+        return
+        
+    user_data = await state.get_data()
+    photo_message_ids = user_data.get("photo_message_ids", [])
+    next_step_message_id = user_data.get("next_step_message_id")
+
+    if next_step_message_id:
+        with suppress(TelegramBadRequest):
+            # --- FIX: Use keyword arguments ---
+            await bot.delete_message(chat_id=chat_id, message_id=next_step_message_id)
+
+    if photo_message_ids:
+        for msg_id in photo_message_ids:
+            with suppress(TelegramBadRequest):
+                # --- FIX: Use keyword arguments ---
+                await bot.edit_message_reply_markup(chat_id=chat_id, message_id=msg_id, reply_markup=None)
+
+
 async def send_welcome_message(msg: Message, state: FSMContext, is_restart: bool = False):
     """Sends the welcome/restart message and sets the initial state."""
+    # --- MODIFICATION: Call cleanup before clearing state ---
+    await _cleanup_selection_messages(msg.bot, msg.chat.id, state)
+    
     await state.clear()
     await state.set_state(Generation.collecting_photos)
     await state.update_data(photos_collected=[])
@@ -55,10 +85,12 @@ async def start_flow(
             language_code=msg.from_user.language_code,
             referral_source=referral_source,
         )
+    # The call to send_welcome_message will now handle cleanup
     await send_welcome_message(msg, state)
 
 
 @router.message(Command("cancel"), StateFilter("*"))
 async def cancel_flow(msg: Message, state: FSMContext) -> None:
     """Handles /cancel command."""
+    # The call to send_welcome_message will now handle cleanup
     await send_welcome_message(msg, state, is_restart=True)

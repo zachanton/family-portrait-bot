@@ -24,3 +24,5 @@ class Generation(StatesGroup):
     waiting_for_payment = State()
     waiting_for_feedback = State()
     waiting_for_next_action = State()
+    
+    child_selected = State()

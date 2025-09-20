@@ -4,7 +4,7 @@ from aiogram.utils.i18n import gettext as _
 from aiogram_bot_template.services import child_feature_enhancer, image_cache, photo_processing
 from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.services.prompting.factory import get_prompt_strategy
-from aiogram_bot_template.data.constants import ChildResemblance
+from aiogram_bot_template.data.constants import ChildResemblance, GenerationType
 from .base import BasePipeline, PipelineOutput
 
 class ChildGenerationPipeline(BasePipeline):
@@ -78,7 +78,13 @@ class ChildGenerationPipeline(BasePipeline):
             child_resemblance=self.gen_data["child_resemblance"],
         )
 
-        request_payload = { "model": tier_config.model, "image_urls": [composite_url, faces_only_url], **prompt_payload }
+        # --- NEW: Add generation_type to payload for client context ---
+        request_payload = { 
+            "model": tier_config.model, 
+            "image_urls": [composite_url, faces_only_url], 
+            "generation_type": GenerationType.CHILD_GENERATION.value,
+            **prompt_payload 
+        }
         
         caption = _("✨ Here is your potential child!")
         metadata = { 

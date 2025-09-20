@@ -5,6 +5,8 @@ from aiogram_bot_template.services import image_cache
 from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.services.prompting.factory import get_prompt_strategy
 from aiogram_bot_template.services import image_cache, photo_processing, prompt_enhancer
+# --- NEW: Import GenerationType ---
+from aiogram_bot_template.data.constants import GenerationType
 from .base import BasePipeline, PipelineOutput
 
 class GroupPhotoPipeline(BasePipeline):
@@ -35,7 +37,8 @@ class GroupPhotoPipeline(BasePipeline):
 
         await self.update_status_func("Creating a composite draft... 🖼️")
         
-        composite_bytes, faces_only_bytes = photo_processing.create_composite_image(photo1_bytes, photo2_bytes)
+        # --- MODIFIED: Unpack all four return values ---
+        composite_bytes, faces_only_bytes, _, _ = photo_processing.create_composite_image(photo1_bytes, photo2_bytes)
         if not composite_bytes or not faces_only_bytes:
             raise RuntimeError("Failed to create a composite image draft.")
 
@@ -68,9 +71,11 @@ class GroupPhotoPipeline(BasePipeline):
             "{{IDENTITY_LOCK_DATA}}", identity_lock_text
         )
 
+        # --- NEW: Add generation_type to payload for client context ---
         request_payload = {
             "model": tier_config.model,
             "image_urls": [composite_url],
+            "generation_type": GenerationType.GROUP_PHOTO.value,
             **prompt_payload,
         }
         

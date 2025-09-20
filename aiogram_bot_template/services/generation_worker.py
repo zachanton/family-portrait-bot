@@ -18,6 +18,8 @@ from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.db.db_api.storages import PostgresConnection
 from aiogram_bot_template.db.repo import generations as generations_repo
 from aiogram_bot_template.keyboards.inline import feedback, next_step
+# --- NEW: Import the new keyboard ---
+from aiogram_bot_template.keyboards.inline import child_selection
 from aiogram_bot_template.services import image_cache
 from aiogram_bot_template.services.pipelines.base import BasePipeline
 from aiogram_bot_template.services.pipelines.group_photo import GroupPhotoPipeline
@@ -73,7 +75,8 @@ async def run_generation_worker(
     status = StatusMessageManager(bot, chat_id, status_message_id)
 
     generation_id = None
-    last_sent_message = None
+    # --- NEW: List to store message data ---
+    sent_photo_messages = []
 
     try:
         if not all([request_id, quality_level is not None, generation_type]):
@@ -173,10 +176,16 @@ async def run_generation_worker(
                 result_file_id=last_sent_message.photo[-1].file_id, caption=pipeline_output.caption
             )
             generation_id = await generations_repo.create_generation_log(db, log_entry)
+            
+            # --- NEW: Store message and generation ID ---
+            sent_photo_messages.append({
+                "message_id": last_sent_message.message_id,
+                "generation_id": generation_id
+            })
 
         await status.delete()
 
-        if not last_sent_message or not generation_id:
+        if not sent_photo_messages:
             # Handle case where all generation attempts failed
             await bot.send_message(
                 chat_id, 
@@ -186,22 +195,40 @@ async def run_generation_worker(
             await state.clear()
             return
 
-        # --- REFACTORED: Post-generation logic now depends on the generation type ---
         await generations_repo.update_generation_request_status(db, request_id, "completed")
         
         if generation_type == GenerationType.CHILD_GENERATION.value:
-            # --- NEW LOGIC for Child Generation ---
-            # As requested, we skip the feedback step and go directly to the next actions.
-            await bot.send_message(
+            # 1. Send the final "next step" message with updated text
+            next_step_msg = await bot.send_message(
                 chat_id, 
-                _("Your generation is complete! What would you like to do next?"),
+                _("Your potential children are ready!\n\nPlease select one of the images above to proceed, or choose an action from the menu below."),
                 reply_markup=next_step.get_next_step_keyboard("continue", request_id)
+            )
+            next_step_message_id = next_step_msg.message_id
+
+            # 2. Add "Continue" buttons to each photo message
+            for msg_data in sent_photo_messages:
+                with suppress(TelegramBadRequest):
+                    await bot.edit_message_reply_markup(
+                        chat_id=chat_id,
+                        message_id=msg_data["message_id"],
+                        reply_markup=child_selection.continue_with_image_kb(
+                            generation_id=msg_data["generation_id"],
+                            request_id=request_id,
+                            next_step_message_id=next_step_message_id
+                        )
+                    )
+            
+            # 3. Store all relevant message IDs in FSM state for cleanup
+            await state.update_data(
+                photo_message_ids=[m["message_id"] for m in sent_photo_messages],
+                next_step_message_id=next_step_message_id
             )
             await state.set_state(Generation.waiting_for_next_action)
 
         elif generation_type == GenerationType.GROUP_PHOTO.value:
             # --- OLD LOGIC for Group Photo (and future features) ---
-            # Here we can still ask for feedback.
+            last_sent_message = await bot.send_message(chat_id=chat_id, text="...") # You need to define how to get the last message here
             if generation_count == 1 and settings.collect_feedback:
                 await last_sent_message.edit_reply_markup(
                     reply_markup=feedback.feedback_kb(generation_id, request_id, "continue")
@@ -221,7 +248,6 @@ async def run_generation_worker(
             )
             await state.clear()
 
-
     except Exception:
         log.exception("An unhandled error occurred in the generation worker.")
         if status_message_id:
@@ -233,8 +259,9 @@ async def run_generation_worker(
         if request_id:
             await generations_repo.update_generation_request_status(db, request_id, "failed_internal")
     finally:
-        # We now manage state explicitly in each branch, so a final clear might not be needed,
-        # but it's good for safety in case of an unexpected exit from the try block.
-        if state and (await state.get_state()) is not None:
-             if (await state.get_state()) not in [Generation.waiting_for_next_action, Generation.waiting_for_feedback]:
-                 await state.clear()
+        current_state = await state.get_state()
+        if current_state and current_state not in [
+            Generation.waiting_for_next_action, 
+            Generation.waiting_for_feedback
+        ]:
+            await state.clear()

@@ -27,12 +27,12 @@ class MockStrategy(PromptStrategy):
         }
     
     def create_child_generation_payload(
-        self, hints: ChildGenerationHints, gender: str, age: str, resemblance: str
+        self, hints: ChildGenerationHints, child_gender: str, child_age: str, child_resemblance: str
     ) -> Dict[str, Any]:
         """
         Creates the specific prompt and parameters for generating a child's portrait.
         """
-        prompt = f"Child generation prompt for a {age}-year-old"
+        prompt = f"Child generation prompt for a {child_age}-year-old {child_gender}."
         return {
             "prompt": f"Mock Child Gen: {prompt}",
             "temperature": 0.4,
