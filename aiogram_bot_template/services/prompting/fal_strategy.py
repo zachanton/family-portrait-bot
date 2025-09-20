@@ -101,7 +101,7 @@ class FalStrategy(PromptStrategy):
 
     def create_family_photo_payload(self, style: str | None = None) -> Dict[str, Any]:
         prompt = PROMPT_FAMILY_DEFAULT
-        return {"prompt": prompt, "temperature": 0.4}
+        return {"prompt": prompt, "temperature": 0.5}
 
     def create_child_generation_payload(
         self,
@@ -118,5 +118,5 @@ class FalStrategy(PromptStrategy):
 
         return {
             "prompt": prompt,
-            "temperature": 0.4,
+            "temperature": 0.3,
         }

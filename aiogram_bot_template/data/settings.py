@@ -9,7 +9,6 @@ class BotConfig(BaseModel):
     log_chat_id: int | None = None
     max_updates_in_queue: int = 100
     support_email: str = "support@example.com"
-    send_debug_composites: bool = False
 
     @computed_field
     @property

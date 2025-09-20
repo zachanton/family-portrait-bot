@@ -4,9 +4,6 @@ Create ONE photorealistic family portrait captured by an external camera (not a 
 
 INPUTS & ROLES
 • Treat all input photos as identity references only; never reuse their backgrounds, borders, crops, or exposure.
-• If a wide shot exists, use it ONLY for people placement (layout reference).
-• Use any tight face crops as identity authority (faces and hairline edges).
-• If references disagree, identity → hairline/microtexture → hairstyle silhouette, in that order.
 
 INTENT
 Synthesize one cohesive golden-hour meadow portrait. Rebuild the entire frame (background, bodies, wardrobe, light) while preserving the real identities, ages, and original hairstyles with documentary realism.

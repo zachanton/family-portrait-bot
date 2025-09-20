@@ -33,11 +33,13 @@ PIPELINE_MAP: dict[str, Type[BasePipeline]] = {
     GenerationType.FAMILY_PHOTO.value: FamilyPhotoPipeline,
 }
 
+SEND_DEBUG_COMPOSITES = True
+
 async def _send_debug_composite_if_enabled(
     bot: Bot, chat_id: int, redis: Redis, composite_uid: str | None, caption: str
 ):
     """Sends the composite image to the user if debug mode is enabled in settings."""
-    if not settings.bot.send_debug_composites or not composite_uid:
+    if not SEND_DEBUG_COMPOSITES or not composite_uid:
         return
     
     try:

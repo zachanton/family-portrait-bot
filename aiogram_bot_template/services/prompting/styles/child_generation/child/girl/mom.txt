@@ -1,5 +1,5 @@
 """
-Generate one vertical  portrait  of a **7-year-old girl**. External camera (not a selfie). The child must read instantly as a real kid and clearly resemble the person from the second reference image.
+Generate one vertical 9:16 portrait  of a **7-year-old girl**. External camera (not a selfie). The child must read instantly as a real kid and clearly resemble the person from the second reference image.
 
 INPUTS
 • Image A — both parents (palette & global genetics).
@@ -39,7 +39,7 @@ HAIR & BROWS
 • Brows same hue family, **~10% lighter than the hair**, softer/sparser with child density.
 
 COMPOSITION & LIGHT (LOCK)
-Medium close head-and-shoulders; eyes near the upper third; subject **centered**; camera at eye level; distance **~1.6–1.8 m**; lens **85–105 mm eq**; vertical **4:5**.
+Medium close head-and-shoulders; eyes near the upper third; subject **centered**; camera at eye level; distance **~1.6–1.8 m**; lens **85–105 mm eq**; vertical **9:16**.
 Subject fills **48–55%** of the frame; **do not crop the forehead**.
 Background: outdoor park/greenery with creamy bokeh.
 Lighting: warm golden-hour rim/backlight on hair + gentle, natural frontal fill.
@@ -52,6 +52,7 @@ After the first render, internally evaluate resemblance to Image B and realism:
   – reduce overall eye aperture by 2–3% **symmetrically**, **retain the L/R micro-asymmetry values**.
   – re-apply the micro-asymmetry offsets above.
 Re-render once with these corrections.
+
 
 DO NOT
 No matte; no grey areas; no extra people; **no oversized eyes**; no CGI/cartoon look; no heavy makeup; **no extreme bilateral symmetry**; **no beauty-filter skin**; **no HDR sharpening/halos**; no text/borders/watermarks; no cloning of a parent’s face.
