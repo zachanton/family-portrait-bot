@@ -9,6 +9,7 @@ from .group_photo.color_gel import PROMPT_COLOR_GEL
 from .group_photo.vogue import PROMPT_VOGUE
 from .group_photo.wet_plate import PROMPT_WET_PLATE
 from .group_photo.pop_art import PROMPT_POP_ART
+from .group_photo.family_default import PROMPT_FAMILY_DEFAULT
 
 __all__ = [
     "PROMPT_DEFAULT",
@@ -24,6 +25,6 @@ __all__ = [
     "PROMPT_POP_ART",
 
 
-    "PROMPT_CHILD_GIRL_MOM_GENERATION",
+    "PROMPT_FAMILY_DEFAULT",
 
 ]

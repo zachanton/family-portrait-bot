@@ -2,9 +2,6 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any
 
-from aiogram_bot_template.services.child_feature_enhancer import ChildGenerationHints
-
-
 class PromptStrategy(ABC):
     """
     Abstract base class for a prompt generation strategy.
@@ -12,9 +9,16 @@ class PromptStrategy(ABC):
     """
 
     @abstractmethod
-    def create_group_photo_payload(self, style: str | None = None) -> Dict[str, Any]:
+    def create_pair_photo_payload(self, style: str | None = None) -> Dict[str, Any]:
         """
         Creates the specific prompt and parameters for the initial group photo generation.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def create_family_photo_payload(self, style: str | None = None) -> Dict[str, Any]:
+        """
+        Creates the prompt and parameters for a 3-person family portrait.
         """
         raise NotImplementedError
 
@@ -27,9 +31,10 @@ class PromptStrategy(ABC):
 
     @abstractmethod
     def create_child_generation_payload(
-        self,  hints: ChildGenerationHints, gender: str, age: str, resemblance: str
+        self, child_gender: str, child_age: str, child_resemblance: str
     ) -> Dict[str, Any]:
         """
         Creates the specific prompt and parameters for generating a child's portrait.
+        NOTE: This method no longer accepts 'hints' as it is handled by static prompts.
         """
         raise NotImplementedError

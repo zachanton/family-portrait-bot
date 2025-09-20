@@ -50,7 +50,6 @@ class ApiUrls(BaseModel):
     bentoml: AnyHttpUrl = "http://bento-local-ml:3000"
     fal_api_key: SecretStr | None = None
     google_api_key: SecretStr | None = None
-    # --- OpenRouter Settings ---
     openrouter: AnyHttpUrl = "https://openrouter.ai/api/v1"
     openrouter_api_key: SecretStr | None = None
 
@@ -69,9 +68,8 @@ class GenerationConfig(BaseModel):
 
 class GoogleConfig(BaseModel):
     sheet_id: str | None = None
-    project_id: str | None = None  # ID вашего проекта в Google Cloud
-    location: str | None = None    # Регион, например, "us-central1"
-    sheet_id: str | None = None
+    project_id: str | None = None
+    location: str | None = None
     service_account_creds_json: SecretStr | None = None
 
 class PromptEnhancerConfig(BaseModel):
@@ -97,6 +95,7 @@ class Settings(BaseSettings):
 
     group_photo: GenerationConfig
     child_generation: GenerationConfig
+    family_photo: GenerationConfig
 
     prompt_enhancer: PromptEnhancerConfig = Field(default_factory=PromptEnhancerConfig)
 

@@ -17,22 +17,20 @@ from aiogram_bot_template.data.constants import GenerationType
 from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.db.db_api.storages import PostgresConnection
 from aiogram_bot_template.db.repo import generations as generations_repo
-from aiogram_bot_template.keyboards.inline import feedback, next_step
-# --- NEW: Import the new keyboard ---
-from aiogram_bot_template.keyboards.inline import child_selection
+from aiogram_bot_template.keyboards.inline import feedback, next_step, child_selection
 from aiogram_bot_template.services import image_cache
 from aiogram_bot_template.services.pipelines.base import BasePipeline
-from aiogram_bot_template.services.pipelines.group_photo import GroupPhotoPipeline
-# --- NEW: Import the new pipeline ---
+from aiogram_bot_template.services.pipelines.pair_photo import PairPhotoPipeline
 from aiogram_bot_template.services.pipelines.child_generation import ChildGenerationPipeline
+from aiogram_bot_template.services.pipelines.family_photo import FamilyPhotoPipeline
 from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.utils.status_manager import StatusMessageManager
 from aiogram_bot_template.services.prompting.factory import get_prompt_strategy
 
-# --- NEW: A map to select the correct pipeline ---
 PIPELINE_MAP: dict[str, Type[BasePipeline]] = {
-    GenerationType.GROUP_PHOTO.value: GroupPhotoPipeline,
+    GenerationType.PAIR_PHOTO.value: PairPhotoPipeline,
     GenerationType.CHILD_GENERATION.value: ChildGenerationPipeline,
+    GenerationType.FAMILY_PHOTO.value: FamilyPhotoPipeline,
 }
 
 async def _send_debug_composite_if_enabled(
@@ -47,12 +45,9 @@ async def _send_debug_composite_if_enabled(
         if image_bytes:
             photo = BufferedInputFile(image_bytes, f"{composite_uid}.jpg")
             await bot.send_photo(chat_id=chat_id, photo=photo, caption=caption)
-    except Exception as e:
-        # Use a proper logger to avoid crashing the worker
+    except Exception:
         structlog.get_logger(__name__).warning(
-            "Failed to send debug composite image",
-            uid=composite_uid,
-            error=str(e)
+            "Failed to send debug composite image", uid=composite_uid
         )
 
 async def run_generation_worker(
@@ -74,8 +69,6 @@ async def run_generation_worker(
     db = PostgresConnection(db_pool, logger=log, decode_json=True)
     status = StatusMessageManager(bot, chat_id, status_message_id)
 
-    generation_id = None
-    # --- NEW: List to store message data ---
     sent_photo_messages = []
 
     try:
@@ -99,31 +92,24 @@ async def run_generation_worker(
         if not db_data:
             raise ValueError(f"GenerationRequest id={request_id} not found.")
 
-        gen_data = {**user_data, **db_data}
-        gen_data['type'] = generation_type
+        gen_data = {**user_data, **db_data, 'type': generation_type}
         
         pipeline = pipeline_class(bot, gen_data, log, status.update, cache_pool)
         pipeline_output = await pipeline.prepare_data()
 
         await _send_debug_composite_if_enabled(
-            bot=bot,
-            chat_id=chat_id,
-            redis=cache_pool,
+            bot=bot, chat_id=chat_id, redis=cache_pool,
             composite_uid=pipeline_output.metadata.get("composite_uid"),
             caption="[DEBUG] This is the composite image sent to the AI."
         )
 
         await _send_debug_composite_if_enabled(
-            bot=bot,
-            chat_id=chat_id,
-            redis=cache_pool,
+            bot=bot, chat_id=chat_id, redis=cache_pool,
             composite_uid=pipeline_output.metadata.get("faces_only_uid"),
-            caption="[DEBUG] This is the faces_only image sent to the AI."
+            caption="[DEBUG] This is the composite image sent to the AI."
         )
 
-        loop_driver = [None] * generation_count
-
-        for i, item in enumerate(loop_driver):
+        for i in range(generation_count):
             current_iteration = i + 1
             log_task = log.bind(sequence=f"{current_iteration}/{generation_count}")
             
@@ -132,23 +118,11 @@ async def run_generation_worker(
             ))
 
             payload_override = pipeline_output.request_payload.copy()
-            
-            if generation_type == GenerationType.CHILD_GENERATION.value and item:
-                strategy = get_prompt_strategy(tier_config.client)
-                child_payload = strategy.create_child_generation_payload(
-                    description=item,
-                    child_gender=user_data["child_gender"],
-                    child_age=user_data["child_age"],
-                    child_resemblance=user_data["child_resemblance"]
-                )
-                payload_override.update(child_payload)
-            
             payload_override["seed"] = random.randint(1, 1_000_000)
 
-            final_prompt = payload_override.get("prompt", "Prompt not found in payload")
             log_task.info(
                 "Final prompt for image generation model",
-                prompt_text=final_prompt
+                prompt_text=payload_override.get("prompt", "Prompt not found")
             )
 
             result, error_meta = await pipeline.run_generation(
@@ -157,13 +131,10 @@ async def run_generation_worker(
 
             if not result:
                 log_task.error("AI service failed for this frame", meta=error_meta)
-                if i > 0:
-                    await bot.send_message(chat_id, _("Sorry, there was a problem creating the next image."))
                 continue
 
             photo = BufferedInputFile(result.image_bytes, f"generation_{current_iteration}.png")
             last_sent_message = await bot.send_photo(chat_id=chat_id, photo=photo, caption=pipeline_output.caption)
-
             unique_id = last_sent_message.photo[-1].file_unique_id
             await image_cache.cache_image_bytes(unique_id, result.image_bytes, result.content_type, cache_pool)
 
@@ -176,17 +147,11 @@ async def run_generation_worker(
                 result_file_id=last_sent_message.photo[-1].file_id, caption=pipeline_output.caption
             )
             generation_id = await generations_repo.create_generation_log(db, log_entry)
-            
-            # --- NEW: Store message and generation ID ---
-            sent_photo_messages.append({
-                "message_id": last_sent_message.message_id,
-                "generation_id": generation_id
-            })
+            sent_photo_messages.append({"message_id": last_sent_message.message_id, "generation_id": generation_id})
 
         await status.delete()
 
         if not sent_photo_messages:
-            # Handle case where all generation attempts failed
             await bot.send_message(
                 chat_id, 
                 _("Unfortunately, I couldn't create an image this time. Please try again with /start.")
@@ -198,7 +163,6 @@ async def run_generation_worker(
         await generations_repo.update_generation_request_status(db, request_id, "completed")
         
         if generation_type == GenerationType.CHILD_GENERATION.value:
-            # 1. Send the final "next step" message with updated text
             next_step_msg = await bot.send_message(
                 chat_id, 
                 _("Your potential children are ready!\n\nPlease select one of the images above to proceed, or choose an action from the menu below."),
@@ -206,12 +170,10 @@ async def run_generation_worker(
             )
             next_step_message_id = next_step_msg.message_id
 
-            # 2. Add "Continue" buttons to each photo message
             for msg_data in sent_photo_messages:
                 with suppress(TelegramBadRequest):
                     await bot.edit_message_reply_markup(
-                        chat_id=chat_id,
-                        message_id=msg_data["message_id"],
+                        chat_id=chat_id, message_id=msg_data["message_id"],
                         reply_markup=child_selection.continue_with_image_kb(
                             generation_id=msg_data["generation_id"],
                             request_id=request_id,
@@ -219,30 +181,22 @@ async def run_generation_worker(
                         )
                     )
             
-            # 3. Store all relevant message IDs in FSM state for cleanup
             await state.update_data(
                 photo_message_ids=[m["message_id"] for m in sent_photo_messages],
                 next_step_message_id=next_step_message_id
             )
             await state.set_state(Generation.waiting_for_next_action)
 
-        elif generation_type == GenerationType.GROUP_PHOTO.value:
-            # --- OLD LOGIC for Group Photo (and future features) ---
-            last_sent_message = await bot.send_message(chat_id=chat_id, text="...") # You need to define how to get the last message here
-            if generation_count == 1 and settings.collect_feedback:
-                await last_sent_message.edit_reply_markup(
-                    reply_markup=feedback.feedback_kb(generation_id, request_id, "continue")
-                )
-                await state.set_state(Generation.waiting_for_feedback)
-            else:
-                await bot.send_message(
-                    chat_id, 
-                    _("Your photoshoot is complete! What's next?"),
-                    reply_markup=next_step.get_next_step_keyboard("continue", request_id)
-                )
-                await state.set_state(Generation.waiting_for_next_action)
+        elif generation_type in [GenerationType.PAIR_PHOTO.value, GenerationType.FAMILY_PHOTO.value]:
+            # Instead of showing a feedback keyboard, we now always show the next step menu.
+            await bot.send_message(
+                chat_id, 
+                _("Your photoshoot is complete! What's next?"),
+                reply_markup=next_step.get_next_step_keyboard("continue", request_id)
+            )
+            await state.set_state(Generation.waiting_for_next_action)
+            
         else:
-             # Default fallback
             await bot.send_message(
                 chat_id, _("Done! Use /start to begin a new session."),
             )
@@ -262,6 +216,7 @@ async def run_generation_worker(
         current_state = await state.get_state()
         if current_state and current_state not in [
             Generation.waiting_for_next_action, 
-            Generation.waiting_for_feedback
+            Generation.waiting_for_feedback,
+            Generation.child_selected,
         ]:
             await state.clear()

@@ -31,19 +31,21 @@ async def _cleanup_selection_messages(bot: Bot, chat_id: int, state: FSMContext)
 
     if next_step_message_id:
         with suppress(TelegramBadRequest):
-            # --- FIX: Use keyword arguments ---
+            # --- FIX: Use keyword arguments for robustness ---
             await bot.delete_message(chat_id=chat_id, message_id=next_step_message_id)
 
     if photo_message_ids:
         for msg_id in photo_message_ids:
             with suppress(TelegramBadRequest):
-                # --- FIX: Use keyword arguments ---
+                # --- FIX: Use keyword arguments for robustness ---
                 await bot.edit_message_reply_markup(chat_id=chat_id, message_id=msg_id, reply_markup=None)
 
 
 async def send_welcome_message(msg: Message, state: FSMContext, is_restart: bool = False):
     """Sends the welcome/restart message and sets the initial state."""
-    # --- MODIFICATION: Call cleanup before clearing state ---
+    # --- MODIFICATION: Call cleanup BEFORE clearing state ---
+    # This is the key change. We clean up messages from the previous session
+    # using the old state data before that data is wiped.
     await _cleanup_selection_messages(msg.bot, msg.chat.id, state)
     
     await state.clear()
@@ -69,12 +71,11 @@ async def start_flow(
     state: FSMContext,
     business_logger: structlog.typing.FilteringBoundLogger,
     db_pool: asyncpg.Pool,
-    command: CommandObject | None = None, # Добавим command для рефералов
+    command: CommandObject | None = None,
 ) -> None:
     """Handles /start and /menu, initiating the flow."""
     db = PostgresConnection(db_pool, logger=business_logger)
     if msg.from_user:
-        # Мы все еще можем сохранять реферальный код в профиле пользователя при первом старте
         referral_source = command.args if command and command.args else None
         
         await add_or_update_user(
@@ -85,12 +86,12 @@ async def start_flow(
             language_code=msg.from_user.language_code,
             referral_source=referral_source,
         )
-    # The call to send_welcome_message will now handle cleanup
+    # The call to send_welcome_message now handles all cleanup
     await send_welcome_message(msg, state)
 
 
 @router.message(Command("cancel"), StateFilter("*"))
 async def cancel_flow(msg: Message, state: FSMContext) -> None:
     """Handles /cancel command."""
-    # The call to send_welcome_message will now handle cleanup
+    # The call to send_welcome_message now handles all cleanup
     await send_welcome_message(msg, state, is_restart=True)

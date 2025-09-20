@@ -10,18 +10,21 @@ from contextlib import suppress
 from aiogram.exceptions import TelegramBadRequest
 
 from . import menu
-from aiogram_bot_template.data.constants import GenerationType
+from aiogram_bot_template.data.constants import GenerationType, ImageRole
 from aiogram_bot_template.db.db_api.storages import PostgresConnection
-from aiogram_bot_template.db.repo import generations as generations_repo
-from aiogram_bot_template.keyboards.inline.callbacks import RetryGenerationCallback, ContinueWithImageCallback
+from aiogram_bot_template.db.repo import generations as generations_repo, users as users_repo
+from aiogram_bot_template.keyboards.inline.callbacks import (
+    RetryGenerationCallback, ContinueWithImageCallback, CreateFamilyPhotoCallback
+)
 from aiogram_bot_template.keyboards.inline import child_selection as child_selection_kb
 from aiogram_bot_template.keyboards.inline.gender import gender_kb
+from aiogram_bot_template.keyboards.inline.quality import quality_kb
 from aiogram_bot_template.states.user import Generation
-# Import the cleanup helper
+from aiogram_bot_template.data.settings import settings
 from .menu import _cleanup_selection_messages
 
-
 router = Router(name="next-step-handler")
+
 
 @router.callback_query(F.data == "start_new", StateFilter("*"))
 async def start_new_generation(
@@ -35,7 +38,6 @@ async def start_new_generation(
         await menu.send_welcome_message(callback.message, state, is_restart=True)
         return
 
-    # Cleanup is CORRECT here because we start a completely new session.
     await _cleanup_selection_messages(callback.bot, callback.message.chat.id, state)
     
     with suppress(TelegramBadRequest):
@@ -44,7 +46,11 @@ async def start_new_generation(
     await menu.send_welcome_message(callback.message, state, is_restart=True)
 
 
-@router.callback_query(RetryGenerationCallback.filter(), StateFilter(Generation.waiting_for_next_action))
+# --- MODIFICATION: Added Generation.child_selected to the StateFilter ---
+@router.callback_query(
+    RetryGenerationCallback.filter(),
+    StateFilter(Generation.waiting_for_next_action, Generation.child_selected),
+)
 async def process_retry_generation(
     cb: CallbackQuery,
     callback_data: RetryGenerationCallback,
@@ -53,59 +59,55 @@ async def process_retry_generation(
     business_logger: structlog.typing.FilteringBoundLogger
 ):
     """
-    Handles the "Try again" button. Re-runs the parameter selection flow
-    without cleaning up previously generated child images.
+    Handles the "Try again" button from both the post-generation and post-selection screens.
+    Re-runs the parameter selection flow using the original parent photos.
     """
     await cb.answer()
-    
     if not cb.message:
         return
 
-    # --- CHANGE: The cleanup function is no longer called here. ---
-    # The old child selection buttons will remain active.
-    
-    # We only delete the message containing the "Try Again" button itself.
+    # If the user retries after selecting a child, this will also delete the confirmation message.
     with suppress(TelegramBadRequest):
         await cb.message.delete()
-
+    
+    # We now fetch the original request ID from the callback to get parent photos
     db = PostgresConnection(db_pool, logger=business_logger)
-    
-    original_request = await generations_repo.get_request_details_with_sources(db, callback_data.request_id)
+    original_request = await generations_repo.get_request_details_with_sources(
+        db, callback_data.request_id
+    )
     if not original_request or not original_request.get("source_images"):
-        await cb.message.answer(_("Could not find the original photos. Please start over with /start."))
+        await cb.message.answer(
+            _("Could not find the original photos. Please start over with /start.")
+        )
         return
-    
+
     source_images_dto = [
         (img["file_unique_id"], img["file_id"], img["role"])
         for img in original_request["source_images"]
     ]
-    
+
     draft = generations_repo.GenerationRequestDraft(
         user_id=cb.from_user.id,
-        status="photos_collected", 
+        status="photos_collected",
         source_images=source_images_dto,
     )
     new_request_id = await generations_repo.create_generation_request(db, draft)
 
-    # We don't clear the state completely, just set the new state and update the request ID.
-    # The photo_message_ids from the previous run remain, which is what we want.
     await state.set_state(Generation.choosing_child_gender)
     await state.update_data(
         request_id=new_request_id,
-        # Keep old photos in state for the new request
         photos_collected=[
-            {"file_id": img[1], "file_unique_id": img[0]} 
-            for img in source_images_dto
+            {"file_id": img[1], "file_unique_id": img[0]} for img in source_images_dto
         ],
         is_retry=True,
-        generation_type=original_request.get("type", GenerationType.CHILD_GENERATION.value),
-        # Remove the ID of the deleted "Try Again" menu message
-        next_step_message_id=None
+        # Ensure we keep the generation type from the original request
+        generation_type=GenerationType.CHILD_GENERATION.value,
+        next_step_message_id=None,
     )
 
     await cb.message.answer(
         _("Let's try again! Please choose the desired gender for your child:"),
-        reply_markup=gender_kb()
+        reply_markup=gender_kb(),
     )
 
 
@@ -121,7 +123,6 @@ async def process_continue_with_image(
     Handles the selection of a child image.
     - Deletes the shared 'Try Again/Start New' menu.
     - Sends a new message with the selected image and new actions.
-    - All original 'Continue with...' buttons remain unchanged until a new session is started.
     """
     await cb.answer()
     
@@ -158,13 +159,86 @@ async def process_continue_with_image(
     await state.set_state(Generation.child_selected)
     await state.update_data(next_step_message_id=None)
 
-
-@router.callback_query(F.data.startswith("group_photo_w_child:"), StateFilter(Generation.child_selected))
-async def process_group_photo_with_child_placeholder(cb: CallbackQuery):
-    """Placeholder for the 'Create group photo' feature."""
+@router.callback_query(CreateFamilyPhotoCallback.filter(), StateFilter(Generation.child_selected))
+async def process_create_family_photo(
+    cb: CallbackQuery,
+    callback_data: CreateFamilyPhotoCallback,
+    state: FSMContext,
+    db_pool: asyncpg.Pool,
+    business_logger: structlog.typing.FilteringBoundLogger,
+):
+    """
+    Initiates the family photo generation flow.
+    It now correctly checks for trial availability before showing the quality keyboard.
+    """
     await cb.answer()
-    if cb.message:
-        await cb.message.edit_text(
-            _("This feature is coming soon! For now, you can /start a new generation."),
-            reply_markup=None
+    if not cb.message:
+        return
+        
+    await cb.message.edit_caption(
+        caption=_("Got it! Preparing the family photoshoot..."),
+        reply_markup=None
+    )
+
+    db = PostgresConnection(db_pool, logger=business_logger)
+    user_id = cb.from_user.id
+    
+    try:
+        # 1. Get parent photos from the original request
+        parent_request = await generations_repo.get_request_details_with_sources(db, callback_data.parent_request_id)
+        if not parent_request or len(parent_request.get("source_images", [])) < 2:
+            raise ValueError("Could not find original parent photos.")
+            
+        parent_sources = parent_request["source_images"]
+        father_source = next((img for img in parent_sources if img.get('role') == ImageRole.FATHER.value), parent_sources[0])
+        mother_source = next((img for img in parent_sources if img.get('role') == ImageRole.MOTHER.value), parent_sources[1])
+        father_source['role'] = ImageRole.FATHER.value
+        mother_source['role'] = ImageRole.MOTHER.value
+
+        # 2. Get the selected child's photo
+        sql_child = "SELECT result_image_unique_id, result_file_id FROM generations WHERE id = $1"
+        child_res = await db.fetchrow(sql_child, (callback_data.child_generation_id,))
+        if not child_res.data:
+            raise ValueError("Could not find the selected child's image data.")
+        
+        child_source = {
+            "file_unique_id": child_res.data["result_image_unique_id"],
+            "file_id": child_res.data["result_file_id"],
+            "role": ImageRole.CHILD.value,
+        }
+
+        # 3. Assemble sources for the new request
+        all_sources = [father_source, mother_source, child_source]
+        source_images_dto = [(img["file_unique_id"], img["file_id"], img["role"]) for img in all_sources]
+
+        # 4. Create a new generation request in the DB
+        draft = generations_repo.GenerationRequestDraft(
+            user_id=user_id, status="params_collected", source_images=source_images_dto
         )
+        new_request_id = await generations_repo.create_generation_request(db, draft)
+        
+        # 5. Update state for the generation worker
+        await state.update_data(
+            request_id=new_request_id,
+            generation_type=GenerationType.FAMILY_PHOTO.value,
+            photos_collected=all_sources
+        )
+
+        is_in_whitelist = user_id in settings.free_trial_whitelist
+        has_used_trial = await users_repo.get_user_trial_status(db, user_id)
+        is_trial_available = is_in_whitelist or not has_used_trial
+
+        # 6. Proceed to quality selection (payment)
+        await cb.message.edit_caption(
+            caption=_("Family lineup is ready! Please choose your generation package for the family portrait:"),
+            reply_markup=quality_kb(
+                generation_type=GenerationType.FAMILY_PHOTO,
+                is_trial_available=is_trial_available
+            ),
+        )
+        await state.set_state(Generation.waiting_for_quality)
+
+    except Exception as e:
+        business_logger.exception("Failed to start family photo flow", error=e)
+        await cb.message.edit_caption(caption=_("Sorry, something went wrong. Please /start over."), reply_markup=None)
+        await state.clear()

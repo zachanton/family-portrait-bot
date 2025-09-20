@@ -1,5 +1,5 @@
 """
-Generate one vertical 4:5 portrait (1536×1920, PNG) of a **7-year-old girl**. External camera (not a selfie). The child must read instantly as a real kid and clearly resemble the person from the second reference image.
+Generate one vertical  portrait  of a **7-year-old girl**. External camera (not a selfie). The child must read instantly as a real kid and clearly resemble the person from the second reference image.
 
 INPUTS
 • Image A — both parents (palette & global genetics).
@@ -54,8 +54,8 @@ After the first render, internally evaluate resemblance to Image B and realism:
 Re-render once with these corrections.
 
 DO NOT
-No extra people; **no oversized eyes**; no CGI/cartoon look; no heavy makeup; **no extreme bilateral symmetry**; **no beauty-filter skin**; **no HDR sharpening/halos**; no text/borders/watermarks; no cloning of a parent’s face.
+No matte; no grey areas; no extra people; **no oversized eyes**; no CGI/cartoon look; no heavy makeup; **no extreme bilateral symmetry**; **no beauty-filter skin**; **no HDR sharpening/halos**; no text/borders/watermarks; no cloning of a parent’s face.
 
 OUTPUT
-PNG, **1536×1920 (4:5)**.
+PNG full-bleed.
 """

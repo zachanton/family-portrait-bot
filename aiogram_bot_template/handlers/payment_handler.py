@@ -33,7 +33,17 @@ async def send_stars_invoice(
     *,
     quality: int,
 ) -> Message | None:
-    tier_config = settings.group_photo.tiers.get(quality)
+    """
+    Sends a Telegram Stars invoice, dynamically getting the price based on the generation type.
+    """
+    # --- DYNAMIC CONFIGURATION LOOKUP ---
+    try:
+        # Gets the correct config section, e.g., settings.family_photo
+        generation_config = getattr(settings, generation_type.value)
+        tier_config = generation_config.tiers.get(quality)
+    except (AttributeError, KeyError):
+        tier_config = None
+    
     if not tier_config or not isinstance(tier_config.price, int) or tier_config.price <= 0:
         await msg.answer(_("Could not determine the price. Please try again."))
         structlog.get_logger(__name__).error(
@@ -51,7 +61,7 @@ async def send_stars_invoice(
 
     sent_message = await msg.bot.send_invoice(
         chat_id=msg.chat.id,
-        title=_("🖼️ Group Portrait Generation"),
+        title=_("🖼️ Portrait Generation"), # Generic title for all types
         description=description,
         payload=payload,
         currency="XTR",
@@ -64,8 +74,7 @@ async def send_stars_invoice(
 async def pre_checkout(pre_checkout_query: PreCheckoutQuery, bot: Bot) -> None:
     """
     This handler MUST answer every pre-checkout query within 10 seconds.
-    It confirms to Telegram that the bot is ready to process the payment,
-    which is a prerequisite for generating the official receipt.
+    It confirms to Telegram that the bot is ready to process the payment.
     """
     await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
 
@@ -80,6 +89,9 @@ async def successful_payment(
     bot: Bot,
     scheduler: aiojobs.Scheduler,
 ) -> None:
+    """
+    Handles a successful payment, logs it, and spawns the generation worker.
+    """
     payment_info = message.successful_payment
 
     try:
@@ -118,10 +130,6 @@ async def successful_payment(
         status_msg = await message.answer(_("✅ Payment received! Starting generation..."))
         status_message_id = status_msg.message_id
         business_logger.warning("Could not find status_message_id in state to edit, sent a new one.")
-
-    # --- CRITICAL FIX: The invoice message is NOT deleted. ---
-    # It will automatically turn into a receipt in the user's private chat.
-    # We no longer need to manage the invoice_message_id here.
 
     await scheduler.spawn(
         generation_worker.run_generation_worker(

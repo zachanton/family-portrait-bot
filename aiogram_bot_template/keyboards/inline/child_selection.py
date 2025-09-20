@@ -1,9 +1,16 @@
 # aiogram_bot_template/keyboards/inline/child_selection.py
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.i18n import gettext as _
-from .callbacks import ContinueWithImageCallback
+from .callbacks import (
+    ContinueWithImageCallback,
+    CreateFamilyPhotoCallback,
+    RetryGenerationCallback,
+)
 
-def continue_with_image_kb(generation_id: int, request_id: int, next_step_message_id: int) -> InlineKeyboardMarkup:
+
+def continue_with_image_kb(
+    generation_id: int, request_id: int, next_step_message_id: int
+) -> InlineKeyboardMarkup:
     """
     Creates a keyboard with a 'Continue with this image' button.
 
@@ -22,7 +29,7 @@ def continue_with_image_kb(generation_id: int, request_id: int, next_step_messag
                 callback_data=ContinueWithImageCallback(
                     generation_id=generation_id,
                     request_id=request_id,
-                    next_step_message_id=next_step_message_id
+                    next_step_message_id=next_step_message_id,
                 ).pack(),
             )
         ]
@@ -30,9 +37,12 @@ def continue_with_image_kb(generation_id: int, request_id: int, next_step_messag
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def post_child_selection_kb(generation_id: int, request_id: int) -> InlineKeyboardMarkup:
+def post_child_selection_kb(
+    generation_id: int, request_id: int
+) -> InlineKeyboardMarkup:
     """
     Creates a keyboard for actions after selecting a child image.
+    Now includes a 'Try again' button.
 
     Args:
         generation_id: The ID of the selected generation.
@@ -45,14 +55,20 @@ def post_child_selection_kb(generation_id: int, request_id: int) -> InlineKeyboa
         [
             InlineKeyboardButton(
                 text=_("👨‍👩‍👧 Create a group photo with this child"),
-                # This callback is a placeholder for a future feature.
-                callback_data=f"group_photo_w_child:{generation_id}:{request_id}"
+                callback_data=CreateFamilyPhotoCallback(
+                    child_generation_id=generation_id, parent_request_id=request_id
+                ).pack(),
             ),
         ],
         [
             InlineKeyboardButton(
-                text=_("🔄 Start a New Generation"),
-                callback_data="start_new"
+                text=_("🔁 Try again"),
+                callback_data=RetryGenerationCallback(request_id=request_id).pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=_("🔄 Start a New Generation"), callback_data="start_new"
             )
         ],
     ]
