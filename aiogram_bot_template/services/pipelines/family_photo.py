@@ -36,7 +36,7 @@ class FamilyPhotoPipeline(BasePipeline):
 
         await self.update_status_func("Creating a family composite draft... 🖼️")
         
-        composite_bytes, faces_only_bytes, p1_bytes, p2_bytes = photo_processing.create_composite_image(father_bytes, child_bytes, mother_bytes)
+        composite_bytes, p1_bytes, p2_bytes, p3_bytes = photo_processing.create_composite_image(father_bytes, child_bytes, mother_bytes)
         
         if not composite_bytes:
             raise RuntimeError("Failed to create a family composite image draft.")

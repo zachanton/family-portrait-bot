@@ -26,7 +26,7 @@ class ChildGenerationPipeline(BasePipeline):
         if not p1_bytes or not p2_bytes:
             raise ValueError("Could not retrieve original image bytes from cache.")
 
-        composite_bytes, faces_only_bytes, mom_face_bytes, dad_face_bytes = photo_processing.create_composite_image(p1_bytes, p2_bytes)
+        composite_bytes, mom_bytes, dad_bytes, p3_bytes = photo_processing.create_composite_image(p1_bytes, p2_bytes)
         if not composite_bytes:
             raise RuntimeError("Failed to create a composite image of parents.")
 
@@ -38,18 +38,24 @@ class ChildGenerationPipeline(BasePipeline):
 
         # Determine which face composite to use based on resemblance
         resemblance = self.gen_data["child_resemblance"]
-        if resemblance == ChildResemblance.BOTH.value:
-            faces_uid = f"faces_only_{request_id_str}"
-            faces_bytes = faces_only_bytes
-        elif resemblance == ChildResemblance.MOM.value:
-            faces_uid = f"mom_face_{request_id_str}"
-            faces_bytes = mom_face_bytes
-        else: # ChildResemblance.DAD
-            faces_uid = f"dad_face_{request_id_str}"
-            faces_bytes = dad_face_bytes
+        # if resemblance == ChildResemblance.BOTH.value:
+        #     faces_uid = f"faces_only_{request_id_str}"
+        #     faces_bytes = composite_bytes
+        # elif resemblance == ChildResemblance.MOM.value:
+        #     faces_uid = f"mom_face_{request_id_str}"
+        #     faces_bytes = p1_bytes
+        # else: # ChildResemblance.DAD
+        #     faces_uid = f"dad_face_{request_id_str}"
+        #     faces_bytes = p2_bytes
         
-        await image_cache.cache_image_bytes(faces_uid, faces_bytes, "image/jpeg", self.cache_pool)
-        faces_url = image_cache.get_cached_image_proxy_url(faces_uid)
+        mom_uid = f"mom_{request_id_str}"
+        await image_cache.cache_image_bytes(mom_uid, mom_bytes, "image/jpeg", self.cache_pool)
+        mom_url = image_cache.get_cached_image_proxy_url(mom_uid)
+
+        dad_uid = f"dad_{request_id_str}"
+        await image_cache.cache_image_bytes(dad_uid, dad_bytes, "image/jpeg", self.cache_pool)
+        dad_url = image_cache.get_cached_image_proxy_url(dad_uid)
+        
         
         quality_level = self.gen_data.get("quality_level", 1)
         tier_config = settings.child_generation.tiers.get(quality_level)
@@ -77,7 +83,7 @@ class ChildGenerationPipeline(BasePipeline):
 
         request_payload = { 
             "model": tier_config.model, 
-            "image_urls": [composite_url, faces_url], 
+            "image_urls": [mom_url, dad_url], 
             "generation_type": GenerationType.CHILD_GENERATION.value,
             **prompt_payload 
         }
@@ -86,7 +92,8 @@ class ChildGenerationPipeline(BasePipeline):
         # Metadata no longer needs to store hints.
         metadata = { 
             "composite_uid": composite_uid,
-            "faces_only_uid": faces_uid,
+            "mom_uid": mom_uid,
+            "dad_uid": dad_uid,
         }
         
         return PipelineOutput(request_payload=request_payload, caption=caption, metadata=metadata)

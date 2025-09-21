@@ -33,23 +33,23 @@ PIPELINE_MAP: dict[str, Type[BasePipeline]] = {
     GenerationType.FAMILY_PHOTO.value: FamilyPhotoPipeline,
 }
 
-SEND_DEBUG_COMPOSITES = True
+SEND_DEBUG = True
 
-async def _send_debug_composite_if_enabled(
-    bot: Bot, chat_id: int, redis: Redis, composite_uid: str | None, caption: str
+async def _send_debug_if_enabled(
+    bot: Bot, chat_id: int, redis: Redis, uid: str | None, caption: str
 ):
-    """Sends the composite image to the user if debug mode is enabled in settings."""
-    if not SEND_DEBUG_COMPOSITES or not composite_uid:
+    """Sends the image to the user if debug mode is enabled in settings."""
+    if not SEND_DEBUG or not uid:
         return
     
     try:
-        image_bytes, _ = await image_cache.get_cached_image_bytes(composite_uid, redis)
+        image_bytes, _ = await image_cache.get_cached_image_bytes(uid, redis)
         if image_bytes:
-            photo = BufferedInputFile(image_bytes, f"{composite_uid}.jpg")
+            photo = BufferedInputFile(image_bytes, f"{uid}.jpg")
             await bot.send_photo(chat_id=chat_id, photo=photo, caption=caption)
     except Exception:
         structlog.get_logger(__name__).warning(
-            "Failed to send debug composite image", uid=composite_uid
+            "Failed to send debug image", uid=uid
         )
 
 async def run_generation_worker(
@@ -99,16 +99,22 @@ async def run_generation_worker(
         pipeline = pipeline_class(bot, gen_data, log, status.update, cache_pool)
         pipeline_output = await pipeline.prepare_data()
 
-        await _send_debug_composite_if_enabled(
+        await _send_debug_if_enabled(
             bot=bot, chat_id=chat_id, redis=cache_pool,
-            composite_uid=pipeline_output.metadata.get("composite_uid"),
+            uid=pipeline_output.metadata.get("composite_uid"),
             caption="[DEBUG] This is the composite image sent to the AI."
         )
 
-        await _send_debug_composite_if_enabled(
+        await _send_debug_if_enabled(
             bot=bot, chat_id=chat_id, redis=cache_pool,
-            composite_uid=pipeline_output.metadata.get("faces_only_uid"),
-            caption="[DEBUG] This is the composite image sent to the AI."
+            uid=pipeline_output.metadata.get("mom_uid"),
+            caption="[DEBUG] This is the mom image sent to the AI."
+        )
+
+        await _send_debug_if_enabled(
+            bot=bot, chat_id=chat_id, redis=cache_pool,
+            uid=pipeline_output.metadata.get("dad_uid"),
+            caption="[DEBUG] This is the dad image sent to the AI."
         )
 
         for i in range(generation_count):
