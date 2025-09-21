@@ -15,9 +15,8 @@ from aiogram_bot_template.db.db_api.storages import PostgresConnection
 from aiogram_bot_template.db.repo import generations as generations_repo, users as users_repo
 from aiogram_bot_template.keyboards.inline.callbacks import (
     RetryGenerationCallback, ContinueWithImageCallback, CreateFamilyPhotoCallback,
-    ContinueWithFamilyPhotoCallback  # --- NEW IMPORT ---
+    ContinueWithFamilyPhotoCallback
 )
-# --- MODIFIED IMPORT ---
 from aiogram_bot_template.keyboards.inline import child_selection as child_selection_kb, family_selection as family_selection_kb
 from aiogram_bot_template.keyboards.inline.gender import gender_kb
 from aiogram_bot_template.keyboards.inline.quality import quality_kb
@@ -50,7 +49,8 @@ async def start_new_generation(
 
 @router.callback_query(
     RetryGenerationCallback.filter(),
-    StateFilter(Generation.waiting_for_next_action, Generation.child_selected),
+    # --- MODIFICATION: Simplified StateFilter ---
+    StateFilter(Generation.waiting_for_next_action),
 )
 async def process_retry_generation(
     cb: CallbackQuery,
@@ -122,9 +122,8 @@ async def process_continue_with_image(
 ):
     """
     Handles the selection of a child image.
-    - Deletes the PREVIOUS "You've selected..." message if it exists.
-    - Sends a NEW "You've selected..." message.
-    - Keeps the buttons on the original photos intact, allowing the user to change their mind.
+    This handler can be called multiple times, allowing the user to change their mind.
+    It keeps the state in 'waiting_for_next_action'.
     """
     await cb.answer()
     
@@ -138,7 +137,6 @@ async def process_continue_with_image(
     previous_selection_message_id = user_data.get("next_step_message_id")
     if previous_selection_message_id:
         with suppress(TelegramBadRequest):
-            # This deletes the "Your generations are ready" or the previous selection message
             await bot.delete_message(chat_id=chat_id, message_id=previous_selection_message_id)
 
     db = PostgresConnection(db_pool, logger=business_logger)
@@ -155,20 +153,22 @@ async def process_continue_with_image(
     sent_message = await bot.send_photo(
         chat_id=chat_id,
         photo=selected_file_id,
-        caption=_("You've selected this child.\n\nWhat would you like to do next?"),
+        caption=_("Great choice! Here is your child portrait.\n\nWhat would you like to do next?"),
         reply_markup=child_selection_kb.post_child_selection_kb(
             generation_id=callback_data.generation_id,
             request_id=callback_data.request_id
         )
     )
     
-    await state.set_state(Generation.child_selected)
+    # --- MODIFICATION: We DO NOT change the state here. ---
+    # The user remains in 'waiting_for_next_action' to allow re-selection.
+    # await state.set_state(Generation.child_selected) 
+    
     await state.update_data(
         next_step_message_id=sent_message.message_id
     )
 
 
-# --- NEW HANDLER ---
 @router.callback_query(ContinueWithFamilyPhotoCallback.filter(), StateFilter(Generation.waiting_for_next_action))
 async def process_continue_with_family_photo(
     cb: CallbackQuery,
@@ -180,9 +180,7 @@ async def process_continue_with_family_photo(
 ):
     """
     Handles the selection of a final family portrait.
-    - Deletes the previous instruction/selection message.
-    - Sends a new message with the chosen photo and a final "Start New" button.
-    - Keeps buttons on other family photos intact.
+    This handler can be called multiple times.
     """
     await cb.answer()
 
@@ -212,17 +210,23 @@ async def process_continue_with_family_photo(
     sent_message = await bot.send_photo(
         chat_id=chat_id,
         photo=selected_file_id,
-        caption=_("Great choice! Here is your final family portrait."),
+        caption=_("Great choice! Here is your family portrait.\n\nWhat would you like to do next?"),
         reply_markup=family_selection_kb.post_family_photo_selection_kb()
     )
 
-    await state.set_state(Generation.family_photo_selected)
+    # --- MODIFICATION: We DO NOT change the state here. ---
+    # await state.set_state(Generation.family_photo_selected)
+    
     await state.update_data(
         next_step_message_id=sent_message.message_id
     )
 
 
-@router.callback_query(CreateFamilyPhotoCallback.filter(), StateFilter(Generation.child_selected))
+@router.callback_query(
+    CreateFamilyPhotoCallback.filter(), 
+    # --- MODIFICATION: Changed StateFilter ---
+    StateFilter(Generation.waiting_for_next_action)
+)
 async def process_create_family_photo(
     cb: CallbackQuery,
     callback_data: CreateFamilyPhotoCallback,
@@ -231,8 +235,8 @@ async def process_create_family_photo(
     business_logger: structlog.typing.FilteringBoundLogger,
 ):
     """
-    Initiates the family photo generation flow. This is treated as a continuation
-    of the current session, so the child selection interface is NOT cleaned up here.
+    Initiates the family photo generation flow. This is a final action for the
+    current context, so we perform a full cleanup of the child selection interface.
     """
     await cb.answer()
     if not cb.message:
@@ -287,7 +291,7 @@ async def process_create_family_photo(
         is_trial_available = is_in_whitelist or not has_used_trial
 
         await cb.message.edit_caption(
-            caption=_("Please choose your generation package for the family portrait:"),
+            caption=_("Excellent! Please choose your generation package for the family portrait:"),
             reply_markup=quality_kb(
                 generation_type=GenerationType.FAMILY_PHOTO,
                 is_trial_available=is_trial_available

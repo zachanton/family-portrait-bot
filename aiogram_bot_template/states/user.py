@@ -23,7 +23,3 @@ class Generation(StatesGroup):
     waiting_for_payment = State()
     waiting_for_feedback = State()
     waiting_for_next_action = State()
-    
-    # --- States for post-selection actions ---
-    child_selected = State()
-    family_photo_selected = State()
