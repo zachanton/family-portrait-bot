@@ -20,7 +20,12 @@ class ContinueWithImageCallback(CallbackData, prefix="continue_with_img"):
     generation_id: int
     request_id: int
 
-# New Callback for the "Create a group photo" button
+# --- NEW ---
+class ContinueWithFamilyPhotoCallback(CallbackData, prefix="continue_with_family"):
+    """Callback to proceed with a specific generated family photo."""
+    generation_id: int
+    request_id: int
+
 class CreateFamilyPhotoCallback(CallbackData, prefix="create_family"):
     """Callback to start the family photo generation flow."""
     child_generation_id: int

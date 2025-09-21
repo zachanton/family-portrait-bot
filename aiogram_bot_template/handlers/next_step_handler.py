@@ -14,9 +14,11 @@ from aiogram_bot_template.data.constants import GenerationType, ImageRole
 from aiogram_bot_template.db.db_api.storages import PostgresConnection
 from aiogram_bot_template.db.repo import generations as generations_repo, users as users_repo
 from aiogram_bot_template.keyboards.inline.callbacks import (
-    RetryGenerationCallback, ContinueWithImageCallback, CreateFamilyPhotoCallback
+    RetryGenerationCallback, ContinueWithImageCallback, CreateFamilyPhotoCallback,
+    ContinueWithFamilyPhotoCallback  # --- NEW IMPORT ---
 )
-from aiogram_bot_template.keyboards.inline import child_selection as child_selection_kb
+# --- MODIFIED IMPORT ---
+from aiogram_bot_template.keyboards.inline import child_selection as child_selection_kb, family_selection as family_selection_kb
 from aiogram_bot_template.keyboards.inline.gender import gender_kb
 from aiogram_bot_template.keyboards.inline.quality import quality_kb
 from aiogram_bot_template.states.user import Generation
@@ -38,7 +40,6 @@ async def start_new_generation(
         await menu.send_welcome_message(callback.message, state, is_restart=True)
         return
 
-    # This is a key cleanup point
     await _cleanup_selection_messages(callback.bot, callback.message.chat.id, state)
     
     with suppress(TelegramBadRequest):
@@ -66,7 +67,6 @@ async def process_retry_generation(
     if not cb.message:
         return
 
-    # This is a key cleanup point
     await _cleanup_selection_messages(cb.bot, cb.message.chat.id, state)
     with suppress(TelegramBadRequest):
         await cb.message.delete()
@@ -135,10 +135,10 @@ async def process_continue_with_image(
     user_data = await state.get_data()
     chat_id = cb.message.chat.id
     
-    # Delete the previous selection message to avoid clutter
     previous_selection_message_id = user_data.get("next_step_message_id")
     if previous_selection_message_id:
         with suppress(TelegramBadRequest):
+            # This deletes the "Your generations are ready" or the previous selection message
             await bot.delete_message(chat_id=chat_id, message_id=previous_selection_message_id)
 
     db = PostgresConnection(db_pool, logger=business_logger)
@@ -152,7 +152,6 @@ async def process_continue_with_image(
 
     selected_file_id = result.data["result_file_id"]
 
-    # Send a new message with the selected photo and next actions
     sent_message = await bot.send_photo(
         chat_id=chat_id,
         photo=selected_file_id,
@@ -164,8 +163,60 @@ async def process_continue_with_image(
     )
     
     await state.set_state(Generation.child_selected)
-    # Store the ID of this new message. It will be deleted if the user selects another child
-    # or when the session is fully cleaned up.
+    await state.update_data(
+        next_step_message_id=sent_message.message_id
+    )
+
+
+# --- NEW HANDLER ---
+@router.callback_query(ContinueWithFamilyPhotoCallback.filter(), StateFilter(Generation.waiting_for_next_action))
+async def process_continue_with_family_photo(
+    cb: CallbackQuery,
+    callback_data: ContinueWithFamilyPhotoCallback,
+    state: FSMContext,
+    db_pool: asyncpg.Pool,
+    business_logger: structlog.typing.FilteringBoundLogger,
+    bot: Bot,
+):
+    """
+    Handles the selection of a final family portrait.
+    - Deletes the previous instruction/selection message.
+    - Sends a new message with the chosen photo and a final "Start New" button.
+    - Keeps buttons on other family photos intact.
+    """
+    await cb.answer()
+
+    if not cb.message:
+        business_logger.warning("CallbackQuery without a message in process_continue_with_family_photo")
+        return
+
+    user_data = await state.get_data()
+    chat_id = cb.message.chat.id
+
+    previous_message_id = user_data.get("next_step_message_id")
+    if previous_message_id:
+        with suppress(TelegramBadRequest):
+            await bot.delete_message(chat_id=chat_id, message_id=previous_message_id)
+
+    db = PostgresConnection(db_pool, logger=business_logger)
+    sql = "SELECT result_file_id FROM generations WHERE id = $1"
+    result = await db.fetchrow(sql, (callback_data.generation_id,))
+
+    if not result or not result.data or not result.data.get("result_file_id"):
+        await cb.message.answer(_("I couldn't find the selected image. Please start over using /start."))
+        await state.clear()
+        return
+
+    selected_file_id = result.data["result_file_id"]
+
+    sent_message = await bot.send_photo(
+        chat_id=chat_id,
+        photo=selected_file_id,
+        caption=_("Great choice! Here is your final family portrait."),
+        reply_markup=family_selection_kb.post_family_photo_selection_kb()
+    )
+
+    await state.set_state(Generation.family_photo_selected)
     await state.update_data(
         next_step_message_id=sent_message.message_id
     )
@@ -186,7 +237,7 @@ async def process_create_family_photo(
     await cb.answer()
     if not cb.message:
         return
-
+        
     await cb.message.edit_caption(
         caption=_("Got it! Preparing the family photoshoot..."),
         reply_markup=None
@@ -225,8 +276,6 @@ async def process_create_family_photo(
         )
         new_request_id = await generations_repo.create_generation_request(db, draft)
         
-        # <--- ИЗМЕНЕНИЕ: Мы больше не сбрасываем message IDs здесь.
-        # Они остаются в состоянии до тех пор, пока не будет вызван /start или /cancel.
         await state.update_data(
             request_id=new_request_id,
             generation_type=GenerationType.FAMILY_PHOTO.value,
@@ -238,7 +287,7 @@ async def process_create_family_photo(
         is_trial_available = is_in_whitelist or not has_used_trial
 
         await cb.message.edit_caption(
-            caption=_("Family lineup is ready! Please choose your generation package for the family portrait:"),
+            caption=_("Please choose your generation package for the family portrait:"),
             reply_markup=quality_kb(
                 generation_type=GenerationType.FAMILY_PHOTO,
                 is_trial_available=is_trial_available

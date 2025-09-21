@@ -6,7 +6,6 @@ class Language(StatesGroup):
     selecting = State()
 
 
-# --- REFACTORED: Adapted for the new, more complex flow ---
 class Generation(StatesGroup):
     """
     A full generation flow, starting with photo collection and
@@ -25,4 +24,6 @@ class Generation(StatesGroup):
     waiting_for_feedback = State()
     waiting_for_next_action = State()
     
+    # --- States for post-selection actions ---
     child_selected = State()
+    family_photo_selected = State()

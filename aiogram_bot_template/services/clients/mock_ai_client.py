@@ -17,7 +17,7 @@ logger = structlog.get_logger(__name__)
 
 # --- NEW: Define paths to both mock images ---
 _ASSETS_DIR = Path(__file__).parent.parent.parent / "assets"
-_MOCK_FAMILY_IMAGE_PATH = _ASSETS_DIR / "mock_family.jpg"
+_MOCK_FAMILY_IMAGE_PATH = _ASSETS_DIR / "family.jpg"
 _MOCK_CHILD_IMAGE_PATH = _ASSETS_DIR / "child_2.jpg"
 
 

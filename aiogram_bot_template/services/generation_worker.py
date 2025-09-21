@@ -17,7 +17,8 @@ from aiogram_bot_template.data.constants import GenerationType
 from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.db.db_api.storages import PostgresConnection
 from aiogram_bot_template.db.repo import generations as generations_repo
-from aiogram_bot_template.keyboards.inline import feedback, next_step, child_selection
+# --- MODIFIED IMPORT ---
+from aiogram_bot_template.keyboards.inline import feedback, next_step, child_selection, family_selection
 from aiogram_bot_template.services import image_cache
 from aiogram_bot_template.services.pipelines.base import BasePipeline
 from aiogram_bot_template.services.pipelines.pair_photo import PairPhotoPipeline
@@ -119,7 +120,7 @@ async def run_generation_worker(
 
         await _send_debug_if_enabled(
             bot=bot, chat_id=chat_id, redis=cache_pool,
-            uid=pipeline_output.metadata.get("child_uid", None),
+            uid=pipeline_output.metadata.get("child_uid"),
             caption="[DEBUG] This is the child image sent to the AI."
         )
 
@@ -164,6 +165,12 @@ async def run_generation_worker(
                     generation_id=generation_id,
                     request_id=request_id
                 )
+            # --- NEW ---
+            elif generation_type == GenerationType.FAMILY_PHOTO.value:
+                reply_markup = family_selection.continue_with_family_photo_kb(
+                    generation_id=generation_id,
+                    request_id=request_id
+                )
 
             last_sent_message = await bot.send_photo(
                 chat_id=chat_id, photo=photo, caption=pipeline_output.caption, reply_markup=reply_markup
@@ -196,23 +203,32 @@ async def run_generation_worker(
 
         await generations_repo.update_generation_request_status(db, request_id, "completed")
         
-        # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
         if generation_type == GenerationType.CHILD_GENERATION.value:
-            # Send the separate, clear call-to-action message.
             next_step_msg = await bot.send_message(
                 chat_id, 
-                _("✨ Your AI generations are ready!\n\n"
-                  "Please select one of the children above to continue, or press /start to begin again."),
+                _("✨ Your children are ready!\n\n"
+                  "Please select one of the generations above or press /start to begin again."),
             )
-
-            # Store all relevant message IDs in the state for future cleanup.
             await state.update_data(
                 photo_message_ids=[m["message_id"] for m in sent_photo_messages],
-                next_step_message_id=next_step_msg.message_id # Save the ID of the instruction message
+                next_step_message_id=next_step_msg.message_id
+            )
+            await state.set_state(Generation.waiting_for_next_action)
+        
+        # --- MODIFIED ---
+        elif generation_type == GenerationType.FAMILY_PHOTO.value:
+            next_step_msg = await bot.send_message(
+                chat_id,
+                _("✨ Your family portraits are ready!\n\n"
+                  "Please select one of the generations above or press /start to begin again.")
+            )
+            await state.update_data(
+                photo_message_ids=[m["message_id"] for m in sent_photo_messages],
+                next_step_message_id=next_step_msg.message_id
             )
             await state.set_state(Generation.waiting_for_next_action)
 
-        elif generation_type in [GenerationType.PAIR_PHOTO.value, GenerationType.FAMILY_PHOTO.value]:
+        elif generation_type == GenerationType.PAIR_PHOTO.value:
             await bot.send_message(
                 chat_id, 
                 _("Your photoshoot is complete! What's next?"),
@@ -242,5 +258,6 @@ async def run_generation_worker(
             Generation.waiting_for_next_action, 
             Generation.waiting_for_feedback,
             Generation.child_selected,
+            Generation.family_photo_selected, # Add new state to the exception list
         ]:
             await state.clear()

@@ -24,7 +24,7 @@ def continue_with_image_kb(
     buttons = [
         [
             InlineKeyboardButton(
-                text=_("😍 Continue with this child portrait"),
+                text=_("😍 Continue with this child"),
                 callback_data=ContinueWithImageCallback(
                     generation_id=generation_id,
                     request_id=request_id,
