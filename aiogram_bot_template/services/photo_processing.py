@@ -484,13 +484,13 @@ def create_composite_image(*p_bytes_list: bytes) -> Tuple[Optional[bytes], Optio
         return None, None, None, None
 
     try:
-        # 1) Load and normalize scale
+        # 1) Load originals
         p_bgr_list = [load_image_bgr_from_bytes(b) for b in p_bytes_list]
         if any(img is None for img in p_bgr_list):
             return None, None, None, None
 
-        # Fixed NameError previously: use the correct variable in the comprehension
-        person_data_raw = [analyze_and_segment_person(b) for b in p_bgr_list]
+        # 2) Analyze + initial scale normalization (kept from your pipeline)
+        person_data_raw = [analyze_and_segment_person(bgr) for bgr in p_bgr_list]
 
         scales = [
             clamp(TARGET_FACE_METRIC_PX / (face_scale_metric(d) or TARGET_FACE_METRIC_PX), MIN_SCALE, MAX_SCALE)
@@ -502,47 +502,32 @@ def create_composite_image(*p_bytes_list: bytes) -> Tuple[Optional[bytes], Optio
 
         num_people = len(processed_people)
 
-        # 2) Per-person tight crops for main vertical composite
-        cropped_bgs: List[np.ndarray] = []
-        cropped_persons_rgba: List[np.ndarray] = []
+        # 3) Reorder for 3-people layout: parents first, child in the middle
+        if num_people == 3:
+            processed_people = [processed_people[0], processed_people[2], processed_people[1]]
 
-        for i, p_data in enumerate(processed_people):
-            ex, ey = p_data["eyes_xy"]
-            up = p_data["clearances"]["up"]
-            down = p_data["clearances"]["down"]
-            crop_h = int(round(up + down))
-            crop_w = int(round(crop_h * CROP_ASPECT))
+        # 4) MAIN COMPOSITE from the SAME face crops as portraits
+        if num_people == 2:
+            final_image_tiktok_bgr = _create_faces_only_composite(processed_people[0], processed_people[1])
+        else:  # num_people == 3
+            final_image_tiktok_bgr = _create_three_faces_composite(
+                processed_people[0], processed_people[1], processed_people[2]
+            )
 
-            x1 = int(round(ex - crop_w / 2))
-            y1 = int(round(ey - up))
-
-            if num_people == 3 and i == 1:
-                extra_allow = max(0, int(round(up)))
-                extra_target = int(round(p_data["head_h"] * CENTER_CROP_EXTRA_UP_RATIO))
-                y1 -= min(extra_allow, extra_target)
-
-            x2, y2 = x1 + crop_w, y1 + crop_h
-
-            bg_crop, _, _ = _pad_crop_with_offsets(p_data["rot_bgr"], x1, y1, x2, y2)
-            person_rgba_crop, _, _ = _pad_crop_with_offsets(p_data["rot_rgba"], x1, y1, x2, y2)
-            cropped_bgs.append(bg_crop)
-            cropped_persons_rgba.append(person_rgba_crop)
-
-        # 3) Main vertical composite on TikTok canvas
-        final_image_tiktok_bgr = _stack_crops_vertically_on_tiktok(cropped_bgs, cropped_persons_rgba)
         vertical_composite_jpeg = convert_bgr_to_jpeg_bytes(final_image_tiktok_bgr)
 
-        # 4) Individual portraits (strictly no aspect distortion)
+        # 5) Individual portraits (strictly same face crops)
         faces_rgba = [_extract_face_rgba(pp) for pp in processed_people]
 
         p1_bgr = _fit_face_rgba_to_tiktok_bgr(faces_rgba[0])
-        p2_bgr = _fit_face_rgba_to_tiktok_bgr(faces_rgba[1])
+        p2_bgr = _fit_face_rgba_to_tiktok_bgr(faces_rgba[-1])
         p1_portrait_jpeg = convert_bgr_to_jpeg_bytes(p1_bgr)
         p2_portrait_jpeg = convert_bgr_to_jpeg_bytes(p2_bgr)
 
         child_portrait_jpeg: Optional[bytes] = None
         if num_people == 3:
-            child_bgr = _fit_face_rgba_to_tiktok_bgr(faces_rgba[2])  # index 2 is child
+            # After reordering, index 1 is the child (middle).
+            child_bgr = _fit_face_rgba_to_tiktok_bgr(faces_rgba[1])
             child_portrait_jpeg = convert_bgr_to_jpeg_bytes(child_bgr)
 
         return vertical_composite_jpeg, p1_portrait_jpeg, p2_portrait_jpeg, child_portrait_jpeg
