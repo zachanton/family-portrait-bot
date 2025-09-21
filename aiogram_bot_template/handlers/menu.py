@@ -16,11 +16,12 @@ from aiogram_bot_template.states.user import Generation
 router = Router(name="menu-handlers")
 
 
-# --- NEW HELPER FUNCTION ---
 async def _cleanup_selection_messages(bot: Bot, chat_id: int, state: FSMContext) -> None:
     """
-    Removes the keyboards from previous child/image selection messages
-    and deletes the final action prompt to prevent users from interacting with an old state.
+    Performs a full cleanup of the interactive selection interface.
+    It removes keyboards from all generated photos and deletes the separate
+    "action prompt" message (e.g., "You've selected this child...").
+    This is intended to be called when the user's session is terminated or moves to a new stage.
     """
     if not state:
         return
@@ -29,23 +30,22 @@ async def _cleanup_selection_messages(bot: Bot, chat_id: int, state: FSMContext)
     photo_message_ids = user_data.get("photo_message_ids", [])
     next_step_message_id = user_data.get("next_step_message_id")
 
+    # Delete the separate action prompt message
     if next_step_message_id:
         with suppress(TelegramBadRequest):
-            # --- FIX: Use keyword arguments for robustness ---
             await bot.delete_message(chat_id=chat_id, message_id=next_step_message_id)
 
+    # Remove keyboards from all generated photos to make them non-interactive
     if photo_message_ids:
         for msg_id in photo_message_ids:
             with suppress(TelegramBadRequest):
-                # --- FIX: Use keyword arguments for robustness ---
                 await bot.edit_message_reply_markup(chat_id=chat_id, message_id=msg_id, reply_markup=None)
 
 
 async def send_welcome_message(msg: Message, state: FSMContext, is_restart: bool = False):
     """Sends the welcome/restart message and sets the initial state."""
-    # --- MODIFICATION: Call cleanup BEFORE clearing state ---
-    # This is the key change. We clean up messages from the previous session
-    # using the old state data before that data is wiped.
+    # This is the key change: clean up messages from the previous session
+    # using the old state data BEFORE that data is wiped by state.clear().
     await _cleanup_selection_messages(msg.bot, msg.chat.id, state)
     
     await state.clear()

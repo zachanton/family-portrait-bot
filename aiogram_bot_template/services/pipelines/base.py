@@ -16,7 +16,8 @@ from aiogram_bot_template.data.constants import GenerationType
 class PipelineOutput(BaseModel):
     """Data structure that each pipeline's prepare_data must return."""
     request_payload: dict[str, Any]
-    caption: str
+    # --- MODIFICATION: Allow caption to be None ---
+    caption: str | None = None
     metadata: dict[str, Any] | None = None
 
 

@@ -36,17 +36,7 @@ class ChildGenerationPipeline(BasePipeline):
         await image_cache.cache_image_bytes(composite_uid, composite_bytes, "image/jpeg", self.cache_pool)
         composite_url = image_cache.get_cached_image_proxy_url(composite_uid)
 
-        # Determine which face composite to use based on resemblance
         resemblance = self.gen_data["child_resemblance"]
-        # if resemblance == ChildResemblance.BOTH.value:
-        #     faces_uid = f"faces_only_{request_id_str}"
-        #     faces_bytes = composite_bytes
-        # elif resemblance == ChildResemblance.MOM.value:
-        #     faces_uid = f"mom_face_{request_id_str}"
-        #     faces_bytes = p1_bytes
-        # else: # ChildResemblance.DAD
-        #     faces_uid = f"dad_face_{request_id_str}"
-        #     faces_bytes = p2_bytes
         
         mom_uid = f"mom_{request_id_str}"
         await image_cache.cache_image_bytes(mom_uid, mom_bytes, "image/jpeg", self.cache_pool)
@@ -88,8 +78,8 @@ class ChildGenerationPipeline(BasePipeline):
             **prompt_payload 
         }
         
-        caption = _("✨ Here is your potential child!")
-        # Metadata no longer needs to store hints.
+        caption = None
+        
         metadata = { 
             "composite_uid": composite_uid,
             "mom_uid": mom_uid,

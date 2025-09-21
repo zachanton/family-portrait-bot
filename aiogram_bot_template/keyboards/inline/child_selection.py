@@ -9,7 +9,7 @@ from .callbacks import (
 
 
 def continue_with_image_kb(
-    generation_id: int, request_id: int, next_step_message_id: int
+    generation_id: int, request_id: int
 ) -> InlineKeyboardMarkup:
     """
     Creates a keyboard with a 'Continue with this image' button.
@@ -17,7 +17,6 @@ def continue_with_image_kb(
     Args:
         generation_id: The ID of the specific generation this button is attached to.
         request_id: The ID of the parent generation request.
-        next_step_message_id: The ID of the final 'Try Again' message to be deleted on click.
 
     Returns:
         An inline keyboard.
@@ -25,11 +24,10 @@ def continue_with_image_kb(
     buttons = [
         [
             InlineKeyboardButton(
-                text=_("😍 Continue with this child"),
+                text=_("😍 Continue with this child portrait"),
                 callback_data=ContinueWithImageCallback(
                     generation_id=generation_id,
                     request_id=request_id,
-                    next_step_message_id=next_step_message_id,
                 ).pack(),
             )
         ]
@@ -42,7 +40,7 @@ def post_child_selection_kb(
 ) -> InlineKeyboardMarkup:
     """
     Creates a keyboard for actions after selecting a child image.
-    Now includes a 'Try again' button.
+    The 'Try again' button has been removed from this view.
 
     Args:
         generation_id: The ID of the selected generation.
@@ -59,12 +57,6 @@ def post_child_selection_kb(
                     child_generation_id=generation_id, parent_request_id=request_id
                 ).pack(),
             ),
-        ],
-        [
-            InlineKeyboardButton(
-                text=_("🔁 Try again"),
-                callback_data=RetryGenerationCallback(request_id=request_id).pack(),
-            )
         ],
         [
             InlineKeyboardButton(

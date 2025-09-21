@@ -1,3 +1,4 @@
+# aiogram_bot_template/keyboards/inline/callbacks.py
 from aiogram.filters.callback_data import CallbackData
 
 class LanguageCallback(CallbackData, prefix="lang"):
@@ -18,7 +19,6 @@ class ContinueWithImageCallback(CallbackData, prefix="continue_with_img"):
     """Callback to proceed with a specific generated child image."""
     generation_id: int
     request_id: int
-    next_step_message_id: int
 
 # New Callback for the "Create a group photo" button
 class CreateFamilyPhotoCallback(CallbackData, prefix="create_family"):

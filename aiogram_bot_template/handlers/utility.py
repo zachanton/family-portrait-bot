@@ -65,7 +65,7 @@ async def handle_unexpected_input_in_button_states(msg: Message) -> None:
     await msg.answer(
         _(
             "It looks like I'm waiting for you to make a choice. "
-            "Please use the buttons in my previous message. If you want to start over, just send /cancel."
+            "If you want to start over, just send /cancel."
         )
     )
 

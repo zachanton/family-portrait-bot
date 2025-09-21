@@ -117,6 +117,12 @@ async def run_generation_worker(
             caption="[DEBUG] This is the dad image sent to the AI."
         )
 
+        await _send_debug_if_enabled(
+            bot=bot, chat_id=chat_id, redis=cache_pool,
+            uid=pipeline_output.metadata.get("child_uid", None),
+            caption="[DEBUG] This is the child image sent to the AI."
+        )
+
         for i in range(generation_count):
             current_iteration = i + 1
             log_task = log.bind(sequence=f"{current_iteration}/{generation_count}")
@@ -142,19 +148,39 @@ async def run_generation_worker(
                 continue
 
             photo = BufferedInputFile(result.image_bytes, f"generation_{current_iteration}.png")
-            last_sent_message = await bot.send_photo(chat_id=chat_id, photo=photo, caption=pipeline_output.caption)
-            unique_id = last_sent_message.photo[-1].file_unique_id
-            await image_cache.cache_image_bytes(unique_id, result.image_bytes, result.content_type, cache_pool)
 
-            log_entry = generations_repo.GenerationLog(
+            log_entry_draft = generations_repo.GenerationLog(
                 request_id=request_id, type=generation_type, status="completed",
                 quality_level=quality_level, trial_type=trial_type, seed=payload_override["seed"],
                 generation_time_ms=result.generation_time_ms,
                 api_request_payload=result.request_payload, api_response_payload=result.response_payload,
-                result_image_unique_id=unique_id, result_message_id=last_sent_message.message_id,
-                result_file_id=last_sent_message.photo[-1].file_id, caption=pipeline_output.caption
+                caption=pipeline_output.caption
             )
-            generation_id = await generations_repo.create_generation_log(db, log_entry)
+            generation_id = await generations_repo.create_generation_log(db, log_entry_draft)
+
+            reply_markup = None
+            if generation_type == GenerationType.CHILD_GENERATION.value:
+                reply_markup = child_selection.continue_with_image_kb(
+                    generation_id=generation_id,
+                    request_id=request_id
+                )
+
+            last_sent_message = await bot.send_photo(
+                chat_id=chat_id, photo=photo, caption=pipeline_output.caption, reply_markup=reply_markup
+            )
+
+            unique_id = last_sent_message.photo[-1].file_unique_id
+            await image_cache.cache_image_bytes(unique_id, result.image_bytes, result.content_type, cache_pool)
+            
+            sql_update_log = """
+                UPDATE generations
+                SET result_image_unique_id = $1, result_message_id = $2, result_file_id = $3
+                WHERE id = $4;
+            """
+            await db.execute(sql_update_log, (
+                unique_id, last_sent_message.message_id, last_sent_message.photo[-1].file_id, generation_id
+            ))
+
             sent_photo_messages.append({"message_id": last_sent_message.message_id, "generation_id": generation_id})
 
         await status.delete()
@@ -170,33 +196,23 @@ async def run_generation_worker(
 
         await generations_repo.update_generation_request_status(db, request_id, "completed")
         
+        # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
         if generation_type == GenerationType.CHILD_GENERATION.value:
+            # Send the separate, clear call-to-action message.
             next_step_msg = await bot.send_message(
                 chat_id, 
-                _("Your potential children are ready!\n\nPlease select one of the images above to proceed, or choose an action from the menu below."),
-                reply_markup=next_step.get_next_step_keyboard("continue", request_id)
+                _("✨ Your AI generations are ready!\n\n"
+                  "Please select one of the children above to continue, or press /start to begin again."),
             )
-            next_step_message_id = next_step_msg.message_id
 
-            for msg_data in sent_photo_messages:
-                with suppress(TelegramBadRequest):
-                    await bot.edit_message_reply_markup(
-                        chat_id=chat_id, message_id=msg_data["message_id"],
-                        reply_markup=child_selection.continue_with_image_kb(
-                            generation_id=msg_data["generation_id"],
-                            request_id=request_id,
-                            next_step_message_id=next_step_message_id
-                        )
-                    )
-            
+            # Store all relevant message IDs in the state for future cleanup.
             await state.update_data(
                 photo_message_ids=[m["message_id"] for m in sent_photo_messages],
-                next_step_message_id=next_step_message_id
+                next_step_message_id=next_step_msg.message_id # Save the ID of the instruction message
             )
             await state.set_state(Generation.waiting_for_next_action)
 
         elif generation_type in [GenerationType.PAIR_PHOTO.value, GenerationType.FAMILY_PHOTO.value]:
-            # Instead of showing a feedback keyboard, we now always show the next step menu.
             await bot.send_message(
                 chat_id, 
                 _("Your photoshoot is complete! What's next?"),

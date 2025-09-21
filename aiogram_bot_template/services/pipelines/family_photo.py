@@ -36,7 +36,7 @@ class FamilyPhotoPipeline(BasePipeline):
 
         await self.update_status_func("Creating a family composite draft... 🖼️")
         
-        composite_bytes, p1_bytes, p2_bytes, p3_bytes = photo_processing.create_composite_image(father_bytes, child_bytes, mother_bytes)
+        composite_bytes, mom_bytes, dad_bytes, child_bytes = photo_processing.create_composite_image(mother_bytes, father_bytes, child_bytes)
         
         if not composite_bytes:
             raise RuntimeError("Failed to create a family composite image draft.")
@@ -47,11 +47,19 @@ class FamilyPhotoPipeline(BasePipeline):
         await image_cache.cache_image_bytes(composite_uid, composite_bytes, "image/jpeg", self.cache_pool)
         composite_url = image_cache.get_cached_image_proxy_url(composite_uid)
         
-        faces_only_uid = f"faces_only_family_{request_id_str}"
-        await image_cache.cache_image_bytes(faces_only_uid, faces_only_bytes, "image/jpeg", self.cache_pool)
-        faces_only_url = image_cache.get_cached_image_proxy_url(faces_only_uid)
+        mom_uid = f"mom_{request_id_str}"
+        await image_cache.cache_image_bytes(mom_uid, mom_bytes, "image/jpeg", self.cache_pool)
+        mom_url = image_cache.get_cached_image_proxy_url(mom_uid)
 
-        image_urls = [faces_only_url]
+        dad_uid = f"dad_{request_id_str}"
+        await image_cache.cache_image_bytes(dad_uid, dad_bytes, "image/jpeg", self.cache_pool)
+        dad_url = image_cache.get_cached_image_proxy_url(dad_uid)
+
+        child_uid = f"child_{request_id_str}"
+        await image_cache.cache_image_bytes(child_uid, child_bytes, "image/jpeg", self.cache_pool)
+        child_url = image_cache.get_cached_image_proxy_url(child_uid)
+
+        image_urls = [ mom_url, child_url, dad_url ]
 
         # await self.update_status_func("Analyzing family features for accuracy... 🧐")
         # identity_lock_data = await enhancers.get_identity_lock_data(composite_url)
@@ -82,7 +90,13 @@ class FamilyPhotoPipeline(BasePipeline):
             **prompt_payload,
         }
         
-        caption = _("✨ Here is your beautiful family portrait!")
-        metadata = { "composite_uid": composite_uid, "faces_only_uid": faces_only_uid }
+        caption = None
+        
+        metadata = { 
+            "composite_uid": composite_uid,
+            "mom_uid": mom_uid,
+            "dad_uid": dad_uid,
+            "child_uid": child_uid,
+        }
         
         return PipelineOutput(request_payload=request_payload, caption=caption, metadata=metadata)

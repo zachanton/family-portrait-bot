@@ -540,12 +540,12 @@ def create_composite_image(*p_bytes_list: bytes) -> Tuple[Optional[bytes], Optio
         p1_portrait_jpeg = convert_bgr_to_jpeg_bytes(p1_bgr)
         p2_portrait_jpeg = convert_bgr_to_jpeg_bytes(p2_bgr)
 
-        middle_portrait_jpeg: Optional[bytes] = None
+        child_portrait_jpeg: Optional[bytes] = None
         if num_people == 3:
-            middle_bgr = _fit_face_rgba_to_tiktok_bgr(faces_rgba[1])  # index 1 is the middle person
-            middle_portrait_jpeg = convert_bgr_to_jpeg_bytes(middle_bgr)
+            child_bgr = _fit_face_rgba_to_tiktok_bgr(faces_rgba[2])  # index 2 is child
+            child_portrait_jpeg = convert_bgr_to_jpeg_bytes(child_bgr)
 
-        return vertical_composite_jpeg, p1_portrait_jpeg, p2_portrait_jpeg, middle_portrait_jpeg
+        return vertical_composite_jpeg, p1_portrait_jpeg, p2_portrait_jpeg, child_portrait_jpeg
 
     except Exception:
         logger.exception("A critical error occurred in create_composite_image.")
