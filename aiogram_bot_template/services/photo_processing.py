@@ -261,51 +261,75 @@ def _create_faces_only_composite(p1_data: Dict, p2_data: Dict) -> np.ndarray:
 
 def _create_three_faces_composite(p1_data: Dict, p2_data: Dict, p3_data: Dict) -> np.ndarray:
     """
-    Creates a side-by-side composite of three extracted faces for family portraits:
-    parents share the same height, child is 20% smaller, all bottom-aligned.
+    Stacks three extracted faces vertically on a TikTok-sized canvas (9:16).
+    Parents (1 and 3) share the same width; the child (2) is CENTER_MIDDLE_SCALE_3 of that width.
+    All three are horizontally centered; vertical spacing uses margins and gaps.
+    Returns a BGR image of size TIKTOK_CANVAS_W x TIKTOK_CANVAS_H.
     """
+    # Extract 9:16 face crops with background (opaque alpha)
     face1_rgba = _extract_face_rgba(p1_data)
     face2_rgba = _extract_face_rgba(p2_data)
     face3_rgba = _extract_face_rgba(p3_data)
 
-    h1, w1 = face1_rgba.shape[:2]
-    h2, w2 = face2_rgba.shape[:2]
-    h3, w3 = face3_rgba.shape[:2]
+    # Canvas setup
+    canvas_w = TIKTOK_CANVAS_W
+    canvas_h = TIKTOK_CANVAS_H
 
-    parent_base_h = max(h1, h3)
+    if DYNAMIC_BG_FILL:
+        # Estimate a solid background color from the first face crop's borders
+        # face*_rgba is BGRA; pass BGR plane to the estimator
+        bg_color = _estimate_uniform_bg_color_from_borders(face1_rgba[:, :, :3])
+    else:
+        bg_color = TIKTOK_BG_FALLBACK_BGR
 
-    # Resize parents to same height
-    parents_resized: List[np.ndarray] = []
-    for face, h in [(face1_rgba, h1), (face3_rgba, h3)]:
-        if h != parent_base_h:
-            scale = parent_base_h / float(h)
-            new_w = int(round(face.shape[1] * scale))
-            parents_resized.append(cv2.resize(face, (new_w, parent_base_h), interpolation=cv2.INTER_LANCZOS4))
-        else:
-            parents_resized.append(face)
-    face1_r, face3_r = parents_resized
+    canvas = np.full((canvas_h, canvas_w, 3), bg_color, dtype=np.uint8)
 
-    # Child 80% of parent height
-    child_target_h = int(round(parent_base_h * CENTER_MIDDLE_SCALE_3))
-    scale_child = child_target_h / float(h2)
-    child_target_w = int(round(w2 * scale_child))
-    face2_r = cv2.resize(face2_rgba, (child_target_w, child_target_h),
-                         interpolation=cv2.INTER_AREA if scale_child < 1.0 else cv2.INTER_CUBIC)
+    # Vertical layout parameters (margins and gaps as % of canvas height)
+    gap = max(8, int(round(canvas_h * 0.02)))         # ~2% vertical gap between faces
+    margin_top = max(12, int(round(canvas_h * 0.03))) # ~3% top margin
+    margin_bottom = margin_top                        # symmetric bottom margin
 
-    widths = [face1_r.shape[1], face2_r.shape[1], face3_r.shape[1]]
-    margin = int(parent_base_h * 0.10)
-    canvas_w = sum(widths) + (margin * 2)
-    canvas_h = parent_base_h
+    # Child scale relative to parents' width
+    s = CENTER_MIDDLE_SCALE_3  # typically 0.80
 
-    canvas = np.full((canvas_h, canvas_w, 3), 128, dtype=np.uint8)
+    # We want: total_height = (16/9) * (Wp + s*Wp + Wp) + 2*gap + margins <= canvas_h
+    denom = (16.0 / 9.0) * (2.0 + s)
+    available_h = canvas_h - (margin_top + margin_bottom + 2 * gap)
+    # Max parent width based on height constraint
+    Wp_max_by_height = int(np.floor(available_h / denom)) if denom > 0 else canvas_w
+    # Constrain by canvas width as well
+    Wp = min(canvas_w, max(1, Wp_max_by_height))
+    Wc = max(1, int(round(Wp * s)))
 
-    x = 0
-    canvas = paste_transparent(canvas, face1_r, x, 0)
-    x += face1_r.shape[1] + margin
-    y_child = canvas_h - face2_r.shape[0]
-    canvas = paste_transparent(canvas, face2_r, x, y_child)
-    x += face2_r.shape[1] + margin
-    canvas = paste_transparent(canvas, face3_r, x, 0)
+    def resize_to_width(img_rgba: np.ndarray, target_w: int) -> np.ndarray:
+        """Resize RGBA image to a given width, preserving aspect (9:16 here)."""
+        h, w = img_rgba.shape[:2]
+        if target_w <= 0:
+            target_w = 1
+        if w == target_w:
+            return img_rgba
+        scale = target_w / float(w)
+        new_w = target_w
+        new_h = max(1, int(round(h * scale)))
+        interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_CUBIC
+        return cv2.resize(img_rgba, (new_w, new_h), interpolation=interp)
+
+    # Parents share the same width; child is scaled to 80% (by width)
+    face1_r = resize_to_width(face1_rgba, Wp)
+    face2_r = resize_to_width(face2_rgba, Wc)
+    face3_r = resize_to_width(face3_rgba, Wp)
+
+    # Paste: center horizontally, stack vertically with gaps
+    y = margin_top
+    faces = [face1_r, face2_r, face3_r]
+    for i, face in enumerate(faces):
+        fh, fw = face.shape[:2]
+        x = (canvas_w - fw) // 2
+        canvas = paste_transparent(canvas, face, x, y)
+        y += fh
+        if i < len(faces) - 1:
+            y += gap
+
     return canvas
 
 # --- Basic image ops ---

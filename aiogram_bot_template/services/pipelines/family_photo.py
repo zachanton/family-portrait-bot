@@ -47,12 +47,11 @@ class FamilyPhotoPipeline(BasePipeline):
         await image_cache.cache_image_bytes(composite_uid, composite_bytes, "image/jpeg", self.cache_pool)
         composite_url = image_cache.get_cached_image_proxy_url(composite_uid)
         
-        image_urls = [composite_url]
-        faces_only_uid = None
-
         faces_only_uid = f"faces_only_family_{request_id_str}"
         await image_cache.cache_image_bytes(faces_only_uid, faces_only_bytes, "image/jpeg", self.cache_pool)
         faces_only_url = image_cache.get_cached_image_proxy_url(faces_only_uid)
+
+        image_urls = [faces_only_url]
 
         # await self.update_status_func("Analyzing family features for accuracy... 🧐")
         # identity_lock_data = await enhancers.get_identity_lock_data(composite_url)
