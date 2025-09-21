@@ -9,17 +9,17 @@ def resemblance_kb() -> InlineKeyboardMarkup:
     buttons = [
         [
             InlineKeyboardButton(
-                text=_("More like Mom 👩"),
+                text=_("Mom 👩"),
                 callback_data=ChildResemblanceCallback(resemblance=ChildResemblance.MOM.value).pack(),
             ),
             InlineKeyboardButton(
-                text=_("More like Dad 👨"),
+                text=_("Dad 👨"),
                 callback_data=ChildResemblanceCallback(resemblance=ChildResemblance.DAD.value).pack(),
             ),
         ],
         [
             InlineKeyboardButton(
-                text=_("A mix of both 🧑‍🤝‍🧑"),
+                text=_("Both 🧑‍🤝‍🧑"),
                 callback_data=ChildResemblanceCallback(resemblance=ChildResemblance.BOTH.value).pack(),
             )
         ],

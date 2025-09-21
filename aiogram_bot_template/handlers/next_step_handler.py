@@ -77,7 +77,7 @@ async def process_retry_generation(
     )
     if not original_request or not original_request.get("source_images"):
         await cb.message.answer(
-            _("Could not find the original photos. Please start over with /start.")
+            _("I couldn't find the original photos. Please start over with /start.")
         )
         return
 
@@ -106,7 +106,7 @@ async def process_retry_generation(
     )
 
     await cb.message.answer(
-        _("Let's try again! Please choose the desired gender for your child:"),
+        _("Let's try again! Please choose the desired gender for the child:"),
         reply_markup=gender_kb(),
     )
 
@@ -144,7 +144,7 @@ async def process_continue_with_image(
     result = await db.fetchrow(sql, (callback_data.generation_id,))
     
     if not result or not result.data or not result.data.get("result_file_id"):
-        await cb.message.answer(_("I couldn't find the selected image. Please start over using /start."))
+        await cb.message.answer(_("I couldn't find the selected image. Please start over with /start."))
         await state.clear()
         return
 
@@ -153,7 +153,7 @@ async def process_continue_with_image(
     sent_message = await bot.send_photo(
         chat_id=chat_id,
         photo=selected_file_id,
-        caption=_("Great choice! Here is your child portrait.\n\nWhat would you like to do next?"),
+        caption=_("Great choice! What's next for this portrait?"),
         reply_markup=child_selection_kb.post_child_selection_kb(
             generation_id=callback_data.generation_id,
             request_id=callback_data.request_id
@@ -201,7 +201,7 @@ async def process_continue_with_family_photo(
     result = await db.fetchrow(sql, (callback_data.generation_id,))
 
     if not result or not result.data or not result.data.get("result_file_id"):
-        await cb.message.answer(_("I couldn't find the selected image. Please start over using /start."))
+        await cb.message.answer(_("I couldn't find the selected image. Please start over with /start."))
         await state.clear()
         return
 
@@ -210,7 +210,7 @@ async def process_continue_with_family_photo(
     sent_message = await bot.send_photo(
         chat_id=chat_id,
         photo=selected_file_id,
-        caption=_("Great choice! Here is your family portrait.\n\nWhat would you like to do next?"),
+        caption=_("A wonderful choice!\n\nWhat would you like to do next?"),
         reply_markup=family_selection_kb.post_family_photo_selection_kb()
     )
 
@@ -291,7 +291,7 @@ async def process_create_family_photo(
         is_trial_available = is_in_whitelist or not has_used_trial
 
         await cb.message.edit_caption(
-            caption=_("Excellent! Please choose your generation package for the family portrait:"),
+            caption=_("Ready for the family portrait! Please choose your generation package:"),
             reply_markup=quality_kb(
                 generation_type=GenerationType.FAMILY_PHOTO,
                 is_trial_available=is_trial_available

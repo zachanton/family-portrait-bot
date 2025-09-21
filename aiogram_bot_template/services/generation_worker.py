@@ -127,7 +127,7 @@ async def run_generation_worker(
             current_iteration = i + 1
             log_task = log.bind(sequence=f"{current_iteration}/{generation_count}")
             
-            await status.update(_("🎨 Generating image {current} of {total}...").format(
+            await status.update(_("🎨 Creating portrait {current} of {total}...").format(
                 current=current_iteration, total=generation_count
             ))
 
@@ -193,7 +193,7 @@ async def run_generation_worker(
         if not sent_photo_messages:
             await bot.send_message(
                 chat_id, 
-                _("Unfortunately, I couldn't create an image this time. Please try again with /start.")
+                _("Unfortunately, I couldn't create an image this time. Please /start over to try again.")
             )
             await generations_repo.update_generation_request_status(db, request_id, "failed")
             await state.clear()
@@ -214,8 +214,8 @@ async def run_generation_worker(
         if generation_type == GenerationType.CHILD_GENERATION.value:
             next_step_msg = await bot.send_message(
                 chat_id, 
-                _("✨ Your children are ready!\n\n"
-                  "Please select one of the AI generations above or press /cancel"),
+                _("✨ Here are the results!\n\n"
+                  "Please select one of the AI portraits above to continue, or /start over."),
             )
             await state.update_data(
                 photo_message_ids=all_photo_ids,
@@ -226,8 +226,8 @@ async def run_generation_worker(
         elif generation_type == GenerationType.FAMILY_PHOTO.value:
             next_step_msg = await bot.send_message(
                 chat_id,
-                _("✨ Your family portraits are ready!\n\n"
-                  "Please select one of the AI generations above or press /cancel")
+                _("✨ Your family AI portraits are ready!\n\n"
+                  "Select your favorite one above or /start over.")
             )
             await state.update_data(
                 photo_message_ids=all_photo_ids,
@@ -246,7 +246,7 @@ async def run_generation_worker(
             
         else:
             await bot.send_message(
-                chat_id, _("Done! Use /start to begin a new session."),
+                chat_id, _("All done! Use /start to begin a new session."),
             )
             await state.clear()
 

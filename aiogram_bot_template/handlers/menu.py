@@ -55,12 +55,12 @@ async def send_welcome_message(msg: Message, state: FSMContext, is_restart: bool
     if is_restart:
         text = _(
             "Let's start over!\n\n"
-            "Please send the first person's photo."
+            "Please send a photo of the Mom to begin."
         )
     else:
         text = _(
-            "<b>Welcome! I can create a beautiful group portrait for two people.</b>\n\n"
-            "To begin, please send the first person's photo."
+            "<b>Welcome! I can imagine what your future child might look like.</b>\n\n"
+            "To begin, please send a photo of the Mom."
         )
     await msg.answer(text)
 

@@ -24,7 +24,7 @@ def continue_with_image_kb(
     buttons = [
         [
             InlineKeyboardButton(
-                text=_("😍 Continue with this child"),
+                text=_("😍 Select This Portrait"),
                 callback_data=ContinueWithImageCallback(
                     generation_id=generation_id,
                     request_id=request_id,
@@ -52,7 +52,7 @@ def post_child_selection_kb(
     buttons = [
         [
             InlineKeyboardButton(
-                text=_("👨‍👩‍👧 Create a group photo with this child"),
+                text=_("👨‍👩‍👧 Create Family Photo"),
                 callback_data=CreateFamilyPhotoCallback(
                     child_generation_id=generation_id, parent_request_id=request_id
                 ).pack(),

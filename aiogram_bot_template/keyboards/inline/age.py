@@ -9,19 +9,19 @@ def age_kb() -> InlineKeyboardMarkup:
     buttons = [
         [
             InlineKeyboardButton(
-                text=_("Infant (0-2) 🍼"),
+                text=_("Baby (0-2 years) 🍼"),
                 callback_data=ChildAgeCallback(age=ChildAge.INFANT.value).pack(),
             ),
         ],
         [
             InlineKeyboardButton(
-                text=_("Child (5-8) 🧒"),
+                text=_("Child (5-8 years) 🧒"),
                 callback_data=ChildAgeCallback(age=ChildAge.CHILD.value).pack(),
             ),
         ],
         [
             InlineKeyboardButton(
-                text=_("Teenager (13-16) 🧑"),
+                text=_("Teen (13-16 years) 🧑"),
                 callback_data=ChildAgeCallback(age=ChildAge.TEEN.value).pack(),
             )
         ],

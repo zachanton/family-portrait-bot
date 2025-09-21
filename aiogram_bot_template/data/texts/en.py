@@ -6,13 +6,13 @@ texts = LocaleTexts(
         BotCommandInfo(command="start", description="✨ Create a new portrait"),
         BotCommandInfo(command="cancel", description="↩️ Start over"),
         BotCommandInfo(command="language", description="🌐 Change language"),
-        BotCommandInfo(command="help", description="❓ Support"),
+        BotCommandInfo(command="help", description="❓ Get help"),
     ],
     bot_info=BotInfo(
-        short_description="AI Group Portraits. ✨ Send two photos to begin!",
+        short_description="AI Family Portraits ✨ See your future child!",
         description=(
-            "Create a beautiful group portrait from two photos! ✨\n\n"
-            "Just send two photos [ 📸 + 📸 ] and my AI will blend them into a single, cohesive image.\n\n"
+            "Welcome! I can create a beautiful portrait of your future child or a family photo. ✨\n\n"
+            "Just send me photos of two parents [ 📸 + 📸 ], and my AI will work its magic.\n\n"
             "By starting, you agree to our /terms and /privacy policy."
         )
     ),

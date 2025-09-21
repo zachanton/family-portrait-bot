@@ -36,7 +36,7 @@ async def process_gender_selection(
     
     with suppress(TelegramBadRequest):
         await cb.message.edit_text(
-            _("Next, choose the age category:"),
+            _("Next, choose an age category:"),
             reply_markup=age_kb()
         )
 
@@ -53,7 +53,7 @@ async def process_age_selection(
 
     with suppress(TelegramBadRequest):
         await cb.message.edit_text(
-            _("Finally, who should the child resemble more?"),
+            _("Finally, who should the child take after?"),
             reply_markup=resemblance_kb()
         )
 
@@ -66,7 +66,7 @@ async def process_resemblance_selection(
     business_logger: structlog.typing.FilteringBoundLogger,
 ) -> None:
     """
-    Finalizes parameter collection, creates a request in the DB,
+    Finalizes parameter collection, creates a request in the DB with correct roles,
     and proceeds to quality selection.
     """
     await cb.answer()
@@ -78,7 +78,10 @@ async def process_resemblance_selection(
 
     # Create a DB record for this generation request
     photos = user_data.get("photos_collected", [])
-    source_images_dto = [(p["file_unique_id"], p["file_id"], f"photo_{i+1}") for i, p in enumerate(photos)]
+    # Use the roles assigned in the photo_handler
+    source_images_dto = [
+        (p["file_unique_id"], p["file_id"], p["role"]) for p in photos
+    ]
     
     draft = generations_repo.GenerationRequestDraft(
         user_id=user_id, status="params_collected", source_images=source_images_dto
@@ -96,7 +99,7 @@ async def process_resemblance_selection(
 
     with suppress(TelegramBadRequest):
         await cb.message.edit_text(
-            _("Excellent! All parameters are set. Please choose your generation package:"),
+            _("Excellent! All parameters are set. Please choose a generation package:"),
             reply_markup=quality_kb(
                 generation_type=GenerationType.CHILD_GENERATION, # Explicitly pass the type
                 is_trial_available=is_trial_available

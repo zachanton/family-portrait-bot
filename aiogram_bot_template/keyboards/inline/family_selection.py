@@ -20,7 +20,7 @@ def continue_with_family_photo_kb(
     buttons = [
         [
             InlineKeyboardButton(
-                text=_("❤️ Continue with this portrait"),
+                text=_("❤️ I choose this one!"),
                 callback_data=ContinueWithFamilyPhotoCallback(
                     generation_id=generation_id,
                     request_id=request_id,
