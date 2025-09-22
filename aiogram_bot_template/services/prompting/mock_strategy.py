@@ -1,7 +1,7 @@
 # aiogram_bot_template/services/prompting/mock_strategy.py
 from typing import Dict, Any
 from .base_strategy import PromptStrategy
-from .styles import PROMPT_DEFAULT
+from .styles import PROMPT_DEFAULT, PROMPT_FAMILY_DEFAULT
 from .fal_strategy import STYLE_PROMPTS, STYLE_PROMPTS_NEXT
 
 class MockStrategy(PromptStrategy):
@@ -42,7 +42,7 @@ class MockStrategy(PromptStrategy):
         }
 
     def create_family_photo_payload(self, style: str | None = None) -> Dict[str, Any]:
-        prompt = PROMPT_DEFAULT
+        prompt = PROMPT_FAMILY_DEFAULT
         return {
             "prompt": f"Mock Family Photo Prompt (3 people): {prompt}",
             "temperature": 0.3,

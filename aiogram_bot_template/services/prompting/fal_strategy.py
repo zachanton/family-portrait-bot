@@ -98,6 +98,9 @@ class FalStrategy(PromptStrategy):
     def create_pair_photo_payload(self, style: str) -> Dict[str, Any]:
         prompt = STYLE_PROMPTS.get(style, PROMPT_GOLDEN_HOUR)
         return {"prompt": prompt, "temperature": 0.3}
+    
+
+    
 
     def create_family_photo_payload(self, style: str | None = None) -> Dict[str, Any]:
         prompt = PROMPT_FAMILY_DEFAULT

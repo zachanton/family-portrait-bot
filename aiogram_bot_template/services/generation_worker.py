@@ -25,7 +25,6 @@ from aiogram_bot_template.services.pipelines.child_generation import ChildGenera
 from aiogram_bot_template.services.pipelines.family_photo import FamilyPhotoPipeline
 from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.utils.status_manager import StatusMessageManager
-from aiogram_bot_template.services.prompting.factory import get_prompt_strategy
 
 PIPELINE_MAP: dict[str, Type[BasePipeline]] = {
     GenerationType.PAIR_PHOTO.value: PairPhotoPipeline,
@@ -113,15 +112,18 @@ async def run_generation_worker(
 
         await _send_debug_if_enabled(
             bot=bot, chat_id=chat_id, redis=cache_pool,
-            uid=pipeline_output.metadata.get("dad_uid"),
-            caption="[DEBUG] This is the dad image sent to the AI."
+            uid=pipeline_output.metadata.get("child_uid"),
+            caption="[DEBUG] This is the child image sent to the AI."
         )
 
         await _send_debug_if_enabled(
             bot=bot, chat_id=chat_id, redis=cache_pool,
-            uid=pipeline_output.metadata.get("child_uid"),
-            caption="[DEBUG] This is the child image sent to the AI."
+            uid=pipeline_output.metadata.get("dad_uid"),
+            caption="[DEBUG] This is the dad image sent to the AI."
         )
+
+        # --- Get the pre-generated photoshoot plan ---
+        photoshoot_plan = pipeline_output.metadata.get("photoshoot_plan")
 
         for i in range(generation_count):
             current_iteration = i + 1
@@ -132,6 +134,32 @@ async def run_generation_worker(
             ))
 
             payload_override = pipeline_output.request_payload.copy()
+            
+            if generation_type == GenerationType.FAMILY_PHOTO.value:
+                pose_text, wardrobe_text = None, None
+                
+                # Robustly get the i-th shot description
+                if photoshoot_plan and i < len(photoshoot_plan):
+                    current_shot = photoshoot_plan[i]
+                    pose_text = current_shot.pose_and_composition
+                    wardrobe_text = current_shot.wardrobe_plan
+                elif photoshoot_plan: # If enhancer returned too few, reuse the last one
+                    log_task.warning("Reusing last available shot description.")
+                    last_shot = photoshoot_plan[-1]
+                    pose_text = last_shot.pose_and_composition
+                    wardrobe_text = last_shot.wardrobe_plan
+
+                # If enhancer failed completely, use hardcoded fallback
+                if not pose_text or not wardrobe_text:
+                    log_task.error("Photoshoot plan missing or invalid, using hardcoded fallback.")
+                    pose_text = "A beautiful family pose: the father stands behind the mother, wrapping his arms around her, while the child is held lovingly in front by the mother. Knee-up shot."
+                    wardrobe_text = "The mother wears an ivory linen blouse. The father is in a light beige button-down shirt with rolled sleeves. The child is dressed in a simple cream-colored cotton outfit."
+
+                prompt_template = payload_override["prompt"]
+                final_prompt = prompt_template.replace("{{POSE_AND_COMPOSITION_DATA}}", pose_text)
+                final_prompt = final_prompt.replace("{{PHOTOSHOOT_PLAN_DATA}}", wardrobe_text)
+                payload_override["prompt"] = final_prompt
+
             payload_override["seed"] = random.randint(1, 1_000_000)
 
             log_task.info(
@@ -201,13 +229,9 @@ async def run_generation_worker(
 
         await generations_repo.update_generation_request_status(db, request_id, "completed")
         
-        # --- KEY CHANGE IS HERE ---
-        
-        # Get message IDs from previous steps, if any, to preserve them.
         current_data = await state.get_data()
         existing_photo_ids = current_data.get("photo_message_ids", [])
         
-        # Combine old IDs with the new ones from this generation step.
         new_photo_ids = [m["message_id"] for m in sent_photo_messages]
         all_photo_ids = existing_photo_ids + new_photo_ids
 
@@ -236,7 +260,6 @@ async def run_generation_worker(
             await state.set_state(Generation.waiting_for_next_action)
 
         elif generation_type == GenerationType.PAIR_PHOTO.value:
-            # This logic remains for other potential flows
             await bot.send_message(
                 chat_id, 
                 _("Your photoshoot is complete! What's next?"),

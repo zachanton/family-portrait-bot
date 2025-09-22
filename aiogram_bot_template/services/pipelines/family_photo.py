@@ -1,7 +1,8 @@
 # aiogram_bot_template/services/pipelines/family_photo.py
 import uuid
 from aiogram.utils.i18n import gettext as _
-from aiogram_bot_template.services import image_cache, photo_processing, enhancers
+from aiogram_bot_template.services import image_cache, photo_processing
+from aiogram_bot_template.services.enhancers import style_enhancer
 from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.services.prompting.factory import get_prompt_strategy
 from aiogram_bot_template.data.constants import GenerationType, ImageRole
@@ -11,8 +12,8 @@ class FamilyPhotoPipeline(BasePipeline):
     
     async def prepare_data(self) -> PipelineOutput:
         """
-        Prepares a composite image from three source photos (2 parents, 1 child),
-        including a separate composite of just the faces.
+        Prepares a composite image and fetches a complete photoshoot plan (N poses/wardrobes)
+        to be used by the generation worker.
         """
         await self.update_status_func("Preparing your family portrait... 👨‍👩‍👧")
         
@@ -47,27 +48,17 @@ class FamilyPhotoPipeline(BasePipeline):
         await image_cache.cache_image_bytes(composite_uid, composite_bytes, "image/jpeg", self.cache_pool)
         composite_url = image_cache.get_cached_image_proxy_url(composite_uid)
         
+        # Other images are cached for potential debug, not used in payload
         mom_uid = f"mom_{request_id_str}"
         await image_cache.cache_image_bytes(mom_uid, mom_bytes, "image/jpeg", self.cache_pool)
-        mom_url = image_cache.get_cached_image_proxy_url(mom_uid)
-
         dad_uid = f"dad_{request_id_str}"
         await image_cache.cache_image_bytes(dad_uid, dad_bytes, "image/jpeg", self.cache_pool)
-        dad_url = image_cache.get_cached_image_proxy_url(dad_uid)
-
         child_uid = f"child_{request_id_str}"
         await image_cache.cache_image_bytes(child_uid, child_bytes, "image/jpeg", self.cache_pool)
-        child_url = image_cache.get_cached_image_proxy_url(child_uid)
 
         image_urls = [ composite_url ]
 
-        # await self.update_status_func("Analyzing family features for accuracy... 🧐")
-        # identity_lock_data = await enhancers.get_identity_lock_data(composite_url)
-        
-        # identity_lock_text = f"IDENTITY_LOCK_DATA:\n```json\n{identity_lock_data or '{}'}\n```"
-
         quality_level = self.gen_data.get("quality_level", 1)
-        
         generation_type = self.gen_data.get("type", GenerationType.FAMILY_PHOTO.value)
         generation_config = getattr(settings, generation_type)
         tier_config = generation_config.tiers.get(quality_level)
@@ -75,13 +66,12 @@ class FamilyPhotoPipeline(BasePipeline):
         if not tier_config:
              raise ValueError(f"Tier configuration for {generation_type} level {quality_level} not found.")
 
+        await self.update_status_func("Designing your photoshoot... 🎨")
+        generation_count = tier_config.count
+        photoshoot_plan = await style_enhancer.get_style_data(composite_url, num_shots=generation_count)
+        
         strategy = get_prompt_strategy(tier_config.client)
-        
         prompt_payload = strategy.create_family_photo_payload(style=self.gen_data.get("style"))
-        
-        # prompt_payload["prompt"] = prompt_payload["prompt"].replace(
-        #     "{{IDENTITY_LOCK_DATA}}", identity_lock_text
-        # )
 
         request_payload = {
             "model": tier_config.model,
@@ -97,6 +87,8 @@ class FamilyPhotoPipeline(BasePipeline):
             "mom_uid": mom_uid,
             "dad_uid": dad_uid,
             "child_uid": child_uid,
+            # Store the entire plan for the worker to use
+            "photoshoot_plan": photoshoot_plan.shots if photoshoot_plan else None
         }
         
         return PipelineOutput(request_payload=request_payload, caption=caption, metadata=metadata)
