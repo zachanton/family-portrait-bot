@@ -97,33 +97,10 @@ async def run_generation_worker(
         
         pipeline = pipeline_class(bot, gen_data, log, status.update, cache_pool)
         pipeline_output = await pipeline.prepare_data()
-
-        await _send_debug_if_enabled(
-            bot=bot, chat_id=chat_id, redis=cache_pool,
-            uid=pipeline_output.metadata.get("composite_uid"),
-            caption="[DEBUG] This is the composite image sent to the AI."
-        )
-
-        await _send_debug_if_enabled(
-            bot=bot, chat_id=chat_id, redis=cache_pool,
-            uid=pipeline_output.metadata.get("mom_uid"),
-            caption="[DEBUG] This is the mom image sent to the AI."
-        )
-
-        await _send_debug_if_enabled(
-            bot=bot, chat_id=chat_id, redis=cache_pool,
-            uid=pipeline_output.metadata.get("child_uid"),
-            caption="[DEBUG] This is the child image sent to the AI."
-        )
-
-        await _send_debug_if_enabled(
-            bot=bot, chat_id=chat_id, redis=cache_pool,
-            uid=pipeline_output.metadata.get("dad_uid"),
-            caption="[DEBUG] This is the dad image sent to the AI."
-        )
-
-        # --- Get the pre-generated photoshoot plan ---
+        
         photoshoot_plan = pipeline_output.metadata.get("photoshoot_plan")
+        eye_description_text = pipeline_output.metadata.get("eye_description_text")
+        hairstyle_descriptions = pipeline_output.metadata.get("hairstyle_descriptions", [])
 
         for i in range(generation_count):
             current_iteration = i + 1
@@ -134,32 +111,40 @@ async def run_generation_worker(
             ))
 
             payload_override = pipeline_output.request_payload.copy()
+            prompt_template = payload_override["prompt"]
+            final_prompt = prompt_template
             
             if generation_type == GenerationType.FAMILY_PHOTO.value:
                 pose_text, wardrobe_text = None, None
                 
-                # Robustly get the i-th shot description
                 if photoshoot_plan and i < len(photoshoot_plan):
                     current_shot = photoshoot_plan[i]
-                    pose_text = current_shot.pose_and_composition
-                    wardrobe_text = current_shot.wardrobe_plan
-                elif photoshoot_plan: # If enhancer returned too few, reuse the last one
+                    pose_text, wardrobe_text = current_shot.pose_and_composition, current_shot.wardrobe_plan
+                elif photoshoot_plan: 
                     log_task.warning("Reusing last available shot description.")
                     last_shot = photoshoot_plan[-1]
-                    pose_text = last_shot.pose_and_composition
-                    wardrobe_text = last_shot.wardrobe_plan
+                    pose_text, wardrobe_text = last_shot.pose_and_composition, last_shot.wardrobe_plan
+                else:
+                    log_task.error("Photoshoot plan missing, using hardcoded fallback.")
+                    pose_text = "A beautiful family pose..."
+                    wardrobe_text = "Coordinated casual wear..."
 
-                # If enhancer failed completely, use hardcoded fallback
-                if not pose_text or not wardrobe_text:
-                    log_task.error("Photoshoot plan missing or invalid, using hardcoded fallback.")
-                    pose_text = "A beautiful family pose: the father stands behind the mother, wrapping his arms around her, while the child is held lovingly in front by the mother. Knee-up shot."
-                    wardrobe_text = "The mother wears an ivory linen blouse. The father is in a light beige button-down shirt with rolled sleeves. The child is dressed in a simple cream-colored cotton outfit."
-
-                prompt_template = payload_override["prompt"]
-                final_prompt = prompt_template.replace("{{POSE_AND_COMPOSITION_DATA}}", pose_text)
+                final_prompt = final_prompt.replace("{{POSE_AND_COMPOSITION_DATA}}", pose_text)
                 final_prompt = final_prompt.replace("{{PHOTOSHOOT_PLAN_DATA}}", wardrobe_text)
-                payload_override["prompt"] = final_prompt
+            
+            elif generation_type == GenerationType.CHILD_GENERATION.value:
+                if hairstyle_descriptions:
+                    hairstyle_desc = hairstyle_descriptions[i % len(hairstyle_descriptions)]
+                else:
+                    hairstyle_desc = "a simple, neat hairstyle"
+                    log_task.warning("Hairstyle description list was empty, using hardcoded fallback for injection.")
 
+                final_prompt = final_prompt.replace("{{child_age}}", user_data.get("child_age", "7"))
+                final_prompt = final_prompt.replace("{{child_gender}}", user_data.get("child_gender", "girl"))
+                final_prompt = final_prompt.replace("{{INHERITED_EYE_FEATURES}}", eye_description_text)
+                final_prompt = final_prompt.replace("{{HAIRSTYLE_DESCRIPTION}}", hairstyle_desc)
+
+            payload_override["prompt"] = final_prompt
             payload_override["seed"] = random.randint(1, 1_000_000)
 
             log_task.info(
@@ -205,24 +190,15 @@ async def run_generation_worker(
             unique_id = last_sent_message.photo[-1].file_unique_id
             await image_cache.cache_image_bytes(unique_id, result.image_bytes, result.content_type, cache_pool)
             
-            sql_update_log = """
-                UPDATE generations
-                SET result_image_unique_id = $1, result_message_id = $2, result_file_id = $3
-                WHERE id = $4;
-            """
-            await db.execute(sql_update_log, (
-                unique_id, last_sent_message.message_id, last_sent_message.photo[-1].file_id, generation_id
-            ))
+            sql_update_log = "UPDATE generations SET result_image_unique_id = $1, result_message_id = $2, result_file_id = $3 WHERE id = $4;"
+            await db.execute(sql_update_log, (unique_id, last_sent_message.message_id, last_sent_message.photo[-1].file_id, generation_id))
 
             sent_photo_messages.append({"message_id": last_sent_message.message_id, "generation_id": generation_id})
 
         await status.delete()
 
         if not sent_photo_messages:
-            await bot.send_message(
-                chat_id, 
-                _("Unfortunately, I couldn't create an image this time. Please /start over to try again.")
-            )
+            await bot.send_message(chat_id, _("Unfortunately, I couldn't create an image this time. Please /start over to try again."))
             await generations_repo.update_generation_request_status(db, request_id, "failed")
             await state.clear()
             return
@@ -231,46 +207,19 @@ async def run_generation_worker(
         
         current_data = await state.get_data()
         existing_photo_ids = current_data.get("photo_message_ids", [])
-        
         new_photo_ids = [m["message_id"] for m in sent_photo_messages]
         all_photo_ids = existing_photo_ids + new_photo_ids
 
         if generation_type == GenerationType.CHILD_GENERATION.value:
-            next_step_msg = await bot.send_message(
-                chat_id, 
-                _("✨ Here are the results!\n\n"
-                  "Please select one of the AI portraits above to continue, or /start over."),
-            )
-            await state.update_data(
-                photo_message_ids=all_photo_ids,
-                next_step_message_id=next_step_msg.message_id
-            )
+            next_step_msg = await bot.send_message(chat_id, _("✨ Here are the results!\n\nPlease select one of the AI portraits above to continue, or /start over."),)
+            await state.update_data(photo_message_ids=all_photo_ids, next_step_message_id=next_step_msg.message_id)
             await state.set_state(Generation.waiting_for_next_action)
-        
         elif generation_type == GenerationType.FAMILY_PHOTO.value:
-            next_step_msg = await bot.send_message(
-                chat_id,
-                _("✨ Your family AI portraits are ready!\n\n"
-                  "Select your favorite one above or /start over.")
-            )
-            await state.update_data(
-                photo_message_ids=all_photo_ids,
-                next_step_message_id=next_step_msg.message_id
-            )
+            next_step_msg = await bot.send_message(chat_id, _("✨ Your family AI portraits are ready!\n\nSelect your favorite one above or /start over."))
+            await state.update_data(photo_message_ids=all_photo_ids, next_step_message_id=next_step_msg.message_id)
             await state.set_state(Generation.waiting_for_next_action)
-
-        elif generation_type == GenerationType.PAIR_PHOTO.value:
-            await bot.send_message(
-                chat_id, 
-                _("Your photoshoot is complete! What's next?"),
-                reply_markup=next_step.get_next_step_keyboard("continue", request_id)
-            )
-            await state.set_state(Generation.waiting_for_next_action)
-            
         else:
-            await bot.send_message(
-                chat_id, _("All done! Use /start to begin a new session."),
-            )
+            await bot.send_message(chat_id, _("All done! Use /start to begin a new session."))
             await state.clear()
 
     except Exception:
@@ -278,15 +227,10 @@ async def run_generation_worker(
         if status_message_id:
             with suppress(TelegramBadRequest):
                 await status.delete()
-        await bot.send_message(
-            chat_id, _("😔 An unexpected error occurred. Please try again with /start.")
-        )
+        await bot.send_message(chat_id, _("😔 An unexpected error occurred. Please try again with /start."))
         if request_id:
             await generations_repo.update_generation_request_status(db, request_id, "failed_internal")
     finally:
         current_state = await state.get_state()
-        if current_state and current_state not in [
-            Generation.waiting_for_next_action, 
-            Generation.waiting_for_feedback,
-        ]:
+        if current_state and current_state not in [Generation.waiting_for_next_action, Generation.waiting_for_feedback,]:
             await state.clear()
