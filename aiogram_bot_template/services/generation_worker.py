@@ -97,6 +97,30 @@ async def run_generation_worker(
         
         pipeline = pipeline_class(bot, gen_data, log, status.update, cache_pool)
         pipeline_output = await pipeline.prepare_data()
+
+        await _send_debug_if_enabled(
+            bot=bot, chat_id=chat_id, redis=cache_pool,
+            uid=pipeline_output.metadata.get("composite_uid"),
+            caption="[DEBUG] This is the composite image sent to the AI."
+        )
+
+        await _send_debug_if_enabled(
+            bot=bot, chat_id=chat_id, redis=cache_pool,
+            uid=pipeline_output.metadata.get("mom_uid"),
+            caption="[DEBUG] This is the mom image sent to the AI."
+        )
+
+        await _send_debug_if_enabled(
+            bot=bot, chat_id=chat_id, redis=cache_pool,
+            uid=pipeline_output.metadata.get("child_uid"),
+            caption="[DEBUG] This is the child image sent to the AI."
+        )
+
+        await _send_debug_if_enabled(
+            bot=bot, chat_id=chat_id, redis=cache_pool,
+            uid=pipeline_output.metadata.get("dad_uid"),
+            caption="[DEBUG] This is the dad image sent to the AI."
+        )
         
         photoshoot_plan = pipeline_output.metadata.get("photoshoot_plan")
         eye_description_text = pipeline_output.metadata.get("eye_description_text")
