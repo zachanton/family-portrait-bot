@@ -23,6 +23,7 @@ from aiogram_bot_template.services.pipelines.base import BasePipeline
 from aiogram_bot_template.services.pipelines.pair_photo import PairPhotoPipeline
 from aiogram_bot_template.services.pipelines.child_generation import ChildGenerationPipeline
 from aiogram_bot_template.services.pipelines.family_photo import FamilyPhotoPipeline
+from aiogram_bot_template.services.enhancers.style_enhancer import format_shot_for_prompt
 from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.utils.status_manager import StatusMessageManager
 
@@ -143,7 +144,9 @@ async def run_generation_worker(
                 
                 if photoshoot_plan and i < len(photoshoot_plan):
                     current_shot = photoshoot_plan[i]
-                    pose_text, wardrobe_text = current_shot.pose_and_composition, current_shot.wardrobe_plan
+                    parts = format_shot_for_prompt(current_shot)
+                    pose_text, wardrobe_text = parts['POSE_AND_COMPOSITION_DATA'], parts['PHOTOS_PLAN_DATA']
+                
                 elif photoshoot_plan: 
                     log_task.warning("Reusing last available shot description.")
                     last_shot = photoshoot_plan[-1]
@@ -154,7 +157,7 @@ async def run_generation_worker(
                     wardrobe_text = "Coordinated casual wear..."
 
                 final_prompt = final_prompt.replace("{{POSE_AND_COMPOSITION_DATA}}", pose_text)
-                final_prompt = final_prompt.replace("{{PHOTOSHOOT_PLAN_DATA}}", wardrobe_text)
+                final_prompt = final_prompt.replace("{{PHOTOS_PLAN_DATA}}", wardrobe_text)
             
             elif generation_type == GenerationType.CHILD_GENERATION.value:
                 if hairstyle_descriptions:
