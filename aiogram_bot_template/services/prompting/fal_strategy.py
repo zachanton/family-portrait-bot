@@ -19,6 +19,8 @@ from .styles import (
     PROMPT_WET_PLATE,
     PROMPT_POP_ART,
     PROMPT_GOLDEN_HOUR_NEXT_SHOT,
+
+    PROMPT_CHILD_DEFAULT,
     PROMPT_FAMILY_DEFAULT
 )
 
@@ -115,9 +117,7 @@ class FalStrategy(PromptStrategy):
         """
         Creates the payload for generating a child's portrait using a dynamically loaded prompt template.
         """
-        prompt = self._get_child_prompt_template(
-            age=child_age, gender=child_gender, resemblance=child_resemblance
-        )
+        prompt = PROMPT_CHILD_DEFAULT
 
         return {
             "prompt": prompt,

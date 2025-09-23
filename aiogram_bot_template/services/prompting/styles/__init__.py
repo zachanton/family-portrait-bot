@@ -10,7 +10,7 @@ from .pair_photo.vogue import PROMPT_VOGUE
 from .pair_photo.wet_plate import PROMPT_WET_PLATE
 from .pair_photo.pop_art import PROMPT_POP_ART
 from .family_photo.family_default import PROMPT_FAMILY_DEFAULT
-
+from .child_generation.child_default import PROMPT_CHILD_DEFAULT
 __all__ = [
     "PROMPT_DEFAULT",
     "PROMPT_RETRO_MOTEL",
@@ -24,7 +24,7 @@ __all__ = [
     "PROMPT_WET_PLATE",
     "PROMPT_POP_ART",
 
-
+    "PROMPT_CHILD_DEFAULT",
     "PROMPT_FAMILY_DEFAULT",
 
 ]

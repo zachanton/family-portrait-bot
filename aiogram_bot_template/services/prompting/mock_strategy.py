@@ -4,7 +4,7 @@ from pathlib import Path
 
 from aiogram_bot_template.data.constants import ChildAge
 from .base_strategy import PromptStrategy
-from .styles import PROMPT_DEFAULT, PROMPT_FAMILY_DEFAULT
+from .styles import PROMPT_DEFAULT, PROMPT_CHILD_DEFAULT, PROMPT_FAMILY_DEFAULT
 from .fal_strategy import STYLE_PROMPTS, STYLE_PROMPTS_NEXT
 
 class MockStrategy(PromptStrategy):
@@ -57,9 +57,7 @@ class MockStrategy(PromptStrategy):
         """
         Creates a mock payload for generating a child's portrait.
         """
-        prompt = self._get_child_prompt_template(
-            age=child_age, gender=child_gender, resemblance=child_resemblance
-        )
+        prompt = PROMPT_CHILD_DEFAULT
         return {
             "prompt": f"Mock Child Gen: {prompt}",
             "temperature": 0.4,

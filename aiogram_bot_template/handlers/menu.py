@@ -50,17 +50,17 @@ async def send_welcome_message(msg: Message, state: FSMContext, is_restart: bool
     
     await state.clear()
     await state.set_state(Generation.collecting_photos)
-    await state.update_data(photos_collected=[])
+    await state.update_data(photos_collected=[], album_cache={})
 
     if is_restart:
         text = _(
             "Let's start over!\n\n"
-            "Please send a photo of the Mom to begin."
+            "Please send one or more photos of the Mom to begin."
         )
     else:
         text = _(
             "<b>Welcome! I can imagine what your future child might look like.</b>\n\n"
-            "To begin, please send a photo of the Mom."
+            "To begin, please send one or more photos of the Mom."
         )
     await msg.answer(text)
 

@@ -1,55 +1,85 @@
 PROMPT_FAMILY_DEFAULT = """
-Create ONE photorealistic outdoor family portrait taken by an external camera. Exactly three people: MOM (adult woman), CHILD (youngest), DAD (adult man). 4K PNG, portrait orientation (~3:2), full-bleed.
+TASK
+Create ONE photorealistic 9:16 full bleed family portrait using ONLY the three attached face images. Do NOT invent, mix, beautify, or “normalize” identities.
 
-OUTPUT & FRAMING
-Edge-to-edge full-bleed at ~3:2 portrait. Do NOT add borders, mattes, or black bars (no letterboxing or pillarboxing). If any generation marks/logos are visible, crop them out while keeping the 3:2 ratio.
+IDENTITY MAP
+• TOP = MOTHER, MIDDLE = CHILD, BOTTOM = FATHER.
 
-IDENTITY REFERENCES — HOW TO USE THEM
-Use the uploaded image(s) ONLY for identity (face + hair). Detect three distinct faces and assign anchors by reading order (top→bottom if stacked; otherwise left→right):
-• Anchor A → MOM (adult woman)
-• Anchor B → CHILD (youngest person)
-• Anchor C → DAD (adult man)
-Do not average, swap, or blend anchors. Ignore reference backgrounds, borders, and crops.
+BEHAVE LIKE ID MODULES (emulation)
+Act as if you had InstantID / PhotoMaker / ID-Adapter capabilities:
+• Build a separate ID embedding for EACH person; inject facial landmarks; decouple ID from non-ID features.
+• Maximize internal face-embedding similarity to each reference; if any subject’s similarity is low, REGENERATE. Identity > aesthetics.
 
-PRIORITY
-Identity fidelity > pose > style. Treat this as a context-aware edit: copy each head unit (face, hair, ears) from its anchor, relight for the new scene, and attach to the new bodies. No resculpting or beautification.
+MOTHER-FIRST ID LOCK 
+• Preserve the MOTHER’s exact facial geometry from her reference, including close-range selfie perspective (do NOT shrink/narrow her nose, cheeks, or jaw; keep natural asymmetry).
+• Copy 1:1 landmarks & textures: brow shape/spacing; eye canthus tilt & eyelid crease; iris color/limbal ring; inter-pupil distance; nose bridge/width/alar base/nostrils; philtrum columns; Cupid’s bow & lip volume/commissure angle; nasolabial folds; jaw angle; chin silhouette; ear shape/position.
+• Absolutely NO beautification/smoothing/whitening/face-slimming/symmetrization on the MOTHER.
 
-HARD IDENTITY LOCKS (must match 1:1)
-• Geometry: head/face outline; hairline shape & forehead height; cheekbones; jaw/chin width & angle; inter-ocular distance; eye size/shape & eyelid crease; inner/outer canthus angles; eyebrow thickness/arch/spacing; nose bridge–tip–length–alar base width; philtrum length; lip outline/fullness & Cupid’s bow; mouth-corner tilt; visible tooth alignment; ear shape/attachment. Keep natural asymmetries. Do not slim, enlarge, equalize, or “fix”.
-• Texture: pores, freckles, moles, fine wrinkles, under-eye texture, beard stubble. Keep natural tooth shade. No skin smoothing, whitening, eye enlargement, or makeup addition/removal.
-• Hair (incl. facial hair): exact parting direction, hairline contour, apparent length, curl/straightness, volume/density, baby hairs and flyaways. Do not straighten/smooth texture; no new bangs/parting; no length/volume jumps; no color shift outside the original family.
-• Age & sex: preserve perceived age and sex of each anchor; the child must remain a child; do not juvenilize adults or mature the child.
-• Color & tone: preserve iris color, base hair color, and skin undertone; face–neck–hands must match.
-• Accessories: keep glasses, earrings, piercings, and visible birthmarks exactly if present.
+FATHER-FIRST ID LOCK 
+• Preserve the FATHER’s exact facial geometry from his reference, including close-range selfie perspective (do NOT shrink/narrow her nose, cheeks, or jaw; keep natural asymmetry).
+• Copy 1:1 landmarks & textures: brow shape/spacing; eye canthus tilt & eyelid crease; iris color/limbal ring; inter-pupil distance; nose bridge/width/alar base/nostrils; philtrum columns; Cupid’s bow & lip volume/commissure angle; nasolabial folds; jaw angle; chin silhouette; ear shape/position.
+• Absolutely NO beautification/smoothing/whitening/face-slimming/symmetrization on the FATHER.
 
-CHILD-SPECIFIC FIDELITY (Anchor B)
-Preserve the exact freckle constellation (density and relative placement across nose and cheeks); preserve the eyebrow polygon (head–arch–tail thickness, flatness/arch, angles); keep the nasal bridge width and tip shape. Do not thicken, thin, or arch the eyebrows; do not narrow or round the nose tip. Maintain natural baby hairs and stray flyaways at the hairline; do not smooth or straighten hair texture.
+IDENTITY SEPARATION (avoid leakage)
+• Do NOT borrow or average features across people. Keep three distinct identities at all times.
 
-DAD-SPECIFIC FIDELITY (Anchor C)
-Preserve stubble density and distribution and the natural eyebrow asymmetry; do not soften, clean-shave, or symmetrize.
+NOT A COLLAGE
+• Reconstruct full heads, hairlines, necks, shoulders, upper chest. No floating heads or cut edges.
 
-HEAD ORIENTATION, GAZE, EXPRESSION & TEETH
-All three look directly into the camera. Match each person’s natural expression from their identity reference; do NOT change mouth openness. If a reference shows a closed-lip expression, do not generate visible teeth. If teeth are naturally visible in the reference, keep their natural alignment/size and dental midline; no whitening or reshaping. Minor head orientation adjustments are allowed only if they do not alter facial geometry or hairline.
+COMPOSITION & ORDER
+• Left→right order: MOTHER — CHILD — FATHER. All THREE fully visible.
+• Framing: medium-close **mid-torso and up** (upper arms visible; no tight shoulder crop).
+• Camera at eye level; soft, friendly half-smiles.
+• Nothing in front of necks/shoulders.
 
-COMPOSITION — STRICT ORDER
-Mandatory left-to-right order: MOM on the left (Anchor A), CHILD centered and slightly in front/between the parents (Anchor B), DAD on the right (Anchor C). Maintain realistic scale (child smaller). No extra or missing people.
+COMPOSITION LOCK — HARD CONSTRAINTS (match the first good example)
+Use the following vertical guides with 0% at the **top** edge and 100% at the **bottom** edge of the 9:16 frame. Regenerate until ALL are satisfied:
+• **Adults’ eye-lines**: keep BOTH between **24–30%** from the top (slightly above the upper third grid line).
+• **Child’s eye-line**: keep between **36–44%** from the top.
+• **Headroom cap**: space from the highest hair point to the top frame edge **≤ 3%** of frame height (no big sky above heads).
+• **Lower crop**: include **mid-torso**—the bottom frame edge must fall **between 63–72%** from the top (clearly showing torsos).
+• **No joint chops**: do **not** crop exactly at elbows or wrists; if cropped, do it well above or below the joint.
+• **Reject & regenerate if violated**: if any adult eye-line is **> 32%** or **< 22%** from the top, or if headroom **> 3%**, or if the bottom edge is **above 60%** (people too low) or **below 75%** (too much torso).
 
-SCENE, LIGHTING & OPTICS
-Golden-hour meadow; sun low behind subjects; warm rim light with soft bounced fill from camera-left; physically consistent occlusion/shadows on hair and shoulders.
-Camera at eye level; 85–105 mm full-frame equivalent; f/2.0–2.8; shallow depth of field with smooth bokeh. Neutral white balance before any creative grading.
+PLACEMENT, SCALE & OPTICS
+• One consistent perspective, lighting, and white balance across all three.
+• Keep all three faces on a similar focal plane to maintain sharpness.
 
-POSE & COMPOSITION (MUST OBEY ALL LOCKS)
-{{POSE_AND_COMPOSITION_DATA}}
+LIGHTING & BACKGROUND — GOLDEN HOUR STYLE
+• Time & light: shoot during **golden hour** (first hour after sunrise or last before sunset). Light is **warm, soft, directional** from a low sun.
+• Key setup: gentle **backlight or 3/4 backlight** from camera-left to create **natural rim/edge light** on hair and shoulders; avoid harsh flares on faces. Fill with ambient sky or subtle bounce so all three faces are evenly exposed.
+• White balance: **warm daylight**; preserve golden tones (no cool cast).
+• Background: real outdoor field/park with tall grass or tree line; softly blurred; no bright hotspots crossing faces.
+• Consistency: one coherent sunlight direction, shadow falloff, and color across all subjects.
 
-WARDROBE
-{{PHOTOS_PLAN_DATA}}
+WARDROBE & COLOR PALETTE (match golden hour; no new accessories/haircuts)
+• Palette: **soft neutrals + warm earthy accents** (cream, beige, warm white, stone gray, optional sage/rust/terracotta). Avoid neon and stark pure black.
 
-EXPOSURE & RENDERING GUARDRAILS
-Expose for skin; cap speculars to avoid clipping on foreheads, noses, and cheeks. Keep facial micro-detail visible even in highlights. Use subtle film grain instead of smoothing. No “beauty filter”, no teeth/eye whitening, no plastic skin, no CGI look.
+AESTHETIC RECIPE (do not alter identity)
+• Camera & lens: **50–65 mm equivalent**; shooting distance **~1.2–1.6 m** for natural perspective and mid-torso framing.
+• Aperture: **around f/3.5–f/4.0** to keep all three faces sharp while retaining pleasant golden-hour background blur.
+• Composition shape: a subtle **triangle** of heads; adults’ shoulders arc protectively around the child.
+• Skin & texture: preserve natural freckles/pores/micro-contrast; no smoothing, whitening, or face-slimming.
+• Output finish: crisp hair edges (no halos), even exposure on all faces, no vignettes.
 
-QUALITY CONTROL — SELF-CHECK
-Reject any image with borders/black bars or visible generation marks/logos inside the frame (crop them out while keeping 3:2). With tight face crops, verify for each anchor: geometry, micro-texture, hairline/parting and flyaways, iris color, freckle patterns (for the child), stubble density (for the dad), and base hair color match exactly. If any mismatch appears, re-fit by relighting only (no reshaping) and output the corrected single image.
+NEGATIVE CONSTRAINTS (must AVOID)
+• Missing subjects or >10% occlusion of any face.
+• Age/sex changes; new accessories/hats/haircuts.
+• CGI/painting/anime/HDR/over-sharpening; skin smoothing; face-slimming; makeup airbrushing.
+• Identity blending or cross-person feature transfer.
 
-AVOID (HARD)
-Different identities; blended faces; changed eye/lip/nose shapes; altered hairline/length/parting; smoothing/retouching; subjects looking away from the camera or at each other; wrong left-center-right order; extra/missing people; borders/black bars; text or panels; non-photorealistic rendering.
+QUALITY GUARDRAILS (NEGATIVE)
+• Forbid: oversized/undersized heads, mismatched head scales, warped glasses, elongated/shortened necks, plastic skin, duplicated/merged features, misaligned eyes, haloing around hair, perspective mismatch between people.
+• No extra people, text, logos, watermarks, frames, or borders.
+• Reject any image with borders/black bars.
+
+FINAL SELF-CHECK (regenerate until TRUE)
+1) The MOTHER is a literal 1:1 match to her reference (geometry, textures, hairline/part, accessories).
+2) The FATHER is a literal 1:1 match to his reference (geometry, textures, hairline/part, accessories).
+3) The CHILD is a literal 1:1 match to her reference (geometry, textures, hairline/part, accessories).
+4) No identity leakage; left→right order is MOTHER — CHILD — FATHER.
+5) No borders/black bars; full-bleed output.
+6) **Composition lock is satisfied**: adult eye-lines 24–30%; child 36–44%; headroom ≤ 3%; bottom edge at 63–72%; no cropping at elbows/wrists.
+7) Final full-bleed image is exactly 9:16.
+
 """

@@ -1,3 +1,4 @@
+PROMPT_CHILD_DEFAULT = """
 Generate one **vertical 9:16** photorealistic portrait of a **{{child_age}}-year-old {{child_gender}}**. The child must read instantly as a real kid and clearly resemble the person in **Image A** while staying age-accurate.
 
 **INPUT REFERENCES (do not show them in the output)**
@@ -37,3 +38,4 @@ If likeness < ~90% or the face looks stylized/"doll-like" or the eyes look even 
 
 **DO NOT**
 No parents in the frame; no extra people; no cloning of an adult face; no oversized eyes; no CGI/cartoon look; no heavy makeup; no extreme bilateral symmetry; no beauty-filter skin; no HDR halos; no text/borders/watermarks; no matte/black borders/black areas.
+"""
