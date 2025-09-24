@@ -90,9 +90,9 @@ async def get_style_data(image_url: str, num_shots: int) -> Optional[PhotoshootP
     """
     Analyze the family image and return N diversified shots with pose and richer wardrobe_plan paragraphs.
     """
-    log = logger.bind(model=settings.prompt_enhancer.model, image_url=image_url, num_shots=num_shots)
+    log = logger.bind(model=settings.text_enhancer.model, image_url=image_url, num_shots=num_shots)
     try:
-        client = client_factory.get_ai_client(settings.prompt_enhancer.client)
+        client = client_factory.get_ai_client(settings.text_enhancer.client)
         log.info("Requesting diversified photoshoot plan (classic format).")
 
         schema_definition = PhotoshootPlan.model_json_schema()
@@ -104,7 +104,7 @@ async def get_style_data(image_url: str, num_shots: int) -> Optional[PhotoshootP
         )
 
         response = await client.chat.completions.create(
-            model=settings.prompt_enhancer.model,
+            model=settings.text_enhancer.model,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": _STYLE_ENHANCER_SYSTEM_PROMPT},

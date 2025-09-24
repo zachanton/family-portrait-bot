@@ -7,9 +7,6 @@ from aiogram_bot_template.services.clients import factory as client_factory
 
 logger = structlog.get_logger(__name__)
 
-# --- MODIFIED PROMPT ---
-# This prompt now explicitly instructs the model to frame the description
-# as an inheritance from the "other" parent to avoid confusing the final image generator.
 _EYE_ENHANCER_SYSTEM_PROMPT = """
 You are an expert AI photo analyst and character artist. Your sole task is to analyze a photo of a parent and generate a concise, detailed, one-sentence description of their eyes, suitable for a child's portrait prompt.
 
@@ -33,24 +30,22 @@ async def get_eye_description(
 ) -> Optional[str]:
     """
     Analyzes a parent's photo and returns a detailed, corrected description of their eyes.
-    This function intelligently handles cases where the parent is squinting and explicitly
-    frames the description as an inheritance from the "other" parent.
-
-    Args:
-        non_resemblance_parent_url: The URL of the parent whose eyes are to be described.
-
-    Returns:
-        A single string describing the eyes, or None on failure.
     """
-    log = logger.bind(model=settings.prompt_enhancer.model, image_url=non_resemblance_parent_url)
+    # Use the renamed config section for text-based enhancers
+    config = settings.text_enhancer
+    if not config.enabled:
+        logger.warning("Text enhancer (for eyes) is disabled in settings.")
+        return "The child has clear, bright eyes."
+
+    log = logger.bind(model=config.model, image_url=non_resemblance_parent_url)
     try:
-        client = client_factory.get_ai_client(settings.prompt_enhancer.client)
+        client = client_factory.get_ai_client(config.client)
         log.info("Requesting eye description from vision model.")
 
         user_prompt_text = "Analyze the person in this photo and generate the eye description based on the system prompt rules."
 
         response = await client.chat.completions.create(
-            model=settings.prompt_enhancer.model,
+            model=config.model,
             messages=[
                 {"role": "system", "content": _EYE_ENHANCER_SYSTEM_PROMPT},
                 {"role": "user", "content": [

@@ -65,9 +65,9 @@ async def get_hairstyle_descriptions(
     if num_hairstyles <= 0:
         return []
 
-    log = logger.bind(model=settings.prompt_enhancer.model, num_hairstyles=num_hairstyles, age=child_age, gender=child_gender)
+    log = logger.bind(model=settings.text_enhancer.model, num_hairstyles=num_hairstyles, age=child_age, gender=child_gender)
     try:
-        client = client_factory.get_ai_client(settings.prompt_enhancer.client)
+        client = client_factory.get_ai_client(settings.text_enhancer.client)
         log.info("Requesting hairstyle descriptions from language model.")
 
         age_str = _get_age_str(child_age)
@@ -81,7 +81,7 @@ async def get_hairstyle_descriptions(
         user_prompt = f"Please generate {num_hairstyles} distinct hairstyle descriptions based on the system prompt rules."
 
         response = await client.chat.completions.create(
-            model=settings.prompt_enhancer.model,
+            model=settings.text_enhancer.model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},

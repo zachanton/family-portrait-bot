@@ -14,6 +14,8 @@ class ImageRole(str, Enum):
     FATHER = "father"
     MOTHER = "mother"
     CHILD = "child"
+    MOTHER_VISUAL = "mother_visual"  # New role for the parent's horizontal visual
+    FATHER_VISUAL = "father_visual"  # New role for the parent's horizontal visual
 
 
 class ChildGender(str, Enum):

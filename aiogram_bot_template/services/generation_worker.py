@@ -99,29 +99,46 @@ async def run_generation_worker(
         pipeline = pipeline_class(bot, gen_data, log, status.update, cache_pool)
         pipeline_output = await pipeline.prepare_data()
 
+        if generation_type == GenerationType.CHILD_GENERATION.value:
+            parent_visual_uids = {
+                "mom_visual_horizontal_uid": pipeline_output.metadata.get("mom_visual_horizontal_uid"),
+                "dad_visual_horizontal_uid": pipeline_output.metadata.get("dad_visual_horizontal_uid"),
+            }
+            if all(parent_visual_uids.values()):
+                await state.update_data(**parent_visual_uids)
+                log.info("Saved parent visual UIDs to FSM state for potential family photo.", uids=parent_visual_uids)
+            else:
+                log.warning("Could not find parent visual UIDs in pipeline metadata to save to FSM.")
+
+
+        await _send_debug_if_enabled(
+            bot=bot, chat_id=chat_id, redis=cache_pool,
+            uid=pipeline_output.metadata.get("mom_visual_vertical_uid"),
+            caption="[DEBUG] mom_visual_vertical_uid."
+        )
+        await _send_debug_if_enabled(
+            bot=bot, chat_id=chat_id, redis=cache_pool,
+            uid=pipeline_output.metadata.get("dad_visual_vertical_uid"),
+            caption="[DEBUG] dad_visual_vertical_uid."
+        )
+
+        await _send_debug_if_enabled(
+            bot=bot, chat_id=chat_id, redis=cache_pool,
+            uid=pipeline_output.metadata.get("mom_visual_horizontal_uid"),
+            caption="[DEBUG] mom_visual_horizontal_uid."
+        )
+        await _send_debug_if_enabled(
+            bot=bot, chat_id=chat_id, redis=cache_pool,
+            uid=pipeline_output.metadata.get("dad_visual_horizontal_uid"),
+            caption="[DEBUG] dad_visual_horizontal_uid."
+        )
+
         await _send_debug_if_enabled(
             bot=bot, chat_id=chat_id, redis=cache_pool,
             uid=pipeline_output.metadata.get("composite_uid"),
-            caption="[DEBUG] This is the composite image sent to the AI."
+            caption="[DEBUG] composite_uid."
         )
 
-        await _send_debug_if_enabled(
-            bot=bot, chat_id=chat_id, redis=cache_pool,
-            uid=pipeline_output.metadata.get("mom_uid"),
-            caption="[DEBUG] This is the mom image sent to the AI."
-        )
-
-        await _send_debug_if_enabled(
-            bot=bot, chat_id=chat_id, redis=cache_pool,
-            uid=pipeline_output.metadata.get("child_uid"),
-            caption="[DEBUG] This is the child image sent to the AI."
-        )
-
-        await _send_debug_if_enabled(
-            bot=bot, chat_id=chat_id, redis=cache_pool,
-            uid=pipeline_output.metadata.get("dad_uid"),
-            caption="[DEBUG] This is the dad image sent to the AI."
-        )
         
         photoshoot_plan = pipeline_output.metadata.get("photoshoot_plan")
         eye_description_text = pipeline_output.metadata.get("eye_description_text")

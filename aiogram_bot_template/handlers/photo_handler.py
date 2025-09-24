@@ -25,7 +25,7 @@ async def proceed_to_child_params(message: Message, state: FSMContext) -> None:
     """
     await state.set_state(Generation.choosing_child_gender)
     await message.answer(
-        _("Great, I have both photos! Now, let's imagine your future child.\n\n"
+        _("Great, I have both sets of photos! Now, let's imagine your future child.\n\n"
           "First, what is the desired gender?"),
         reply_markup=gender_kb()
     )
@@ -60,7 +60,7 @@ async def process_photo_batch(
 ):
     """
     Handles the logic for processing a single photo or an album of photos.
-    It selects the best photo and updates the state.
+    It selects the best photos and updates the state.
     """
     message = messages[0]
     status_msg = await message.answer(_("Analyzing your photo(s)... ⏳"))
@@ -69,7 +69,8 @@ async def process_photo_batch(
         download_tasks = []
         for msg in messages:
             if msg.photo:
-                photo = msg.photo[-1]
+                # Use the highest resolution photo available
+                photo = max(msg.photo, key=lambda p: p.width * p.height)
                 download_tasks.append(_download_one_photo(photo, bot))
 
         downloaded_results = await asyncio.gather(*download_tasks)
@@ -79,9 +80,10 @@ async def process_photo_batch(
             await status_msg.edit_text(_("I couldn't process the photos. Please try sending them again."))
             return
 
-        best_photo_info = await similarity_scorer.select_best_photo(photo_inputs)
+        # --- MODIFICATION: Call select_best_photos (plural) ---
+        best_photos_info = await similarity_scorer.select_best_photos(photo_inputs, num_to_select=3)
         
-        if not best_photo_info:
+        if not best_photos_info:
             rejection_text = _(
                 "Unfortunately, I couldn't find a suitable photo among the ones you sent.\n\n"
                 "To get the best possible result, I need photos that meet a few criteria:\n"
@@ -94,28 +96,58 @@ async def process_photo_batch(
             await status_msg.edit_text(rejection_text)
             return
         
-        best_unique_id, best_file_id, best_photo_bytes = best_photo_info
-
-        await image_cache.cache_image_bytes(best_unique_id, best_photo_bytes, "image/jpeg", cache_pool)
+        # Cache all selected images
+        cache_tasks = []
+        for unique_id, a, photo_bytes in best_photos_info:
+            cache_tasks.append(
+                image_cache.cache_image_bytes(unique_id, photo_bytes, "image/jpeg", cache_pool)
+            )
+        await asyncio.gather(*cache_tasks)
 
         await status_msg.delete()
         
         data = await state.get_data()
         photos_collected = data.get("photos_collected", [])
         
-        current_role = ImageRole.MOTHER if not photos_collected else ImageRole.FATHER
+        # Determine if we are collecting for Mom or Dad
+        # A simple way to check is by counting existing unique roles
+        roles_present = {p.get("role") for p in photos_collected if p.get("role")}
+        
+        if ImageRole.MOTHER.value not in roles_present:
+            current_role = ImageRole.MOTHER
+            next_prompt = _("Perfect! Now, please send one or more photos of the Dad.")
+        elif ImageRole.FATHER.value not in roles_present:
+            current_role = ImageRole.FATHER
+            # If we've just collected for Dad, then proceed to child params
+            next_prompt = None # No prompt needed, will proceed to child params
+        else:
+            # Should not happen if flow is sequential, but for safety
+            current_role = ImageRole.MOTHER # Fallback
+            next_prompt = _("Unexpected state. Please send one or more photos of the Mom.")
 
-        photos_collected.append({
-            "file_id": best_file_id,
-            "file_unique_id": best_unique_id,
-            "role": current_role.value
-        })
+
+        # --- MODIFICATION: Store a list of photos for the current role ---
+        selected_photos_dto = [
+            {
+                "file_id": file_id,
+                "file_unique_id": unique_id,
+                "role": current_role.value
+            }
+            for unique_id, file_id, a in best_photos_info
+        ]
+
+        photos_collected.extend(selected_photos_dto)
         await state.update_data(photos_collected=photos_collected)
 
-        if len(photos_collected) < 2:
-            await message.answer(_("Perfect! Now, please send one or more photos of the Dad."))
-        else:
+        # Check if we have photos for both parents (3 for mom, 3 for dad = 6 total)
+        # We need to explicitly check if both roles are present.
+        final_roles_present = {p.get("role") for p in photos_collected if p.get("role")}
+
+        if ImageRole.MOTHER.value in final_roles_present and ImageRole.FATHER.value in final_roles_present:
             await proceed_to_child_params(message, state)
+        elif next_prompt: # If we need more photos for the other parent
+            await message.answer(next_prompt)
+
 
     except Exception as e:
         structlog.get_logger(__name__).error("Error processing photo batch", exc_info=e)
@@ -133,19 +165,23 @@ async def process_photo_input(
     media_group_id = message.media_group_id
 
     if not media_group_id:
+        # If it's a single photo, process it immediately.
         await process_photo_batch([message], state, bot, cache_pool)
         return
 
     media_group_id_str = str(media_group_id)
 
+    # If a task for this album already exists, cancel it to reset the timer.
     if media_group_id_str in album_tasks:
         album_tasks[media_group_id_str].cancel()
 
+    # Add the new message to the cache for this album.
     if media_group_id_str not in album_message_cache:
         album_message_cache[media_group_id_str] = []
     
     album_message_cache[media_group_id_str].append(message)
     
+    # Schedule a new delayed processor.
     album_tasks[media_group_id_str] = asyncio.create_task(
         delayed_album_processor(media_group_id_str, state, bot, cache_pool)
     )
@@ -157,13 +193,16 @@ async def delayed_album_processor(
     Waits a short moment to allow all photos in an album to arrive,
     then triggers the main processing function and cleans up the cache.
     """
-    await asyncio.sleep(1.0)
+    await asyncio.sleep(1.0)  # Wait for 1 second
 
+    # Retrieve all messages for this album from the cache.
     messages = album_message_cache.pop(media_group_id, [])
     
     if messages:
+        # Sort messages by ID to process them in the order they were sent.
         messages.sort(key=lambda m: m.message_id)
         await process_photo_batch(messages, state, bot, cache_pool)
     
+    # Clean up the task entry.
     if media_group_id in album_tasks:
         del album_tasks[media_group_id]

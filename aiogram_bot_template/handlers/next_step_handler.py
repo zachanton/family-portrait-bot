@@ -49,7 +49,6 @@ async def start_new_generation(
 
 @router.callback_query(
     RetryGenerationCallback.filter(),
-    # --- MODIFICATION: Simplified StateFilter ---
     StateFilter(Generation.waiting_for_next_action),
 )
 async def process_retry_generation(
@@ -81,23 +80,32 @@ async def process_retry_generation(
         )
         return
 
+    # --- MODIFICATION: Ensure we get all original parent photos (3 for each) ---
+    # original_request["source_images"] should contain all 6 parent photos now
     source_images_dto = [
         (img["file_unique_id"], img["file_id"], img["role"])
         for img in original_request["source_images"]
     ]
+    
+    # Filter to ensure only parent roles are included here
+    parent_source_images_dto = [
+        s for s in source_images_dto if s[2] in [ImageRole.FATHER.value, ImageRole.MOTHER.value]
+    ]
+
 
     draft = generations_repo.GenerationRequestDraft(
         user_id=cb.from_user.id,
         status="photos_collected",
-        source_images=source_images_dto,
+        source_images=parent_source_images_dto, # Only parents for this draft
     )
     new_request_id = await generations_repo.create_generation_request(db, draft)
 
     await state.set_state(Generation.choosing_child_gender)
     await state.update_data(
         request_id=new_request_id,
+        # Store all parent photos in FSM for later use
         photos_collected=[
-            {"file_id": img[1], "file_unique_id": img[0]} for img in source_images_dto
+            {"file_id": img[1], "file_unique_id": img[0], "role": img[2]} for img in parent_source_images_dto
         ],
         is_retry=True,
         generation_type=GenerationType.CHILD_GENERATION.value,
@@ -160,11 +168,9 @@ async def process_continue_with_image(
         )
     )
     
-    # --- MODIFICATION: We DO NOT change the state here. ---
-    # The user remains in 'waiting_for_next_action' to allow re-selection.
-    # await state.set_state(Generation.child_selected) 
-    
+    # --- Store the selected child generation ID for family photo creation later ---
     await state.update_data(
+        selected_child_generation_id=callback_data.generation_id,
         next_step_message_id=sent_message.message_id
     )
 
@@ -213,9 +219,6 @@ async def process_continue_with_family_photo(
         caption=_("A wonderful choice!\n\nWhat would you like to do next?"),
         reply_markup=family_selection_kb.post_family_photo_selection_kb()
     )
-
-    # --- MODIFICATION: We DO NOT change the state here. ---
-    # await state.set_state(Generation.family_photo_selected)
     
     await state.update_data(
         next_step_message_id=sent_message.message_id
@@ -224,7 +227,6 @@ async def process_continue_with_family_photo(
 
 @router.callback_query(
     CreateFamilyPhotoCallback.filter(), 
-    # --- MODIFICATION: Changed StateFilter ---
     StateFilter(Generation.waiting_for_next_action)
 )
 async def process_create_family_photo(
@@ -235,8 +237,9 @@ async def process_create_family_photo(
     business_logger: structlog.typing.FilteringBoundLogger,
 ):
     """
-    Initiates the family photo generation flow. This is a final action for the
-    current context, so we perform a full cleanup of the child selection interface.
+    Initiates the family photo generation flow. It gathers the necessary visual
+    representations of the parents from the FSM state and the selected child's
+    photo to create a new generation request.
     """
     await cb.answer()
     if not cb.message:
@@ -249,18 +252,22 @@ async def process_create_family_photo(
 
     db = PostgresConnection(db_pool, logger=business_logger)
     user_id = cb.from_user.id
+    user_data = await state.get_data()
     
     try:
-        parent_request = await generations_repo.get_request_details_with_sources(db, callback_data.parent_request_id)
-        if not parent_request or len(parent_request.get("source_images", [])) < 2:
-            raise ValueError("Could not find original parent photos.")
-            
-        parent_sources = parent_request["source_images"]
-        father_source = next((img for img in parent_sources if img.get('role') == ImageRole.FATHER.value), parent_sources[1])
-        mother_source = next((img for img in parent_sources if img.get('role') == ImageRole.MOTHER.value), parent_sources[0])
-        father_source['role'] = ImageRole.FATHER.value
-        mother_source['role'] = ImageRole.MOTHER.value
+        # --- MODIFICATION: Get parent visual UIDs from FSM state ---
+        mom_visual_uid = user_data.get("mom_visual_horizontal_uid")
+        dad_visual_uid = user_data.get("dad_visual_horizontal_uid")
 
+        if not mom_visual_uid or not dad_visual_uid:
+            raise ValueError("Could not find parent visual representation UIDs in state.")
+        
+        parent_sources = [
+            {"file_unique_id": mom_visual_uid, "file_id": mom_visual_uid, "role": ImageRole.MOTHER_VISUAL.value},
+            {"file_unique_id": dad_visual_uid, "file_id": dad_visual_uid, "role": ImageRole.FATHER_VISUAL.value},
+        ]
+        
+        # Get the selected child's generated photo
         sql_child = "SELECT result_image_unique_id, result_file_id FROM generations WHERE id = $1"
         child_res = await db.fetchrow(sql_child, (callback_data.child_generation_id,))
         if not child_res.data:
@@ -272,7 +279,7 @@ async def process_create_family_photo(
             "role": ImageRole.CHILD.value,
         }
 
-        all_sources = [father_source, mother_source, child_source]
+        all_sources = parent_sources + [child_source]
         source_images_dto = [(img["file_unique_id"], img["file_id"], img["role"]) for img in all_sources]
 
         draft = generations_repo.GenerationRequestDraft(
