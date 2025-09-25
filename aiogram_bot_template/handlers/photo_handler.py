@@ -80,8 +80,8 @@ async def process_photo_batch(
             await status_msg.edit_text(_("I couldn't process the photos. Please try sending them again."))
             return
 
-        # --- MODIFICATION: Call select_best_photos (plural) ---
-        best_photos_info = await similarity_scorer.select_best_photos(photo_inputs, num_to_select=3)
+        # --- MODIFICATION: Call select_best_photos without num_to_select ---
+        best_photos_info = await similarity_scorer.select_best_photos(photo_inputs)
         
         if not best_photos_info:
             rejection_text = _(
@@ -139,8 +139,7 @@ async def process_photo_batch(
         photos_collected.extend(selected_photos_dto)
         await state.update_data(photos_collected=photos_collected)
 
-        # Check if we have photos for both parents (3 for mom, 3 for dad = 6 total)
-        # We need to explicitly check if both roles are present.
+        # Check if we have photos for both parents
         final_roles_present = {p.get("role") for p in photos_collected if p.get("role")}
 
         if ImageRole.MOTHER.value in final_roles_present and ImageRole.FATHER.value in final_roles_present:

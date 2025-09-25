@@ -20,7 +20,6 @@ from aiogram_bot_template.db.repo import generations as generations_repo
 from aiogram_bot_template.keyboards.inline import feedback, next_step, child_selection, family_selection
 from aiogram_bot_template.services import image_cache
 from aiogram_bot_template.services.pipelines.base import BasePipeline
-from aiogram_bot_template.services.pipelines.pair_photo import PairPhotoPipeline
 from aiogram_bot_template.services.pipelines.child_generation import ChildGenerationPipeline
 from aiogram_bot_template.services.pipelines.family_photo import FamilyPhotoPipeline
 from aiogram_bot_template.services.enhancers.style_enhancer import format_shot_for_prompt
@@ -28,7 +27,6 @@ from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.utils.status_manager import StatusMessageManager
 
 PIPELINE_MAP: dict[str, Type[BasePipeline]] = {
-    GenerationType.PAIR_PHOTO.value: PairPhotoPipeline,
     GenerationType.CHILD_GENERATION.value: ChildGenerationPipeline,
     GenerationType.FAMILY_PHOTO.value: FamilyPhotoPipeline,
 }
@@ -101,6 +99,8 @@ async def run_generation_worker(
 
         if generation_type == GenerationType.CHILD_GENERATION.value:
             parent_visual_uids = {
+                "mom_visual_front_uid": pipeline_output.metadata.get("mom_visual_front_uid"),
+                "dad_visual_front_uid": pipeline_output.metadata.get("dad_visual_front_uid"),
                 "mom_visual_horizontal_uid": pipeline_output.metadata.get("mom_visual_horizontal_uid"),
                 "dad_visual_horizontal_uid": pipeline_output.metadata.get("dad_visual_horizontal_uid"),
             }
@@ -113,13 +113,14 @@ async def run_generation_worker(
 
         await _send_debug_if_enabled(
             bot=bot, chat_id=chat_id, redis=cache_pool,
-            uid=pipeline_output.metadata.get("mom_visual_vertical_uid"),
-            caption="[DEBUG] mom_visual_vertical_uid."
+            uid=pipeline_output.metadata.get("mom_collage_uid"),
+            caption="[DEBUG] mom_collage_uid."
         )
+
         await _send_debug_if_enabled(
             bot=bot, chat_id=chat_id, redis=cache_pool,
-            uid=pipeline_output.metadata.get("dad_visual_vertical_uid"),
-            caption="[DEBUG] dad_visual_vertical_uid."
+            uid=pipeline_output.metadata.get("mom_visual_front_uid"),
+            caption="[DEBUG] mom_visual_front_uid."
         )
 
         await _send_debug_if_enabled(
@@ -127,18 +128,24 @@ async def run_generation_worker(
             uid=pipeline_output.metadata.get("mom_visual_horizontal_uid"),
             caption="[DEBUG] mom_visual_horizontal_uid."
         )
+
+        await _send_debug_if_enabled(
+            bot=bot, chat_id=chat_id, redis=cache_pool,
+            uid=pipeline_output.metadata.get("dad_collage_uid"),
+            caption="[DEBUG] dad_collage_uid."
+        )
         await _send_debug_if_enabled(
             bot=bot, chat_id=chat_id, redis=cache_pool,
             uid=pipeline_output.metadata.get("dad_visual_horizontal_uid"),
             caption="[DEBUG] dad_visual_horizontal_uid."
         )
 
-        await _send_debug_if_enabled(
-            bot=bot, chat_id=chat_id, redis=cache_pool,
-            uid=pipeline_output.metadata.get("composite_uid"),
-            caption="[DEBUG] composite_uid."
-        )
-
+        for uid in pipeline_output.metadata.get("processed_uids", []):
+            await _send_debug_if_enabled(
+                bot=bot, chat_id=chat_id, redis=cache_pool,
+                uid=uid,
+                caption=f"[DEBUG] This is a processed image sent to the AI (uid: {uid})."
+            )
         
         photoshoot_plan = pipeline_output.metadata.get("photoshoot_plan")
         eye_description_text = pipeline_output.metadata.get("eye_description_text")

@@ -255,16 +255,16 @@ async def process_create_family_photo(
     user_data = await state.get_data()
     
     try:
-        # --- MODIFICATION: Get parent visual UIDs from FSM state ---
-        mom_visual_uid = user_data.get("mom_visual_horizontal_uid")
-        dad_visual_uid = user_data.get("dad_visual_horizontal_uid")
+        mom_visual_front_uid = user_data.get("mom_visual_front_uid")
+        dad_visual_front_uid = user_data.get("dad_visual_front_uid")
+        mom_visual_horizontal_uid = user_data.get("mom_visual_horizontal_uid")
+        dad_visual_horizontal_uid = user_data.get("dad_visual_horizontal_uid")
 
-        if not mom_visual_uid or not dad_visual_uid:
-            raise ValueError("Could not find parent visual representation UIDs in state.")
-        
         parent_sources = [
-            {"file_unique_id": mom_visual_uid, "file_id": mom_visual_uid, "role": ImageRole.MOTHER_VISUAL.value},
-            {"file_unique_id": dad_visual_uid, "file_id": dad_visual_uid, "role": ImageRole.FATHER_VISUAL.value},
+            {"file_unique_id": mom_visual_front_uid, "file_id": mom_visual_front_uid, "role": ImageRole.MOTHER_FRONT.value},
+            {"file_unique_id": dad_visual_front_uid, "file_id": dad_visual_front_uid, "role": ImageRole.FATHER_FRONT.value},
+            {"file_unique_id": mom_visual_horizontal_uid, "file_id": mom_visual_horizontal_uid, "role": ImageRole.MOTHER_HORIZONTAL.value},
+            {"file_unique_id": dad_visual_horizontal_uid, "file_id": dad_visual_horizontal_uid, "role": ImageRole.FATHER_HORIZONTAL.value},
         ]
         
         # Get the selected child's generated photo

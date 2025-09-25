@@ -23,9 +23,9 @@ class ChildGenerationPipeline(BasePipeline):
         await self.update_status_func(_("Analyzing parental features... 🧬"))
 
         photos_collected = self.gen_data.get("photos_collected", [])
-        if len(photos_collected) < 6:
+        if not photos_collected:
             raise ValueError(
-                "Missing one or more source images for child generation."
+                "Missing source images for child generation."
             )
 
         mom_photos = [
@@ -54,27 +54,15 @@ class ChildGenerationPipeline(BasePipeline):
         mother_bytes_list = await get_all_bytes(mom_photos)
 
         await self.update_status_func(_("Preparing parent portraits... 🖼️"))
-
-        async def process_list_of_bytes(byte_list):
-            tasks = [
-                asyncio.to_thread(photo_processing.create_tiktok_portrait_from_bytes, b)
-                for b in byte_list
-            ]
-            results = await asyncio.gather(*tasks)
-            return [b for b in results if b is not None]
-
-        processed_mom_portraits_bytes = await process_list_of_bytes(mother_bytes_list)
-        processed_dad_portraits_bytes = await process_list_of_bytes(father_bytes_list)
-
+        
+        # Run collage creation in parallel
+        collage_tasks = [
+            asyncio.to_thread(photo_processing.create_portrait_collage_from_bytes, mother_bytes_list),
+            asyncio.to_thread(photo_processing.create_portrait_collage_from_bytes, father_bytes_list),
+        ]
+        mom_collage_bytes, dad_collage_bytes = await asyncio.gather(*collage_tasks)
 
         request_id_str = self.gen_data.get("request_id", uuid.uuid4().hex)
-        mom_collage_bytes = photo_processing.create_horizontal_collage(
-            processed_mom_portraits_bytes
-        )
-        dad_collage_bytes = photo_processing.create_horizontal_collage(
-            processed_dad_portraits_bytes
-        )
-
         mom_collage_uid, dad_collage_uid = None, None
         mom_collage_url, dad_collage_url = None, None
 
@@ -105,26 +93,26 @@ class ChildGenerationPipeline(BasePipeline):
         ]
         mom_visual_horizontal_bytes, dad_visual_horizontal_bytes = await asyncio.gather(*visual_tasks)
 
-        mom_visual_horizontal_bytes, mom_visual_vertical_bytes = (
+        mom_visual_front_bytes, mom_visual_side_bytes = (
             photo_processing.split_and_stack_image_bytes(mom_visual_horizontal_bytes)
             if mom_visual_horizontal_bytes else (None, None)
         )
-        dad_visual_horizontal_bytes, dad_visual_vertical_bytes = (
+        dad_visual_front_bytes, dad_visual_side_bytes = (
             photo_processing.split_and_stack_image_bytes(dad_visual_horizontal_bytes)
             if dad_visual_horizontal_bytes else (None, None)
         )
 
         mom_final_ref_url, dad_final_ref_url = mom_collage_url, dad_collage_url
-        mom_visual_horizontal_uid, mom_visual_vertical_uid = None, None
-        dad_visual_horizontal_uid, dad_visual_vertical_uid = None, None
+        mom_visual_front_uid, mom_visual_side_uid = None, None
+        dad_visual_front_uid, dad_visual_side_uid = None, None
 
-        if mom_visual_vertical_bytes:
-            mom_visual_vertical_uid = f"visual_mom_vertical_{request_id_str}"
+        if mom_visual_front_bytes:
+            mom_visual_front_uid = f"visual_mom_front_{request_id_str}"
             await image_cache.cache_image_bytes(
-                mom_visual_vertical_uid, mom_visual_vertical_bytes, "image/jpeg", self.cache_pool
+                mom_visual_front_uid, mom_visual_front_bytes, "image/jpeg", self.cache_pool
             )
-            mom_final_ref_url = image_cache.get_cached_image_proxy_url(mom_visual_vertical_uid)
-            self.log.info("Using enhanced VERTICAL visual representation for Mom.")
+            mom_final_ref_url = image_cache.get_cached_image_proxy_url(mom_visual_front_uid)
+            self.log.info("Using enhanced front visual representation for Mom.")
             
             if mom_visual_horizontal_bytes:
                 mom_visual_horizontal_uid = f"visual_mom_horizontal_{request_id_str}"
@@ -136,13 +124,13 @@ class ChildGenerationPipeline(BasePipeline):
                 "Failed to generate Mom's visual representation, falling back to collage."
             )
 
-        if dad_visual_vertical_bytes:
-            dad_visual_vertical_uid = f"visual_dad_vertical_{request_id_str}"
+        if dad_visual_front_bytes:
+            dad_visual_front_uid = f"visual_dad_front_{request_id_str}"
             await image_cache.cache_image_bytes(
-                dad_visual_vertical_uid, dad_visual_vertical_bytes, "image/jpeg", self.cache_pool
+                dad_visual_front_uid, dad_visual_front_bytes, "image/jpeg", self.cache_pool
             )
-            dad_final_ref_url = image_cache.get_cached_image_proxy_url(dad_visual_vertical_uid)
-            self.log.info("Using enhanced VERTICAL visual representation for Dad.")
+            dad_final_ref_url = image_cache.get_cached_image_proxy_url(dad_visual_front_uid)
+            self.log.info("Using enhanced front visual representation for Dad.")
             
             if dad_visual_horizontal_bytes:
                 dad_visual_horizontal_uid = f"visual_dad_horizontal_{request_id_str}"
@@ -214,10 +202,10 @@ class ChildGenerationPipeline(BasePipeline):
         metadata = {
             "mom_collage_uid": mom_collage_uid,
             "dad_collage_uid": dad_collage_uid,
+            "mom_visual_front_uid": mom_visual_front_uid,
             "mom_visual_horizontal_uid": mom_visual_horizontal_uid,
-            "mom_visual_vertical_uid": mom_visual_vertical_uid,
+            "dad_visual_front_uid": dad_visual_front_uid,
             "dad_visual_horizontal_uid": dad_visual_horizontal_uid,
-            "dad_visual_vertical_uid": dad_visual_vertical_uid,
             "eye_description_text": eye_description_text,
             "hairstyle_descriptions": hairstyle_descriptions,
         }

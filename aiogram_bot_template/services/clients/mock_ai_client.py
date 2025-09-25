@@ -42,7 +42,7 @@ class _MockImagesNamespace:
 
         # 1. Check for the specific prompt of the parent visual enhancer first.
         # We use a unique phrase from its system prompt.
-        if "ID-consolidation module" in prompt:
+        if "Identity-Consolidation" in prompt:
             if "mother" in prompt.lower():
                 image_path = _MOCK_MOM_VISUAL_IMAGE_PATH
                 fallback_color = "purple"  # A unique color for fallback

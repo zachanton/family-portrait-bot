@@ -1,7 +1,7 @@
 # aiogram_bot_template/services/photo_processing.py
 import cv2
 import io
-import itertools
+import math
 import mediapipe as mp
 import numpy as np
 import structlog
@@ -11,68 +11,40 @@ from PIL import Image, ImageOps
 logger = structlog.get_logger(__name__)
 
 # --- MediaPipe setup ---
-mp_face_mesh = mp.solutions.face_mesh
-mp_selfie_segmentation = mp.solutions.selfie_segmentation
+mp_face_detection = mp.solutions.face_detection
 
-# FaceMesh landmark indices
-FOREHEAD_TOP, CHIN_BOTTOM = 10, 152
-LEFT_EYE_OUTER, RIGHT_EYE_OUTER = 263, 33
-LEFT_FACE_OUTER, RIGHT_FACE_OUTER = 234, 454
+# --- Cropping parameters ---
+HEAD_VERTICAL_MARGIN_RATIO = 0.70
+HEAD_HORIZONTAL_MARGIN_RATIO = 0.50
 
-FACE_OVAL_LANDMARK_INDICES = [
-    10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148,
-    176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109
-]
-
-# --- Pipeline parameters ---
-TARGET_FACE_METRIC_PX = 220.0
-MIN_SCALE, MAX_SCALE = 0.60, 1.80
-SEGMENTATION_THRESHOLD = 0.10
-
-# Kept for compatibility (not used for horizontal blends anymore)
-OVERLAP_RATIO = 0.30
-SEAM_SOFTEN_PX = 26
-SEAM_SOFTEN_SIGMA = 6.0
-
-# Person crop around eyes (w/h = 0.75) for the main vertical composite
-CROP_ASPECT = 0.75  # width / height
-
-# --- Face crop parameters (for individual portraits) ---
-FACE_CROP_ASPECT = 9.0 / 16.0  # width / height
-FACE_MARGIN_LEFT_RIGHT_RATIO = 0.30
-FACE_MARGIN_TOP_RATIO = 0.55
-FACE_MARGIN_BOTTOM_RATIO = 0.30
-FACE_EXTRA_HEIGHT_BIAS_TO_TOP = 0.65
-
-# --- Head crop parameters (for vertical composite ONLY) ---
-# All ratios are relative to the face width (outer-to-outer).
-HEAD_MARGIN_SIDE_RATIO = 0.40
-HEAD_MARGIN_TOP_RATIO = 0.10
-HEAD_MARGIN_BOTTOM_RATIO = 0.18
-HEAD_TOP_WINDOW_EXPAND_X = 0.65  # half-width window for top-of-head search
-HEAD_ALPHA_THRESH = 10           # alpha threshold (0..255) to consider person pixels
-
-# --- 3-people layout tuning ---
-CENTER_MIDDLE_SCALE_3 = 0.80
-CENTER_CROP_EXTRA_UP_RATIO = 0.35
-
-# --- Spacing for vertical stacks ---
-VERTICAL_GAP_RATIO = 0.02
-VERTICAL_MARGIN_RATIO = 0.03
-
-# --- Output constraints (TikTok-ready canvas) ---
-TIKTOK_CANVAS_W = 702
+# --- Fixed canvas (must NOT change) ---
+TIKTOK_CANVAS_W = 1440
 TIKTOK_CANVAS_H = 1280
-DYNAMIC_BG_FILL = False
-TIKTOK_BG_FALLBACK_BGR = (0, 0, 0)  # BGR
 
-COMPOSITE_TARGET_IOD_PX = 120.0  # Target interocular distance in pixels for all faces
+# Neutral fallback background (BGR). Never use black or saturated colors.
+TIKTOK_BG_FALLBACK_BGR = (128, 128, 128)
 
-# --- I/O ---
+# --- Anti-grid / anti-border controls ---
+FEATHER_PX = 16                 # feather width inside collage (not at outer edges)
+FEATHER_NOISE_STRENGTH = 0.08   # irregular feather modulation [0..1]
+ROTATION_DEG_MAX = 1.2          # tiny random rotation per tile
+PERSPECTIVE_JITTER_PX = 2       # subpixel perspective jitter around tile corners
 
+# Background: gradient + low-frequency noise + tiny white noise
+BG_NOISE_STD = 2.0              # per-pixel gaussian noise
+BG_LF_NOISE_AMP = 6.0           # low-frequency noise amplitude
+BG_GRADIENT_AMP = 10            # linear gradient amplitude
+
+# Underlay (content to edges so model never sees flat bars)
+UNDERLAY_OPACITY = 0.75         # blend factor [0..1] over the base background
+UNDERLAY_SAT_MUL = 0.45         # desaturation to keep neutral
+UNDERLAY_GAUSS_SIGMA = 65.0     # heavy blur so no identity leakage
+
+REQUIRED_TILES_PER_EDGE = 1     # at least N tiles must touch each edge
+
+# ---------------- I/O ----------------
 
 def load_image_bgr_from_bytes(data: bytes) -> Optional[np.ndarray]:
-    """Loads an image from bytes into a BGR NumPy array."""
     try:
         img = Image.open(io.BytesIO(data))
         img = ImageOps.exif_transpose(img)
@@ -83,729 +55,422 @@ def load_image_bgr_from_bytes(data: bytes) -> Optional[np.ndarray]:
         logger.exception("Failed to load image from bytes.")
         return None
 
+
 def convert_bgr_to_jpeg_bytes(img_bgr: np.ndarray, quality: int = 95) -> bytes:
-    """Converts a BGR NumPy array to JPEG bytes."""
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     buf = io.BytesIO()
     Image.fromarray(img_rgb).save(buf, format="JPEG", quality=quality, optimize=True)
     return buf.getvalue()
 
-def paste_transparent(background: np.ndarray, foreground: np.ndarray, x: int, y: int) -> np.ndarray:
-    """Alpha-composites an RGBA foreground over a BGR background at (x, y)."""
-    h, w = foreground.shape[:2]
-    y_end, x_end = min(y + h, background.shape[0]), min(x + w, background.shape[1])
-    h, w = y_end - y, x_end - x
-    if w <= 0 or h <= 0:
-        return background
-    fg = foreground[:h, :w]
-    alpha = fg[:, :, 3].astype(np.float32) / 255.0
-    alpha_3 = np.dstack((alpha, alpha, alpha))
-    bg_slice = background[y:y_end, x:x_end].astype(np.float32)
-    blend = bg_slice * (1.0 - alpha_3) + fg[:, :, :3].astype(np.float32) * alpha_3
-    background[y:y_end, x:x_end] = np.clip(blend, 0, 255).astype(np.uint8)
-    return background
+# --------------- Face prep ---------------
 
-# --- Analysis & Helpers ---
+def _extract_and_prepare_faces(
+    image_bytes_list: List[bytes],
+    target_face_width: int
+) -> List[np.ndarray]:
+    prepared_faces = []
+    with mp_face_detection.FaceDetection(
+        model_selection=1, min_detection_confidence=0.5
+    ) as face_detection:
+        for image_bytes in image_bytes_list:
+            img_bgr = load_image_bgr_from_bytes(image_bytes)
+            if img_bgr is None:
+                continue
 
-def clamp(v, lo, hi):
-    """Clamps a value v to the range [lo, hi]."""
-    return max(lo, min(v, hi))
+            img_h, img_w = img_bgr.shape[:2]
+            img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+            results = face_detection.process(img_rgb)
+            if not results.detections or len(results.detections) != 1:
+                continue
 
-def analyze_and_segment_person(img_bgr: np.ndarray) -> Dict:
-    """Returns image, face landmarks, and person segmentation mask."""
-    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-    with mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, refine_landmarks=False, min_detection_confidence=0.5) as fm:
-        res = fm.process(img_rgb)
-        if not res.multi_face_landmarks:
-            raise ValueError("Face not found in image.")
-        face_lm = res.multi_face_landmarks[0]
-    with mp_selfie_segmentation.SelfieSegmentation(model_selection=0) as seg:
-        seg_mask = seg.process(img_rgb).segmentation_mask
-    return {"image_bgr": img_bgr, "face_landmarks": face_lm, "segmentation_mask": seg_mask}
+            det = results.detections[0]
+            box = det.location_data.relative_bounding_box
+            face_x = int(box.xmin * img_w)
+            face_y = int(box.ymin * img_h)
+            face_w = int(box.width * img_w)
+            face_h = int(box.height * img_h)
 
-def _lm_to_px(face_lm, w: int, h: int) -> np.ndarray:
-    """Converts MediaPipe landmarks to pixel coordinates."""
-    return np.array([(p.x * w, p.y * h) for p in face_lm.landmark], dtype=np.float32)
+            margin_v = int(face_h * HEAD_VERTICAL_MARGIN_RATIO)
+            margin_h = int(face_w * HEAD_HORIZONTAL_MARGIN_RATIO)
 
-def face_scale_metric(person_data: Dict) -> Optional[float]:
-    """Calculates a consistent face size metric for normalization."""
-    img = person_data["image_bgr"]; h, w = img.shape[:2]
-    lm = _lm_to_px(person_data["face_landmarks"], w, h)
-    iod = float(np.linalg.norm(lm[LEFT_EYE_OUTER] - lm[RIGHT_EYE_OUTER]))
-    hh = float(np.linalg.norm(lm[FOREHEAD_TOP] - lm[CHIN_BOTTOM]))
-    if not iod or not hh or iod <= 0 or hh <= 0:
-        return None
-    return float(np.sqrt(iod * hh))
+            x1 = max(0, face_x - margin_h)
+            y1 = max(0, face_y - margin_v)
+            x2 = min(img_w, face_x + face_w + margin_h)
+            y2 = min(img_h, face_y + face_h + margin_h)
 
-def _rotate_build_rgba_and_stats(person_data: Dict) -> Dict:
-    """Rotates, segments, and extracts key metrics for a single person."""
-    img_bgr, mask, h, w = person_data["image_bgr"], person_data["segmentation_mask"], *person_data["image_bgr"].shape[:2]
-    condition = np.stack((mask,) * 3, axis=-1) > SEGMENTATION_THRESHOLD
-    person_bgr = np.where(condition, img_bgr, 0)
-    alpha_channel = (np.clip(mask, 0.0, 1.0) * 255).astype(np.uint8)
-    person_rgba = cv2.merge([*cv2.split(person_bgr), alpha_channel])
+            cropped = img_bgr[y1:y2, x1:x2]
+            ch, cw = cropped.shape[:2]
+            if cw == 0 or ch == 0:
+                continue
 
-    lm_px = _lm_to_px(person_data["face_landmarks"], w, h)
-    p_le, p_re = lm_px[LEFT_EYE_OUTER], lm_px[RIGHT_EYE_OUTER]
-    angle_deg = float(np.degrees(np.arctan2(p_le[1] - p_re[1], p_le[0] - p_re[0])))
-    center_eyes = (p_le + p_re) / 2.0
-    M = cv2.getRotationMatrix2D((float(center_eyes[0]), float(center_eyes[1])), angle_deg, 1.0)
+            scale = target_face_width / cw
+            new_h = max(1, int(ch * scale))
+            resized = cv2.resize(cropped, (target_face_width, new_h), interpolation=cv2.INTER_AREA)
 
-    rot_bgr = cv2.warpAffine(
-        img_bgr, M, (w, h),
-        flags=cv2.INTER_LINEAR,
-        borderMode=cv2.BORDER_REPLICATE
-    )
-    rot_rgba = cv2.warpAffine(
-        person_rgba, M, (w, h),
-        flags=cv2.INTER_LINEAR,
-        borderMode=cv2.BORDER_CONSTANT,
-        borderValue=(0, 0, 0, 0)
-    )
+            # micro warps to break perfect grid cues
+            rotated = _apply_micro_rotation(resized, max_deg=ROTATION_DEG_MAX)
+            warped = _apply_micro_perspective(rotated, jitter_px=PERSPECTIVE_JITTER_PX)
 
-    eyes_rot = M @ np.array([center_eyes[0], center_eyes[1], 1.0], dtype=np.float32)
-    lm_hom = np.hstack([lm_px, np.ones((lm_px.shape[0], 1))])
-    rotated_landmarks = (M @ lm_hom.T).T
+            prepared_faces.append(warped)
+    return prepared_faces
 
-    a = rot_rgba[:, :, 3]
-    ys, xs = np.where(a > 10)
-    top_y, bot_y = (int(ys.min()), int(ys.max())) if len(ys) > 0 else (0, h - 1)
+# --------------- Anti-grid helpers ---------------
 
-    return {
-        "rot_bgr": rot_bgr,
-        "rot_rgba": rot_rgba,
-        "eyes_xy": (float(eyes_rot[0]), float(eyes_rot[1])),
-        "head_h": float(np.linalg.norm(lm_px[FOREHEAD_TOP] - lm_px[CHIN_BOTTOM])),
-        "clearances": {"up": float(eyes_rot[1] - top_y), "down": float(bot_y - eyes_rot[1])},
-        "rot_landmarks": rotated_landmarks
-    }
-
-def _resize(img: np.ndarray, scale: float) -> np.ndarray:
-    """Resizes an image using an appropriate interpolation method."""
-    if abs(scale - 1.0) < 1e-3:
+def _apply_micro_rotation(img: np.ndarray, max_deg: float) -> np.ndarray:
+    if max_deg <= 0:
         return img
-    interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_CUBIC
     h, w = img.shape[:2]
-    return cv2.resize(img, (int(round(w * scale)), int(round(h * scale))), interpolation=interp)
+    angle = np.random.uniform(-max_deg, max_deg)
+    M = cv2.getRotationMatrix2D((w/2, h/2), angle, 1.0)
+    return cv2.warpAffine(img, M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT101)
 
-def _pad_crop_with_offsets(img: np.ndarray, x1: int, y1: int, x2: int, y2: int) -> Tuple[np.ndarray, int, int]:
-    """Crops an image, adding padding if the crop region extends beyond the image bounds."""
+def _apply_micro_perspective(img: np.ndarray, jitter_px: int) -> np.ndarray:
+    if jitter_px <= 0:
+        return img
     h, w = img.shape[:2]
-    pad_left, pad_top = max(0, -x1), max(0, -y1)
-    pad_right, pad_bottom = max(0, x2 - w), max(0, y2 - h)
-    if any(p > 0 for p in (pad_left, pad_top, pad_right, pad_bottom)):
-        img = cv2.copyMakeBorder(img, pad_top, pad_bottom, pad_left, pad_right, cv2.BORDER_REPLICATE)
-        x1 += pad_left
-        y1 += pad_top
-    return img[y1:y2, x1:x2], pad_left, pad_top
+    j = float(jitter_px)
+    src = np.float32([[0,0],[w,0],[w,h],[0,h]])
+    dst = np.float32([
+        [np.random.uniform(-j, j), np.random.uniform(-j, j)],
+        [w + np.random.uniform(-j, j), np.random.uniform(-j, j)],
+        [w + np.random.uniform(-j, j), h + np.random.uniform(-j, j)],
+        [np.random.uniform(-j, j), h + np.random.uniform(-j, j)],
+    ])
+    M = cv2.getPerspectiveTransform(src, dst)
+    return cv2.warpPerspective(img, M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT101)
 
-# --- TikTok canvas helpers ---
+def _make_base_bg(canvas_h: int, canvas_w: int, base_bgr: Tuple[int,int,int]) -> np.ndarray:
+    """Neutral background with linear gradient + low-frequency noise + tiny white noise."""
+    canvas = np.full((canvas_h, canvas_w, 3), base_bgr, dtype=np.float32)
 
-def _estimate_uniform_bg_color_from_borders(img_bgr: np.ndarray, border_ratio: float = 0.06) -> Tuple[int, int, int]:
-    """Estimate a solid background color from image borders."""
-    h, w = img_bgr.shape[:2]
-    if h == 0 or w == 0:
-        return TIKTOK_BG_FALLBACK_BGR
-    b = max(1, int(round(min(h, w) * border_ratio)))
-    mask = np.zeros((h, w), dtype=bool)
-    mask[:b, :] = True
-    mask[-b:, :] = True
-    mask[:, :b] = True
-    mask[:, -b:] = True
-    border_pixels = img_bgr[mask]
-    if border_pixels.size == 0:
-        return TIKTOK_BG_FALLBACK_BGR
-    median_color = np.median(border_pixels, axis=0)
-    return tuple(int(c) for c in np.clip(median_color, 0, 255))
+    if BG_GRADIENT_AMP > 0:
+        theta = np.random.uniform(0, 2*np.pi)
+        vx, vy = np.cos(theta), np.sin(theta)
+        X, Y = np.meshgrid(np.linspace(-1,1,canvas_w), np.linspace(-1,1,canvas_h))
+        grad = (X*vx + Y*vy) * BG_GRADIENT_AMP
+        for c in range(3):
+            canvas[:,:,c] = np.clip(canvas[:,:,c] + grad, 0, 255)
 
-def _build_tiktok_canvas(bg_sample: Optional[np.ndarray] = None) -> Tuple[np.ndarray, int, int, int, int, int]:
-    """
-    Returns: (canvas, canvas_w, canvas_h, gap_px, margin_top, margin_bottom)
-    """
-    canvas_w, canvas_h = TIKTOK_CANVAS_W, TIKTOK_CANVAS_H
-    if DYNAMIC_BG_FILL and bg_sample is not None:
-        bg_color = _estimate_uniform_bg_color_from_borders(bg_sample)
-    else:
-        bg_color = TIKTOK_BG_FALLBACK_BGR
-    gap_px = max(8, int(round(canvas_h * VERTICAL_GAP_RATIO)))
-    margin_top = max(12, int(round(canvas_h * VERTICAL_MARGIN_RATIO)))
-    margin_bottom = margin_top
-    canvas = np.full((canvas_h, canvas_w, 3), bg_color, dtype=np.uint8)
-    return canvas, canvas_w, canvas_h, gap_px, margin_top, margin_bottom
+    if BG_LF_NOISE_AMP > 0:
+        small_h = max(8, canvas_h // 32)
+        small_w = max(8, canvas_w // 32)
+        low = np.random.randn(small_h, small_w).astype(np.float32)
+        low = cv2.GaussianBlur(low, (0,0), sigmaX=1.2, sigmaY=1.2)
+        low = cv2.resize(low, (canvas_w, canvas_h), interpolation=cv2.INTER_CUBIC)
+        low = cv2.GaussianBlur(low, (0,0), sigmaX=3.0, sigmaY=3.0)
+        for c in range(3):
+            canvas[:,:,c] = np.clip(canvas[:,:,c] + low * BG_LF_NOISE_AMP, 0, 255)
 
-def _stack_crops_vertically_on_tiktok(cropped_bgs: List[np.ndarray],
-                                      cropped_persons_rgba: List[np.ndarray]) -> np.ndarray:
-    """
-    Vertically stacks people into a TikTok canvas. Each person block is resized
-    (keeping aspect) to fill as much width as possible. If the total height
-    exceeds the canvas, a uniform downscale factor is applied to all.
-    """
-    assert len(cropped_bgs) == len(cropped_persons_rgba)
-    num = len(cropped_bgs)
-    if num == 0:
-        return np.full((TIKTOK_CANVAS_H, TIKTOK_CANVAS_W, 3), TIKTOK_BG_FALLBACK_BGR, dtype=np.uint8)
+    if BG_NOISE_STD > 0:
+        canvas += np.random.normal(0.0, BG_NOISE_STD, canvas.shape).astype(np.float32)
 
-    canvas, canvas_w, canvas_h, gap_px, margin_top, margin_bottom = _build_tiktok_canvas(cropped_bgs[0])
+    return np.clip(canvas, 0, 255).astype(np.uint8)
 
-    widths = [bg.shape[1] for bg in cropped_bgs]
-    heights = [bg.shape[0] for bg in cropped_bgs]
-    scales_to_full_width = [canvas_w / max(1.0, w) for w in widths]
-    h_at_full_width = [int(round(h * s)) for h, s in zip(heights, scales_to_full_width)]
+def _make_underlay_from_tile(tile: np.ndarray, canvas_w: int, canvas_h: int) -> np.ndarray:
+    """Create blurred, desaturated content underlay that fills the canvas edge-to-edge."""
+    th, tw = tile.shape[:2]
+    scale = max(canvas_w / tw, canvas_h / th)
+    new_w, new_h = int(tw * scale), int(th * scale)
+    resized = cv2.resize(tile, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
 
-    total_h_full = sum(h_at_full_width) + gap_px * (num - 1) + margin_top + margin_bottom
+    # center-crop to canvas
+    x0 = (new_w - canvas_w) // 2
+    y0 = (new_h - canvas_h) // 2
+    cropped = resized[y0:y0+canvas_h, x0:x0+canvas_w]
 
-    if total_h_full <= canvas_h:
-        target_widths = [canvas_w for _ in widths]
-        target_heights = h_at_full_width
-    else:
-        available = canvas_h - (margin_top + margin_bottom) - gap_px * (num - 1)
-        sum_blocks = sum(h_at_full_width)
-        global_scale = max(0.05, available / max(1, sum_blocks))
-        target_widths = [max(1, int(round(canvas_w * global_scale))) for _ in widths]
-        target_heights = [max(1, int(round(h * global_scale))) for h in h_at_full_width]
+    # heavy blur + desaturate
+    ksize = int(max(3, round(UNDERLAY_GAUSS_SIGMA * 3)) * 2 + 1)
+    blurred = cv2.GaussianBlur(cropped, (ksize, ksize), UNDERLAY_GAUSS_SIGMA)
+    hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV).astype(np.float32)
+    hsv[:,:,1] *= UNDERLAY_SAT_MUL
+    hsv[:,:,1] = np.clip(hsv[:,:,1], 0, 255)
+    desat = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+    return desat
 
-    y = margin_top
-    for bg, fg, tw, th in zip(cropped_bgs, cropped_persons_rgba, target_widths, target_heights):
-        interp_bg = cv2.INTER_AREA if (tw < bg.shape[1] or th < bg.shape[0]) else cv2.INTER_CUBIC
-        bg_resized = cv2.resize(bg, (tw, th), interpolation=interp_bg)
-        fg_resized = cv2.resize(fg, (tw, th), interpolation=cv2.INTER_AREA if interp_bg == cv2.INTER_AREA else cv2.INTER_CUBIC)
+# --------------- Packing ---------------
 
-        bg_rgba = cv2.cvtColor(bg_resized, cv2.COLOR_BGR2BGRA)
-        bg_rgba[:, :, 3] = 255
+def _attempt_greedy_pack(
+    scaled_faces: List[np.ndarray], canvas_w: int, canvas_h: int
+) -> Optional[List[Dict]]:
+    sorted_faces = sorted(scaled_faces, key=lambda f: f.shape[0] * f.shape[1], reverse=True)
+    placed_items = []
+    canvas_center = np.array([canvas_w / 2, canvas_h / 2])
 
-        x = (TIKTOK_CANVAS_W - tw) // 2
-        canvas = paste_transparent(canvas, bg_rgba, x, y)
-        canvas = paste_transparent(canvas, fg_resized, x, y)
+    def check_overlap(new_rect, placed_rects):
+        x1, y1, w1, h1 = new_rect
+        for item in placed_rects:
+            x2, y2, w2, h2 = item['rect']
+            if not (x1 + w1 <= x2 or x1 >= x2 + w2 or y1 + h1 <= y2 or y1 >= y2 + h2):
+                return True
+        return False
 
-        y += th
-        if y < TIKTOK_CANVAS_H:
-            y += gap_px
+    if not sorted_faces:
+        return []
 
-    return canvas
+    first = sorted_faces[0]
+    fh, fw = first.shape[:2]
+    x, y = (canvas_w - fw) // 2, (canvas_h - fh) // 2
+    if x < 0 or y < 0 or x + fw > canvas_w or y + fh > canvas_h:
+        return None
+    placed_items.append({'rect': (x, y, fw, fh), 'img': first})
 
-# --- Face extraction & portrait helpers ---
+    for face in sorted_faces[1:]:
+        fh, fw = face.shape[:2]
+        best_pos, min_cost = None, float('inf')
+        for item in placed_items:
+            pr_x, pr_y, pr_w, pr_h = item['rect']
+            candidates = [
+                (pr_x + pr_w, pr_y), (pr_x - fw, pr_y),
+                (pr_x, pr_y + pr_h), (pr_x, pr_y - fh),
+                (pr_x + pr_w, pr_y + pr_h - fh), (pr_x - fw, pr_y - fh),
+                (pr_x - fw, pr_y + pr_h), (pr_x + pr_w - fw, pr_y - fh),
+            ]
+            for cand_x, cand_y in candidates:
+                if (0 <= cand_x and cand_x + fw <= canvas_w and
+                    0 <= cand_y and cand_y + fh <= canvas_h and
+                    not check_overlap((cand_x, cand_y, fw, fh), placed_items)):
+                    center = np.array([cand_x + fw / 2, cand_y + fh / 2])
+                    dist_sq = float(np.sum((center - canvas_center) ** 2))
+                    margin_left = cand_x
+                    margin_right = canvas_w - (cand_x + fw)
+                    margin_top = cand_y
+                    margin_bottom = canvas_h - (cand_y + fh)
+                    edge_reward = 0.25 * min(margin_left, margin_right, margin_top, margin_bottom)
+                    cost = dist_sq - (edge_reward ** 2)
+                    if cost < min_cost:
+                        min_cost = cost
+                        best_pos = (cand_x, cand_y)
 
-def _extract_face_rgba(data: Dict) -> np.ndarray:
-    """
-    Extracts a rectangular 9:16-ish RGBA face crop WITH background (no background removal).
-    The crop is enlarged to include hair. Alpha is fully opaque (255).
-    """
-    img_bgr = data["rot_bgr"]
-    landmarks = data["rot_landmarks"]
-
-    oval_points = landmarks[FACE_OVAL_LANDMARK_INDICES].astype(np.int32)
-    x, y, bw, bh = cv2.boundingRect(oval_points)
-
-    left = int(round(x - bw * FACE_MARGIN_LEFT_RIGHT_RATIO))
-    right = int(round(x + bw + bw * FACE_MARGIN_LEFT_RIGHT_RATIO))
-    top = int(round(y - bh * FACE_MARGIN_TOP_RATIO))
-    bottom = int(round(y + bh + bh * FACE_MARGIN_BOTTOM_RATIO))
-
-    if right <= left: right = left + 1
-    if bottom <= top: bottom = top + 1
-
-    curr_w = right - left
-    curr_h = bottom - top
-    target_ratio = FACE_CROP_ASPECT
-
-    if curr_w / max(1, curr_h) > target_ratio:
-        new_h = int(np.ceil(curr_w / target_ratio))
-        extra = new_h - curr_h
-        extra_top = int(round(extra * FACE_EXTRA_HEIGHT_BIAS_TO_TOP))
-        extra_bottom = extra - extra_top
-        top -= extra_top
-        bottom += extra_bottom
-    else:
-        new_w = int(np.ceil(curr_h * target_ratio))
-        extra = new_w - curr_w
-        extra_left = extra // 2
-        extra_right = extra - extra_left
-        left -= extra_left
-        right += extra_right
-
-    face_bgr, _, _ = _pad_crop_with_offsets(img_bgr, left, top, right, bottom)
-    face_rgba = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2BGRA)
-    face_rgba[:, :, 3] = 255
-    return face_rgba
-
-def _fit_face_rgba_to_tiktok_bgr(face_rgba: np.ndarray) -> np.ndarray:
-    """
-    Fits an RGBA face crop onto a TikTok canvas WITHOUT changing aspect.
-    Background outside the fitted crop is filled by reflection (no blur).
-    Uses BORDER_REFLECT_101 to avoid a visible seam on the edge pixel.
-    Returns BGR canvas of size (TIKTOK_CANVAS_H, TIKTOK_CANVAS_W, 3).
-    """
-    h, w = face_rgba.shape[:2]
-    if h == 0 or w == 0:
-        return np.full((TIKTOK_CANVAS_H, TIKTOK_CANVAS_W, 3), TIKTOK_BG_FALLBACK_BGR, dtype=np.uint8)
-
-    scale = min(TIKTOK_CANVAS_W / float(w), TIKTOK_CANVAS_H / float(h))
-    new_w = max(1, int(round(w * scale)))
-    new_h = max(1, int(round(h * scale)))
-    interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_CUBIC
-    fg_rgba = cv2.resize(face_rgba, (new_w, new_h), interpolation=interp)
-
-    fg_bgr = cv2.cvtColor(fg_rgba, cv2.COLOR_BGRA2BGR)
-
-    pad_left = (TIKTOK_CANVAS_W - new_w) // 2
-    pad_right = TIKTOK_CANVAS_W - new_w - pad_left
-    pad_top = (TIKTOK_CANVAS_H - new_h) // 2
-    pad_bottom = TIKTOK_CANVAS_H - new_h - pad_top
-
-    canvas_bgr = cv2.copyMakeBorder(
-        fg_bgr,
-        top=pad_top, bottom=pad_bottom, left=pad_left, right=pad_right,
-        borderType=cv2.BORDER_REFLECT_101
-    )
-    return canvas_bgr
-
-# --- Head extraction (for vertical composite) ---
-
-def _extract_head_rgba(data: Dict) -> np.ndarray:
-    """
-    Extracts an RGBA head crop (entire head including hair) WITH original background.
-    Alpha is fully opaque (255). Uses rotated landmarks + segmentation alpha to find top-of-head.
-    """
-    img_bgr = data["rot_bgr"]
-    img_rgba = data["rot_rgba"]
-    landmarks = data["rot_landmarks"]
-    h, w = img_bgr.shape[:2]
-    alpha = img_rgba[:, :, 3]
-
-    p_left, p_right, p_chin, p_fore = landmarks[LEFT_FACE_OUTER], landmarks[RIGHT_FACE_OUTER], landmarks[CHIN_BOTTOM], landmarks[FOREHEAD_TOP]
-    face_w = float(abs(p_right[0] - p_left[0]))
-    center_x = float((p_right[0] + p_left[0]) * 0.5)
-
-    xL = int(max(0, min(w - 1, round(center_x - HEAD_TOP_WINDOW_EXPAND_X * face_w))))
-    xR = int(max(0, min(w,     round(center_x + HEAD_TOP_WINDOW_EXPAND_X * face_w))))
-    if xR <= xL: xR = min(w, xL + 1)
-
-    col_any = np.any(alpha[:, xL:xR] > HEAD_ALPHA_THRESH, axis=1)
-    ys = np.where(col_any)[0]
-    top_y_detected = int(ys.min()) if ys.size > 0 else int(max(0, round(min(p_fore[1], p_left[1], p_right[1]) - 0.35 * face_w)))
-
-    left = int(round(min(p_left[0], p_right[0]) - HEAD_MARGIN_SIDE_RATIO * face_w))
-    right = int(round(max(p_left[0], p_right[0]) + HEAD_MARGIN_SIDE_RATIO * face_w))
-    top = int(round(top_y_detected - HEAD_MARGIN_TOP_RATIO * face_w))
-    bottom = int(round(p_chin[1] + HEAD_MARGIN_BOTTOM_RATIO * face_w))
-
-    if right <= left: right = left + 1
-    if bottom <= top: bottom = top + 1
-
-    head_bgr, _, _ = _pad_crop_with_offsets(img_bgr, left, top, right, bottom)
-    head_rgba = cv2.cvtColor(head_bgr, cv2.COLOR_BGR2BGRA)
-    head_rgba[:, :, 3] = 255
-    return head_rgba
-
-# --- Faces-only vertical composites (now using head crops for the composite) ---
-
-def _create_faces_only_composite(p1_data: Dict, p2_data: Dict) -> np.ndarray:
-    """
-    Vertically stacks two HEAD crops (entire head incl. hair) on a TikTok-sized canvas (no aspect distortion).
-    """
-    head1, head2 = _extract_head_rgba(p1_data), _extract_head_rgba(p2_data)
-    canvas, canvas_w, canvas_h, gap_px, margin_top, margin_bottom = _build_tiktok_canvas(head1[:, :, :3])
-
-    widths, heights = [head1.shape[1], head2.shape[1]], [head1.shape[0], head2.shape[0]]
-    scales_to_full_width = [canvas_w / max(1.0, w) for w in widths]
-    h_at_full_width = [int(round(h * s)) for h, s in zip(heights, scales_to_full_width)]
-    total_h_full = sum(h_at_full_width) + gap_px + margin_top + margin_bottom
-
-    if total_h_full <= canvas_h:
-        tw, th = [canvas_w, canvas_w], h_at_full_width
-    else:
-        available = canvas_h - (margin_top + margin_bottom) - gap_px
-        global_scale = max(0.05, available / max(1, sum(h_at_full_width)))
-        tw = [max(1, int(round(canvas_w * global_scale))), max(1, int(round(canvas_w * global_scale)))]
-        th = [max(1, int(round(h * global_scale))) for h in h_at_full_width]
-
-    y = margin_top
-    for img, w_target, h_target in [(head1, tw[0], th[0]), (head2, tw[1], th[1])]:
-        interp = cv2.INTER_AREA if (w_target < img.shape[1] or h_target < img.shape[0]) else cv2.INTER_CUBIC
-        resized = cv2.resize(img, (w_target, h_target), interpolation=interp)
-        x = (canvas_w - w_target) // 2
-        canvas = paste_transparent(canvas, resized, x, y)
-        y += h_target + gap_px
-
-    return canvas
-
-def _create_three_faces_composite(p1_data: Dict, p2_data: Dict, p3_data: Dict) -> np.ndarray:
-    """
-    Stacks three HEAD crops (entire head incl. hair) vertically on a TikTok-sized canvas (no aspect distortion).
-    Parents (1 and 3) share the same width; the child (2) is CENTER_MIDDLE_SCALE_3 of that width.
-    """
-    head1_rgba, head2_rgba, head3_rgba = _extract_head_rgba(p1_data), _extract_head_rgba(p2_data), _extract_head_rgba(p3_data)
-    canvas_w, canvas_h = TIKTOK_CANVAS_W, TIKTOK_CANVAS_H
-    bg_color = _estimate_uniform_bg_color_from_borders(head1_rgba[:, :, :3]) if DYNAMIC_BG_FILL else TIKTOK_BG_FALLBACK_BGR
-    canvas = np.full((canvas_h, canvas_w, 3), bg_color, dtype=np.uint8)
-
-    gap, margin_top, margin_bottom = max(8, int(round(canvas_h * VERTICAL_GAP_RATIO))), max(12, int(round(canvas_h * VERTICAL_MARGIN_RATIO))), max(12, int(round(canvas_h * VERTICAL_MARGIN_RATIO)))
-    s = CENTER_MIDDLE_SCALE_3
-
-    def h_at_width(img_rgba: np.ndarray, target_w: int) -> int:
-        h, w = img_rgba.shape[:2]; return max(1, int(round(h * (target_w / float(max(1, w))))))
-
-    available_h, Wp = canvas_h - (margin_top + margin_bottom + 2 * gap), canvas_w
-    h1, h2, h3 = h_at_width(head1_rgba, Wp), h_at_width(head2_rgba, int(round(Wp * s))), h_at_width(head3_rgba, Wp)
-    if (h1 + h2 + h3) > available_h: Wp = max(1, int(round(Wp * (available_h / float(max(1, h1 + h2 + h3))))))
-    Wc = max(1, int(round(Wp * s)))
-
-    def resize_to_width(img_rgba: np.ndarray, target_w: int) -> np.ndarray:
-        h, w = img_rgba.shape[:2]; scale = target_w / float(max(1, w))
-        interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_CUBIC
-        return cv2.resize(img_rgba, (target_w, max(1, int(round(h * scale)))), interpolation=interp)
-
-    head1_r, head2_r, head3_r = resize_to_width(head1_rgba, Wp), resize_to_width(head2_rgba, Wc), resize_to_width(head3_rgba, Wp)
-    y = margin_top
-    for i, head in enumerate([head1_r, head2_r, head3_r]):
-        fh, fw = head.shape[:2]; x = (canvas_w - fw) // 2
-        canvas = paste_transparent(canvas, head, x, y)
-        y += fh
-        if i < 2: y += gap
-    return canvas
-
-# --- NEW PUBLIC FUNCTION ---
-def create_tiktok_portrait_from_bytes(image_bytes: bytes) -> Optional[bytes]:
-    """
-    Takes raw image bytes, runs the full preprocessing pipeline (face detection,
-    alignment, cropping, and fitting to a standard canvas), and returns the
-    processed image as JPEG bytes.
-
-    Args:
-        image_bytes: The raw bytes of the input image.
-
-    Returns:
-        The processed image as JPEG bytes, or None if processing fails.
-    """
-    try:
-        img_bgr = load_image_bgr_from_bytes(image_bytes)
-        if img_bgr is None:
-            logger.error("Failed to load image from bytes in portrait creation.")
+        if best_pos:
+            placed_items.append({'rect': (best_pos[0], best_pos[1], fw, fh), 'img': face})
+        else:
             return None
-        
-        person_data_raw = analyze_and_segment_person(img_bgr)
-        processed_person = _rotate_build_rgba_and_stats(person_data_raw)
-        face_rgba = _extract_face_rgba(processed_person)
-        portrait_bgr = _fit_face_rgba_to_tiktok_bgr(face_rgba)
-        
-        return convert_bgr_to_jpeg_bytes(portrait_bgr)
 
-    except Exception:
-        logger.exception("A critical error occurred in create_tiktok_portrait_from_bytes.")
-        return None
+    return placed_items
 
 
-# --- Main Function ---
+def _snap_layout_to_edges(layout: List[Dict], canvas_w: int, canvas_h: int) -> None:
+    if not layout:
+        return
+    min_y = min(item['rect'][1] for item in layout)
+    for item in layout:
+        x, y, w, h = item['rect']
+        if y == min_y:
+            item['rect'] = (x, 0, w, h)
+    max_bottom = max(item['rect'][1] + item['rect'][3] for item in layout)
+    for item in layout:
+        x, y, w, h = item['rect']
+        if y + h == max_bottom:
+            item['rect'] = (x, canvas_h - h, w, h)
+    min_x = min(item['rect'][0] for item in layout)
+    for item in layout:
+        x, y, w, h = item['rect']
+        if x == min_x:
+            item['rect'] = (0, y, w, h)
+    max_right = max(item['rect'][0] + item['rect'][2] for item in layout)
+    for item in layout:
+        x, y, w, h = item['rect']
+        if x + w == max_right:
+            item['rect'] = (canvas_w - w, y, w, h)
 
-def create_composite_image(*p_bytes_list: bytes) -> Tuple[Optional[bytes], Optional[bytes], Optional[bytes], Optional[bytes]]:
+def _ensure_edges_have_tiles(layout: List[Dict], canvas_w: int, canvas_h: int) -> None:
+    if not layout:
+        return
+
+    def count_touching(edge):
+        c = 0
+        for item in layout:
+            x, y, w, h = item['rect']
+            if edge == 'L' and x == 0: c += 1
+            if edge == 'R' and x + w == canvas_w: c += 1
+            if edge == 'T' and y == 0: c += 1
+            if edge == 'B' and y + h == canvas_h: c += 1
+        return c
+
+    for edge in ['L','R','T','B']:
+        while count_touching(edge) < REQUIRED_TILES_PER_EDGE:
+            best, best_gap = None, 1e9
+            for item in layout:
+                x, y, w, h = item['rect']
+                if edge == 'L':
+                    gap = x; new_rect = (0, y, w, h)
+                elif edge == 'R':
+                    gap = canvas_w - (x + w); new_rect = (canvas_w - w, y, w, h)
+                elif edge == 'T':
+                    gap = y; new_rect = (x, 0, w, h)
+                else:
+                    gap = canvas_h - (y + h); new_rect = (x, canvas_h - h, w, h)
+                if gap < best_gap:
+                    best_gap, best = gap, (item, new_rect)
+            if best is None:
+                break
+            best[0]['rect'] = best[1]
+
+# --------------- Paste tiles ---------------
+
+def _irregular_alpha(h: int, w: int, feather_px: int) -> np.ndarray:
+    alpha = np.ones((h, w), dtype=np.float32)
+    if feather_px <= 0:
+        return alpha
+    fy = min(feather_px, h // 2)
+    fx = min(feather_px, w // 2)
+    ramp_x = np.linspace(0, 1, fx, dtype=np.float32)
+    ramp_y = np.linspace(0, 1, fy, dtype=np.float32)
+    alpha[:, :fx] *= ramp_x
+    alpha[:, -fx:] *= ramp_x[::-1]
+    alpha[:fy, :] *= ramp_y[:, None]
+    alpha[-fy:, :] *= ramp_y[::-1][:, None]
+
+    if FEATHER_NOISE_STRENGTH > 0:
+        small = np.random.rand(max(8, h//16), max(8, w//16)).astype(np.float32)
+        noise = cv2.resize(cv2.GaussianBlur(small, (0,0), 1.0), (w, h), interpolation=cv2.INTER_CUBIC)
+        noise = cv2.GaussianBlur(noise, (0,0), 2.0)
+        noise = 1.0 - FEATHER_NOISE_STRENGTH + FEATHER_NOISE_STRENGTH * noise
+        alpha *= noise
+
+    return np.clip(alpha, 0.0, 1.0)
+
+def _harden_edges_touching_canvas(alpha: np.ndarray,
+                                  touch_left: bool, touch_right: bool,
+                                  touch_top: bool, touch_bottom: bool,
+                                  feather_px: int) -> np.ndarray:
+    """Disable feathering where tile touches canvas edge: true full-bleed."""
+    h, w = alpha.shape
+    px = min(feather_px, max(1, min(h, w)//4))
+    if touch_left:
+        alpha[:, :px] = 1.0
+    if touch_right:
+        alpha[:, w-px:] = 1.0
+    if touch_top:
+        alpha[:px, :] = 1.0
+    if touch_bottom:
+        alpha[h-px:, :] = 1.0
+    return alpha
+
+# --------------- Core pack ---------------
+
+def _pack_faces_with_scaling(
+    faces: List[np.ndarray],
+    canvas_w: int,
+    canvas_h: int,
+    bg_color_bgr: Tuple[int, int, int]
+) -> np.ndarray:
     """
-    Builds vertical composites from two or three source photos.
-    Returns (all on TikTok canvas):
-        1) vertical composite of 2 or 3 people,
-        2) portrait of person #1,
-        3) portrait of person #2,
-        4) portrait of middle person if present, else None.
-    On any failure returns (None, None, None, None).
+    Binary search the scale + greedy pack; paste with irregular feathered edges.
+    Background = base (gradient+noise) + blurred, desaturated content underlay.
     """
-    if not (2 <= len(p_bytes_list) <= 3):
-        logger.error("Unsupported number of images for composite", count=len(p_bytes_list))
-        return None, None, None, None
+    base_bg = _make_base_bg(canvas_h, canvas_w, bg_color_bgr)
+    if not faces:
+        return base_bg
 
-    try:
-        p_bgr_list = [load_image_bgr_from_bytes(b) for b in p_bytes_list]
-        if any(img is None for img in p_bgr_list): return None, None, None, None
+    low_scale = 0.1
+    total_face_area = sum(f.shape[0] * f.shape[1] for f in faces)
+    canvas_area = canvas_w * canvas_h
+    high_scale = (math.sqrt(canvas_area / total_face_area) * 1.5) if total_face_area > 0 else low_scale
 
-        person_data_raw = [analyze_and_segment_person(bgr) for bgr in p_bgr_list]
-        scales = [clamp(TARGET_FACE_METRIC_PX / (face_scale_metric(d) or TARGET_FACE_METRIC_PX), MIN_SCALE, MAX_SCALE) for d in person_data_raw]
-        scaled_bgrs = [_resize(bgr, scale) for bgr, scale in zip(p_bgr_list, scales)]
-        scaled_data = [analyze_and_segment_person(bgr) for bgr in scaled_bgrs]
-        processed_people = [_rotate_build_rgba_and_stats(d) for d in scaled_data]
-
-        num_people = len(processed_people)
-        if num_people == 3:
-            processed_people = [processed_people[0], processed_people[2], processed_people[1]]
-
-        final_image_tiktok_bgr = _create_faces_only_composite(processed_people[0], processed_people[1]) if num_people == 2 else _create_three_faces_composite(processed_people[0], processed_people[1], processed_people[2])
-        vertical_composite_jpeg = convert_bgr_to_jpeg_bytes(final_image_tiktok_bgr)
-
-        faces_rgba = [_extract_face_rgba(pp) for pp in processed_people]
-        p1_bgr, p2_bgr = _fit_face_rgba_to_tiktok_bgr(faces_rgba[0]), _fit_face_rgba_to_tiktok_bgr(faces_rgba[-1])
-        p1_portrait_jpeg, p2_portrait_jpeg = convert_bgr_to_jpeg_bytes(p1_bgr), convert_bgr_to_jpeg_bytes(p2_bgr)
-
-        child_portrait_jpeg: Optional[bytes] = None
-        if num_people == 3:
-            child_bgr = _fit_face_rgba_to_tiktok_bgr(faces_rgba[1])
-            child_portrait_jpeg = convert_bgr_to_jpeg_bytes(child_bgr)
-
-        return vertical_composite_jpeg, p1_portrait_jpeg, p2_portrait_jpeg, child_portrait_jpeg
-
-    except Exception:
-        logger.exception("A critical error occurred in create_composite_image.")
-        return None, None, None, None
-
-def create_multiple_composite_images(
-    mom_bytes_list: List[bytes],
-    dad_bytes_list: List[bytes],
-    child_bytes: bytes
-) -> List[bytes]:
-    """
-    Creates multiple composite images by combining different parent and child photos.
-    """
-    composites_bytes: List[bytes] = []
-    image_combinations = zip(mom_bytes_list, dad_bytes_list)
-
-    for mom_b, dad_b in image_combinations:
+    best_layout = None
+    scaled_at_best = None
+    for _ in range(10):
+        if high_scale - low_scale < 0.01:
+            break
+        mid_scale = (low_scale + high_scale) / 2.0
+        scaled_faces = []
         try:
-            composite, _, _, _ = create_composite_image(mom_b, dad_b, child_bytes)
-            if composite:
-                composites_bytes.append(composite)
-        except Exception as e:
-            logger.warning("Failed to create one of the composite images in batch", exc_info=e)
+            for f in faces:
+                h, w = f.shape[:2]
+                new_w, new_h = int(w * mid_scale), int(h * mid_scale)
+                if new_w > 0 and new_h > 0:
+                    scaled_faces.append(cv2.resize(f, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4))
+        except cv2.error:
+            scaled_faces = []
+
+        if not scaled_faces:
+            high_scale = mid_scale
             continue
-            
-    if not composites_bytes:
-        logger.error("Failed to create any composite images from the provided lists.")
-    return composites_bytes
 
-def create_horizontal_collage(image_bytes_list: List[bytes]) -> Optional[bytes]:
+        layout = _attempt_greedy_pack(scaled_faces, canvas_w, canvas_h)
+        if layout is not None:
+            best_layout = layout
+            scaled_at_best = scaled_faces
+            low_scale = mid_scale
+        else:
+            high_scale = mid_scale
+
+    if not best_layout:
+        return base_bg
+
+    _snap_layout_to_edges(best_layout, canvas_w, canvas_h)
+    _ensure_edges_have_tiles(best_layout, canvas_w, canvas_h)
+
+    # --- Content underlay from largest tile to kill "flat bars" priors ---
+    largest_tile = max(scaled_at_best, key=lambda im: im.shape[0]*im.shape[1])
+    underlay = _make_underlay_from_tile(largest_tile, canvas_w, canvas_h)
+    canvas = cv2.addWeighted(underlay, UNDERLAY_OPACITY, base_bg, 1.0 - UNDERLAY_OPACITY, 0.0)
+
+    # Prepare mask of remaining background (for final tiny noise)
+    bg_mask = np.ones((canvas_h, canvas_w), dtype=np.uint8) * 255
+
+    for item in best_layout:
+        x, y, w, h = item['rect']
+        tile = item['img']
+
+        alpha = _irregular_alpha(h, w, FEATHER_PX)
+        touch_left = (x == 0)
+        touch_right = (x + w == canvas_w)
+        touch_top = (y == 0)
+        touch_bottom = (y + h == canvas_h)
+        alpha = _harden_edges_touching_canvas(alpha, touch_left, touch_right, touch_top, touch_bottom, FEATHER_PX)
+
+        roi = canvas[y:y+h, x:x+w].astype(np.float32)
+        tile_f = tile.astype(np.float32)
+        alpha_3 = np.dstack([alpha, alpha, alpha])
+        out = tile_f * alpha_3 + roi * (1.0 - alpha_3)
+        canvas[y:y+h, x:x+w] = np.clip(out, 0, 255).astype(np.uint8)
+
+        bg_mask[y:y+h, x:x+w][(alpha * 255).astype(np.uint8) > 0] = 0
+
+    if BG_NOISE_STD > 0:
+        noise = np.random.normal(0.0, BG_NOISE_STD, (canvas_h, canvas_w, 3)).astype(np.float32)
+        noise *= (bg_mask[:, :, None] > 0).astype(np.float32)
+        canvas = np.clip(canvas.astype(np.float32) + noise, 0, 255).astype(np.uint8)
+
+    return canvas
+
+# --------------- Public API ---------------
+
+def create_portrait_collage_from_bytes(image_bytes_list: List[bytes]) -> Optional[bytes]:
     """
-    Creates a horizontal collage from a list of image bytes for debugging purposes.
-
-    Args:
-        image_bytes_list: A list of image bytes to be stitched together.
-
-    Returns:
-        The collage as JPEG bytes, or None if the process fails.
+    Build a dense portrait collage that visually suggests full-bleed composition.
+    Keeps the canvas size strictly 1440x1280.
     """
     if not image_bytes_list:
         return None
-
-    images_bgr = []
-    for b in image_bytes_list:
-        img = load_image_bgr_from_bytes(b)
-        if img is not None:
-            images_bgr.append(img)
-
-    if not images_bgr:
-        logger.warning("Could not load any images to create a collage.")
-        return None
-
-    # Resize all images to the smallest height to stitch them
-    min_height = min(img.shape[0] for img in images_bgr)
-    
-    resized_images = []
-    for img in images_bgr:
-        h, w = img.shape[:2]
-        if h == min_height:
-            resized_images.append(img)
-            continue
-        
-        scale = min_height / h
-        new_w = int(w * scale)
-        resized = cv2.resize(img, (new_w, min_height), interpolation=cv2.INTER_AREA)
-        resized_images.append(resized)
-    
     try:
-        collage_bgr = cv2.hconcat(resized_images)
-        return convert_bgr_to_jpeg_bytes(collage_bgr)
+        faces = _extract_and_prepare_faces(image_bytes_list, target_face_width=300)
+        if not faces:
+            logger.warning("No faces could be prepared from the provided images.")
+            return None
+        final_canvas = _pack_faces_with_scaling(faces, TIKTOK_CANVAS_W, TIKTOK_CANVAS_H, TIKTOK_BG_FALLBACK_BGR)
+        return convert_bgr_to_jpeg_bytes(final_canvas)
     except Exception:
-        logger.exception("Failed to create horizontal collage with cv2.hconcat.")
+        logger.exception("A critical error occurred in create_portrait_collage_from_bytes.")
         return None
 
-def create_vertical_collage(image_bytes_list: List[bytes]) -> Optional[bytes]:
+
+def split_and_stack_image_bytes(image_bytes: bytes) -> tuple[bytes | None, bytes | None]:
     """
-    Creates a vertical collage from a list of image bytes for debugging purposes.
-    Images are aligned by width.
-
-    Args:
-        image_bytes_list: A list of image bytes to be stitched together.
-
-    Returns:
-        The collage as JPEG bytes, or None if the process fails.
-    """
-    if not image_bytes_list:
-        return None
-
-    images_bgr = [load_image_bgr_from_bytes(b) for b in image_bytes_list if b is not None]
-    if not images_bgr:
-        logger.warning("Could not load any images to create a vertical collage.")
-        return None
-
-    # Resize all images to the narrowest width to stack them vertically
-    min_width = min(img.shape[1] for img in images_bgr)
-    
-    resized_images = []
-    for img in images_bgr:
-        h, w = img.shape[:2]
-        if w == min_width:
-            resized_images.append(img)
-            continue
-        
-        scale = min_width / w
-        new_h = int(h * scale)
-        resized = cv2.resize(img, (min_width, new_h), interpolation=cv2.INTER_AREA)
-        resized_images.append(resized)
-    
-    try:
-        # Use vconcat for vertical stacking
-        collage_bgr = cv2.vconcat(resized_images)
-        return convert_bgr_to_jpeg_bytes(collage_bgr)
-    except Exception:
-        logger.exception("Failed to create vertical collage with cv2.vconcat.")
-        return None
-
-def split_and_stack_image_bytes(
-    image_bytes: bytes,
-) -> tuple[bytes | None, bytes | None]:
-    """
-    Splits a horizontally concatenated image into two halves and stacks them vertically.
-
-    Args:
-        image_bytes: The input image bytes, assumed to be two images side-by-side.
-
-    Returns:
-        A tuple containing (original_horizontal_bytes, new_vertical_bytes).
-        Returns (None, None) on failure.
+    Split a horizontally concatenated image (front + side view) into two separate images.
+    No letterbox removal here: generation must be full-bleed by prompt & collage.
     """
     try:
         img_bgr = load_image_bgr_from_bytes(image_bytes)
         if img_bgr is None:
-            logger.error("Failed to load image for splitting and stacking.")
             return None, None
-
         h, w = img_bgr.shape[:2]
         midpoint = w // 2
-
-        # Split the image into left and right halves
-        left_half = img_bgr[:, :midpoint]
-        right_half = img_bgr[:, midpoint:]
-
-        # To stack them vertically, they must have the same width.
-        # We'll resize the right half to match the left half's width.
-        # This is a safe assumption for the visual enhancer's output.
-        if left_half.shape[1] != right_half.shape[1]:
-            target_width = left_half.shape[1]
-            right_h, right_w = right_half.shape[:2]
-            scale = target_width / right_w
-            target_height = int(right_h * scale)
-            right_half = cv2.resize(
-                right_half, (target_width, target_height), interpolation=cv2.INTER_AREA
-            )
-
-        # Stack the two halves vertically
-        vertical_stack_bgr = cv2.vconcat([left_half, right_half])
-
-        # Encode the new vertical image back to bytes
-        vertical_bytes = convert_bgr_to_jpeg_bytes(vertical_stack_bgr)
-
-        # Return both the original and the new stacked version
-        return image_bytes, vertical_bytes
-
+        front_view = img_bgr[:, :midpoint]
+        side_view = img_bgr[:, midpoint:]
+        return convert_bgr_to_jpeg_bytes(front_view), convert_bgr_to_jpeg_bytes(side_view)
     except Exception:
-        logger.exception("Failed to split and stack image.")
-        # Return the original bytes as a fallback for the horizontal version
-        return image_bytes, None
-    
-
-def _get_face_iod(image_bgr: np.ndarray) -> Optional[float]:
-    """Helper to analyze an image and return the interocular distance (IOD)."""
-    try:
-        data = analyze_and_segment_person(image_bgr)
-        h, w = image_bgr.shape[:2]
-        lm = _lm_to_px(data["face_landmarks"], w, h)
-        return float(np.linalg.norm(lm[LEFT_EYE_OUTER] - lm[RIGHT_EYE_OUTER]))
-    except Exception:
-        logger.warning("Could not detect face or landmarks to calculate IOD.")
-        return None
-
-
-def create_family_composite_for_model(
-    mom_visual_bytes: bytes, dad_visual_bytes: bytes, child_bytes: bytes
-) -> Optional[bytes]:
-    """
-    Creates a normalized composite image for the family photo generation model.
-    It normalizes all face sizes to a fixed pixel value, stacks them vertically
-    (Mom, Child, Dad), and places the result on a black TikTok canvas.
-
-    Args:
-        mom_visual_bytes: The horizontal visual representation of the mother.
-        dad_visual_bytes: The horizontal visual representation of the father.
-        child_bytes: The generated image of the child.
-
-    Returns:
-        The final composite image as JPEG bytes, or None on failure.
-    """
-    try:
-        # 1. Load all images
-        mom_visual_bgr = load_image_bgr_from_bytes(mom_visual_bytes)
-        dad_visual_bgr = load_image_bgr_from_bytes(dad_visual_bytes)
-        child_bgr = load_image_bgr_from_bytes(child_bytes)
-
-        if any(img is None for img in [mom_visual_bgr, dad_visual_bgr, child_bgr]):
-            logger.error("Failed to load one or more images for family composite.")
-            return None
-
-        # 2. Crop frontal views of parents for landmark analysis
-        mom_frontal_bgr = mom_visual_bgr[:, : mom_visual_bgr.shape[1] // 2]
-        dad_frontal_bgr = dad_visual_bgr[:, : dad_visual_bgr.shape[1] // 2]
-
-        # 3. Calculate Interocular Distance (IOD) for all three faces
-        mom_iod = _get_face_iod(mom_frontal_bgr)
-        dad_iod = _get_face_iod(dad_frontal_bgr)
-        child_iod = _get_face_iod(child_bgr)
-
-        if not all([mom_iod, dad_iod, child_iod]):
-            logger.error("Failed to get IOD for all faces, cannot normalize.")
-            return None
-        
-        # 4. Calculate scaling factors for EACH image to match the absolute target
-        target_iod = COMPOSITE_TARGET_IOD_PX
-        mom_scale = target_iod / mom_iod if mom_iod > 0 else 1.0
-        dad_scale = target_iod / dad_iod if dad_iod > 0 else 1.0
-        child_scale = target_iod / child_iod if child_iod > 0 else 1.0
-        
-        mom_visual_norm = _resize(mom_visual_bgr, mom_scale)
-        dad_visual_norm = _resize(dad_visual_bgr, dad_scale)
-        child_norm = _resize(child_bgr, child_scale)
-        
-        # 5. Bring all normalized images to a common width for stacking
-        # The narrowest of the three determines the final width of the stack.
-        min_width = min(mom_visual_norm.shape[1], dad_visual_norm.shape[1], child_norm.shape[1])
-
-        def resize_to_width(img: np.ndarray, width: int) -> np.ndarray:
-            if img.shape[1] == width:
-                return img
-            h, w = img.shape[:2]
-            scale = width / w
-            target_h = int(h * scale)
-            return cv2.resize(img, (width, target_h), interpolation=cv2.INTER_AREA)
-
-        mom_final = resize_to_width(mom_visual_norm, min_width)
-        dad_final = resize_to_width(dad_visual_norm, min_width)
-        child_final = resize_to_width(child_norm, min_width)
-
-        # 6. Vertically stack in order: Mom, Child, Dad
-        full_stack_bgr = cv2.vconcat([mom_final, child_final, dad_final])
-
-        # 7. Create a black canvas and fit the stack onto it
-        canvas = np.full((TIKTOK_CANVAS_H, TIKTOK_CANVAS_W, 3), TIKTOK_BG_FALLBACK_BGR, dtype=np.uint8)
-        
-        h, w = full_stack_bgr.shape[:2]
-        scale = min(TIKTOK_CANVAS_W / w, TIKTOK_CANVAS_H / h) if w > 0 and h > 0 else 0
-        
-        if scale > 0:
-            final_w = int(w * scale)
-            final_h = int(h * scale)
-            
-            resized_stack = cv2.resize(full_stack_bgr, (final_w, final_h), interpolation=cv2.INTER_AREA)
-            
-            x_offset = (TIKTOK_CANVAS_W - final_w) // 2
-            y_offset = (TIKTOK_CANVAS_H - final_h) // 2
-            
-            canvas[y_offset:y_offset+final_h, x_offset:x_offset+final_w] = resized_stack
-
-        return convert_bgr_to_jpeg_bytes(canvas)
-
-    except Exception:
-        logger.exception("Failed to create normalized family composite for model.")
-        return None
+        logger.exception("Failed to split image into front and side views.")
+        return None, None
