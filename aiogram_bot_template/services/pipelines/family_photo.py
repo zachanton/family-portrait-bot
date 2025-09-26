@@ -2,7 +2,7 @@
 import asyncio
 import uuid
 from aiogram.utils.i18n import gettext as _
-from aiogram_bot_template.services import image_cache
+from aiogram_bot_template.services import image_cache, photo_processing
 from aiogram_bot_template.services.enhancers import style_enhancer
 from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.services.prompting.factory import get_prompt_strategy
@@ -57,15 +57,19 @@ class FamilyPhotoPipeline(BasePipeline):
         await image_cache.cache_image_bytes(mother_horizontal_uid, mother_horizontal_bytes, "image/jpeg", self.cache_pool)
         mother_horizontal_url = image_cache.get_cached_image_proxy_url(mother_horizontal_uid)
 
-        request_id_str = self.gen_data.get('request_id', uuid.uuid4().hex)
         father_horizontal_uid = f"father_horizontal_{request_id_str}"
         await image_cache.cache_image_bytes(father_horizontal_uid, father_horizontal_bytes, "image/jpeg", self.cache_pool)
         father_horizontal_url = image_cache.get_cached_image_proxy_url(father_horizontal_uid)
 
-        request_id_str = self.gen_data.get('request_id', uuid.uuid4().hex)
         child_uid = f"child_{request_id_str}"
         await image_cache.cache_image_bytes(child_uid, child_bytes, "image/jpeg", self.cache_pool)
         child_url = image_cache.get_cached_image_proxy_url(child_uid)
+
+
+        vertical_stack_bytes = photo_processing.stack_three_images(mother_horizontal_bytes, child_bytes, father_horizontal_bytes)
+        vertical_stack_uid = f"vertical_stack_{request_id_str}"
+        await image_cache.cache_image_bytes(vertical_stack_uid, vertical_stack_bytes, "image/jpeg", self.cache_pool)
+        vertical_stack_url = image_cache.get_cached_image_proxy_url(vertical_stack_uid)
 
         quality_level = self.gen_data.get("quality_level", 1)
         generation_type = self.gen_data.get("type", GenerationType.FAMILY_PHOTO.value)
@@ -85,7 +89,7 @@ class FamilyPhotoPipeline(BasePipeline):
 
         request_payload = {
             "model": tier_config.model,
-            "image_urls": [ mother_horizontal_url, father_horizontal_url, child_url ],
+            "image_urls": [ vertical_stack_url ],
             "generation_type": GenerationType.FAMILY_PHOTO.value,
             **prompt_payload,
         }
@@ -93,7 +97,7 @@ class FamilyPhotoPipeline(BasePipeline):
         caption = None
         
         metadata = { 
-            "processed_uids": [ mother_horizontal_uid, father_horizontal_uid, child_uid ],
+            "processed_uids": [ vertical_stack_uid ],
             "photoshoot_plan": photoshoot_plan.shots if photoshoot_plan else None
         }
 

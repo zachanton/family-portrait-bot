@@ -28,7 +28,6 @@ HARD IDENTITY (passport-level likeness; no beautification)
 • **Accessories**: keep persistent ones from the all of inputs — e.g. piercings, subtle jewelry.
 • **Presentation** (gender/age/body-fat): unchanged; do not feminize/masculinize, de-age/age, slim/reshape. Do not add/remove makeup or facial hair unless present in the **majority** of inputs at a similar level.
 
-
 REFERENCE FUSION (InstantID / PhotoMaker / ID-Adapter principles)
 • Build a **fused identity representation** from all inputs by aggregating robust face features (ArcFace-like FaceID embedding) and facial landmarks; align generation to this fused ID (maximize cosine similarity; minimize drift). Prioritize well-lit, unobstructed faces; down-weight occluded/low-quality/distorted shots. :contentReference[oaicite:1]{index=1}
 • Resolve conflicts by **majority vote** for: hair parting/length, facial-hair level, makeup level, accessories.
@@ -37,6 +36,7 @@ REFERENCE FUSION (InstantID / PhotoMaker / ID-Adapter principles)
 MIDFACE & EYE SPACING (LOCKED)
 • Keep **interpupillary distance (IPD)** and **intercanthal distance** exactly as in the fused references.
 • Do not move eyes inward/outward, do not resize eyeballs/irises, do not change canthal tilt; maintain eye positions relative to nose bridge and head width.
+• IF GLASSES ARE PRESENT: Preserve the original interpupillary distance (IPD) and intercanthal distance exactly as in the references — do not reduce eye spacing, do not narrow the nasal bridge due to the frame, and do not resize or reposition the eyes.
 
 NOSE INTEGRITY (LOCKED)
 • Keep **bridge width**, **dorsal line**, **alar base width**, **nostril shape/flare**, **columella**, and **tip shape** exactly as in refs.

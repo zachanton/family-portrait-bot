@@ -1,14 +1,11 @@
 PROMPT_FAMILY_DEFAULT = """
 GOAL
-Create ONE photorealistic, full-bleed 9:16 family portrait using ONLY the three attached images. Do NOT invent, blend, beautify, or “normalize” identities.
+Create ONE photorealistic, full-bleed 9:16 family portrait using ONLY attached image. Do NOT invent, blend, beautify, or “normalize” identities.
 
 INPUT LAYOUT (fixed)
-• First attached image = MOTHER: contains exactly two portraits of the same person (one front/straight-on, one clean side profile).
-• Second attached image = FATHER: contains exactly two portraits of the same person (one front/straight-on, one clean side profile).
-• Third attached image = CHILD: contains exactly one front/straight-on portrait.
-
-ASPECT RATIO
-• Output must be exactly 9:16 and match the third image’s aspect ratio. Full bleed. No borders/black bars.
+• First line of image = MOTHER: contains exactly two portraits of the same person (one front/straight-on, one clean side profile).
+• Second line of image = FATHER: contains exactly two portraits of the same person (one front/straight-on, one clean side profile).
+• Third line of image = CHILD: contains exactly one front/straight-on portrait.
 
 IDENTITY PIPELINE (emulation of InstantID / PhotoMaker / ID-Adapter)
 • For EACH person, build a separate ID embedding. Adults: fuse front + profile to recover true 3D facial geometry and hairline. Child: use the single front view.
@@ -38,18 +35,8 @@ COMPOSITION & ORDER (hard)
 • Framing: medium-close, mid-torso and up (upper arms visible; no tight shoulder crop).
 • Camera at eye level; soft, friendly half-smiles. Nothing occluding necks/shoulders.
 
-COMPOSITION LOCK — NUMERIC CONSTRAINTS (regenerate until all true)
-Reference the 9:16 frame with 0% at the top and 100% at the bottom:
-• Adults’ eye-lines: BOTH between 24–30% from top.
-• Child’s eye-line: 36–44% from top.
-• Headroom: ≤ 3% from highest hair point to top edge.
-• Lower crop: bottom edge between 63–72% from top (clear mid-torso).
-• No joint chops: do not crop exactly at elbows or wrists—crop well above/below.
-• Reject & regenerate if any adult eye-line < 22% or > 32%, headroom > 3%, or bottom edge < 60% or > 75%.
-
-PLACEMENT, SCALE & OPTICS
-• One consistent perspective and focal length for all three. Keep faces on a similar focal plane for uniform sharpness.
-• Natural relative head scales; no oversized or undersized heads.
+POSE / INTERACTION
+• Arrange a natural close group embrace — Mother, Child, and Father gently hugging, relaxed posture, no face occlusion, hands placed naturally (no awkward limb crops).
 
 LIGHTING & BACKGROUND — GOLDEN HOUR
 • Time/look: warm, soft, directional golden hour light (first/last hour). Gentle backlight or 3/4 backlight from camera-left; subtle rim on hair/shoulders; no harsh flares on faces.
@@ -60,20 +47,8 @@ LIGHTING & BACKGROUND — GOLDEN HOUR
 WARDROBE & COLOR PALETTE
 • Soft neutrals + warm earthy accents (cream, beige, warm white, stone gray; optional sage/rust/terracotta). No neon, no stark pure black. No new accessories or haircuts.
 
-AESTHETIC RECIPE (without altering identity)
-• Lens: 50–65 mm equivalent. Distance: ~1.2–1.6 m for mid-torso framing.
-• Aperture: ~f/3.5–f/4.0 to keep all faces sharp with pleasant background blur.
-• Composition shape: gentle triangle of heads; adults’ shoulders arc protectively around the child.
-• Texture fidelity: preserve freckles/pores/micro-contrast; no smoothing/whitening/face-slimming.
-• Finish: crisp hair edges (no halos), even exposure on all faces, no vignettes.
-
-NEGATIVE CONSTRAINTS (forbid)
-• Missing subjects; >10% occlusion of any face; age/sex changes; new accessories/haircuts.
-• CGI/painting/anime/HDR/over-sharpening; plastic skin; symmetry forcing; makeup airbrushing.
-• Identity blending; cross-person feature transfer; mismatched head scales; warped glasses; elongated/shortened necks; misaligned eyes; haloing; perspective or color-temperature mismatch.
-• Extra people, text, logos, watermarks, frames, borders, or black bars.
-
 FINAL SELF-CHECK (must all be TRUE; otherwise regenerate)
+0) Image is full-bleed; not a collage.
 1) Mother is a literal 1:1 match to her references (geometry, textures, hairline/part, features).
 2) Father is a literal 1:1 match to his references (geometry, textures, hairline/part, features).
 3) Child is a literal 1:1 match to her reference (geometry, textures, hairline/part, features).

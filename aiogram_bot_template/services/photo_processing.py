@@ -474,3 +474,139 @@ def split_and_stack_image_bytes(image_bytes: bytes) -> tuple[bytes | None, bytes
     except Exception:
         logger.exception("Failed to split image into front and side views.")
         return None, None
+
+
+def _analyze_image_safe_zone(img: np.ndarray) -> Dict[str, int]:
+    """
+    Анализирует изображение, находит лица и возвращает "безопасную" вертикальную зону.
+    """
+    h, w, _ = img.shape
+    
+    # Запасной вариант, если лицо не будет найдено
+    safe_zone = {'y_start': int(h * 0.1), 'y_end': int(h * 0.9)}
+
+    with mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5) as face_detection:
+        results = face_detection.process(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        if results.detections:
+            all_y_coords = []
+            for detection in results.detections:
+                box = detection.location_data.relative_bounding_box
+                all_y_coords.append(int(box.ymin * h))
+                all_y_coords.append(int((box.ymin + box.height) * h))
+            
+            y_min_head = min(all_y_coords)
+            y_max_head = max(all_y_coords)
+            
+            # Добавляем отступы для эстетики
+            head_height = y_max_head - y_min_head
+            safe_zone['y_start'] = max(0, y_min_head - int(head_height * 0.5))
+            safe_zone['y_end'] = min(h, y_max_head + int(head_height * 0.3))
+
+    safe_zone['height'] = safe_zone['y_end'] - safe_zone['y_start']
+    safe_zone['headroom'] = safe_zone['y_start']  # Пространство сверху, которое можно обрезать
+    safe_zone['chinroom'] = h - safe_zone['y_end'] # Пространство снизу
+    return safe_zone
+
+def _crop_to_center_face(img: np.ndarray, target_h: int) -> np.ndarray:
+    """
+    Обрезает изображение до target_h, стараясь сохранить лицо в центре.
+    """
+    original_h, _, _ = img.shape
+    if original_h <= target_h:
+        return img
+
+    safe_zone = _analyze_image_safe_zone(img)
+    face_center_y = safe_zone['y_start'] + safe_zone['height'] / 2
+
+    crop_y_start = int(face_center_y - target_h / 2)
+    crop_y_start = max(0, min(crop_y_start, original_h - target_h))
+    
+    return img[crop_y_start : crop_y_start + target_h, :]
+
+
+def stack_three_images(
+    img_top_bytes: bytes,
+    img_middle_bytes: bytes,
+    img_bottom_bytes: bytes,
+) -> bytes:
+    """
+    Интеллектуально объединяет изображения матери, отца и ребенка в один
+    вертикальный портрет 9:16 с динамическим распределением высоты.
+    """
+    img_mom = load_image_bgr_from_bytes(img_top_bytes)
+    img_dad = load_image_bgr_from_bytes(img_bottom_bytes)
+    img_child = load_image_bgr_from_bytes(img_middle_bytes)
+
+    if img_mom is None or img_dad is None or img_child is None:
+        raise ValueError("Одно или несколько изображений не удалось загрузить.")
+
+    # 1. Приведение к единой ширине
+    target_width = min(img_mom.shape[1], img_dad.shape[1])
+    
+    def resize_to_width(img, new_width):
+        h, w, _ = img.shape
+        scale = new_width / w
+        return cv2.resize(img, (new_width, int(h * scale)), interpolation=cv2.INTER_AREA)
+
+    mom_resized = resize_to_width(img_mom, target_width)
+    dad_resized = resize_to_width(img_dad, target_width)
+    child_resized = resize_to_width(img_child, target_width // 2)
+    
+    # 2. Анализ безопасных зон на масштабированных изображениях
+    safe_mom = _analyze_image_safe_zone(mom_resized)
+    safe_dad = _analyze_image_safe_zone(dad_resized)
+    safe_child = _analyze_image_safe_zone(child_resized)
+
+    # 3. Динамическое распределение высоты
+    final_width = target_width
+    final_height = int(final_width * 16 / 9)
+
+    total_safe_height = safe_mom['height'] + safe_dad['height'] + safe_child['height']
+    
+    # Общее пространство, доступное для обрезки
+    total_croppable_space = (safe_mom['headroom'] + safe_mom['chinroom'] + 
+                             safe_dad['headroom'] + safe_dad['chinroom'] + 
+                             safe_child['headroom'] + safe_child['chinroom'])
+    
+    # Пространство, которое нужно распределить под фон
+    extra_height_to_distribute = final_height - total_safe_height
+
+    if extra_height_to_distribute < 0:
+        # Критический случай: головы не помещаются. Сжимаем все пропорционально.
+        scale = final_height / total_safe_height
+        h_mom = int(safe_mom['height'] * scale)
+        h_dad = int(safe_dad['height'] * scale)
+        h_child = final_height - h_mom - h_dad
+    else:
+        # Распределяем дополнительное пространство пропорционально доступному для обрезки фону
+        def get_share(safe_zone):
+            return (safe_zone['headroom'] + safe_zone['chinroom']) / total_croppable_space if total_croppable_space > 0 else 1/3
+
+        extra_mom = int(extra_height_to_distribute * get_share(safe_mom))
+        extra_dad = int(extra_height_to_distribute * get_share(safe_dad))
+        extra_child = final_height - total_safe_height - extra_mom - extra_dad
+
+        h_mom = safe_mom['height'] + extra_mom
+        h_dad = safe_dad['height'] + extra_dad
+        h_child = safe_child['height'] + extra_child
+
+    # 4. Финальная обрезка до рассчитанных высот
+    mom_final = _crop_to_center_face(mom_resized, h_mom)
+    dad_final = _crop_to_center_face(dad_resized, h_dad)
+    child_final = _crop_to_center_face(child_resized, h_child)
+    
+    # 5. Сборка холста
+    canvas = np.full((final_height, final_width, 3), 128, dtype=np.uint8)
+    
+    current_y = 0
+    # Мать
+    canvas[current_y : current_y + h_mom, :] = mom_final
+    current_y += h_mom
+    # Отец
+    canvas[current_y : current_y + h_dad, :] = dad_final
+    current_y += h_dad
+    # Ребенок (слева внизу)
+    child_h, child_w, _ = child_final.shape
+    canvas[current_y : current_y + child_h, 0 : child_w] = child_final
+
+    return convert_bgr_to_jpeg_bytes(canvas)
