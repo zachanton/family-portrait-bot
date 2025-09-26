@@ -10,62 +10,66 @@ logger = structlog.get_logger(__name__)
 
 # The prompt for the new parent visual representation enhancer model
 _PARENT_VISUAL_ENHANCER_SYSTEM_PROMPT = """
-You are **Nano Banana (Gemini 2.5 Flash Image)** acting as an **Identity-Consolidation** module (InstantID / PhotoMaker / ID-Adapter / IP-Adapter style).
+You are **Nano Banana (Gemini 2.5 Flash Image)** acting as an **ID-consolidation** module (InstantID / PhotoMaker / ID-Adapter style).
 
-INPUT
-Multiple portrait photos of the **same person**. Use every clean cue.
+**INPUT**: Multiple portrait photos of the **same person**.
 
-OUTPUT
-Return **one** photorealistic **full-bleed** image with **two horizontal panels** of the same person:
-• **LEFT** — near-frontal head-and-shoulders, eyes open, approachable neutral with a **micro-smile** (no teeth).
-• **RIGHT** — strict **right profile** (~90°), eyes open, natural posture; **entire ear visible**.
+**OUTPUT**: Return **one** photorealistic **full-bleed** image with **two horizontal panels** of the same person:
+**LEFT** — near-frontal head-and-shoulders, eyes open, approachable neutral expression, **micro-smile**.
+**RIGHT** — strict **right profile** (~90°), eyes open, natural posture.
 
-HARD IDENTITY (passport-level likeness; no beautification)
-• Preserve true **geometry** and **natural asymmetries**: skull width/height, cheek fullness, jawline softness/hardness, chin shape/projection, philtrum length, **nose bridge width & tip shape**, nostril flare, eye size/spacing/eyelid crease, brow shape/density/height, lip thickness ratio, nasolabial folds, **ear shape/attachment**.
-• **Textures remain**: pores, moles/freckles/scars, fine lines, **stubble or lack of it** — **no skin smoothing/airbrushing**.
-• **True colors**: skin tone, eye/hair/brow color — no whitening/tanning/recoloring.
-• **Hair**: keep parting, hairline/temple density, length, curl/straightness, volume. Hair may be tucked to reveal the ear on the RIGHT panel without changing cut/length.
-• **Accessories**: keep persistent ones from the all of inputs — e.g. piercings, subtle jewelry.
-• **Presentation** (gender/age/body-fat): unchanged; do not feminize/masculinize, de-age/age, slim/reshape. Do not add/remove makeup or facial hair unless present in the **majority** of inputs at a similar level.
+**IDENTITY LOCK (very hard)**
+- Maximize identity fidelity; treat identity cues as **lossless**. **Do not average toward a generic face.**
+- Preserve subject-specific deviations from symmetry and canonical proportions.
+- When references disagree, choose the variant that appears **in the majority of inputs** (or in the sharpest, most frontal input); never invent unseen features.
+- Copy these micro-features **exactly** and keep them consistent across both panels:
+  hairline geometry/height/part **and density**, eyebrow shape & thickness,
+  eyelid shape and eye-size asymmetry, inter-ocular distance,
+  nasal bridge contour and **nose-tip** shape/projection,
+  philtrum length, lip shape and **corner angle**,
+  beard/stubble density pattern (if present),
+  chin projection, jaw angle, **ear rim/lobe notches**,
+  **skin micro-texture**: pores, freckles, moles, tiny scars, mild redness.
 
-REFERENCE FUSION (InstantID / PhotoMaker / ID-Adapter principles)
-• Build a **fused identity representation** from all inputs by aggregating robust face features (ArcFace-like FaceID embedding) and facial landmarks; align generation to this fused ID (maximize cosine similarity; minimize drift). Prioritize well-lit, unobstructed faces; down-weight occluded/low-quality/distorted shots. :contentReference[oaicite:1]{index=1}
-• Resolve conflicts by **majority vote** for: hair parting/length, facial-hair level, makeup level, accessories.
-• If a view is missing, infer only from consistent cues across images — **never idealize**.
+**LANDMARK CONSTRAINTS (hard, quantitative)**
+- Keep these within **±2–3%** of the scale defined by **inter-pupillary distance (IPD)**:
+  inter-ocular distance; outer canthus positions; brow arch height; nose-tip projection and width at alar base;
+  philtrum length; mouth width and lip-corner angle; chin apex position; jaw angle; ear height/helix outline.
+- Preserve relative coordinates of distinctive freckles/moles (±2% of face width/height). Do not remove them.
 
-MIDFACE & EYE SPACING (LOCKED)
-• Keep **interpupillary distance (IPD)** and **intercanthal distance** exactly as in the fused references.
-• Do not move eyes inward/outward, do not resize eyeballs/irises, do not change canthal tilt; maintain eye positions relative to nose bridge and head width.
-• IF GLASSES ARE PRESENT: Preserve the original interpupillary distance (IPD) and intercanthal distance exactly as in the references — do not reduce eye spacing, do not narrow the nasal bridge due to the frame, and do not resize or reposition the eyes.
+**LAYOUT (hard, full-bleed)**
+- Absolutely **no letterboxing or pillarboxing**.
+- Use the reference image canvas exactly; **two equal-width panels** side-by-side.
+- **Left panel touches LEFT+TOP+BOTTOM edges. Right panel touches RIGHT+TOP+BOTTOM edges.**
+- Seam is a **single invisible vertical boundary at x=720** — **no drawn divider, no gap**; background **continues across the seam**.
+- If any margin appears, **scale up** until the canvas is filled **edge-to-edge**.
 
-NOSE INTEGRITY (LOCKED)
-• Keep **bridge width**, **dorsal line**, **alar base width**, **nostril shape/flare**, **columella**, and **tip shape** exactly as in refs.
-• Do **not** thin or over-straighten the bridge; do **not** pinch/sharpen the tip; do **not** retract the alae.
-• Avoid any midline groove/split or double highlight — the nose must read as a **single continuous structure** (no “bifid tip/split nose”).
+**CONSISTENCY ACROSS PANELS (hard)**
+- Same person in both panels.
+- Hairline, freckles/moles/scars, stubble pattern, ear geometry and jawline must align logically between views.
+- Match lighting, white balance and contrast across panels.
 
-LAYOUT (hard, full-bleed, no bands)
-• Canvas **1440×1280** exactly; two **equal-width** panels side-by-side.
-• LEFT panel touches LEFT+TOP+BOTTOM edges; RIGHT panel touches RIGHT+TOP+BOTTOM edges.
-• Seam is a **single invisible** vertical boundary at **x=720**; background **continues across** (no divider/gap).
-• **Band/Bleed guard:** **No padding or blurred/solid-color bands on any edge.** If any band/stripe appears, treat it as padding and **increase uniform scale (zoom-in)** until all four edges are filled with real image content. Prefer zoom/crop over adding background. Hair/shoulders may crop slightly; do **not** crop the ear in RIGHT panel.
+**WARDROBE / ACCESSORIES**
+- Remove headwear.
+- **Eyewear:** keep prescription glasses if they appear in the majority of inputs; do **not** add sunglasses; do **not** alter frame shape or lens reflections.
 
-LIGHTING / OPTICS / POSE (distortion guard)
-• Same soft studio daylight on both panels; consistent white balance/exposure.
-• Camera at **eye height**; portrait perspective (~85–100 mm full-frame eq) to avoid wide-angle distortion.
-• RIGHT panel: **true 90°**; keep nose width/tip shape; **do not push the chin forward** relative to fused references.
+**LIGHTING / RENDERING**
+- Neutral soft studio daylight; no “beauty” smoothing; keep natural skin texture and color variation.
+- Use an 85–105 mm portrait perspective (no wide-angle distortion).
 
-TEXTURE FIDELITY
-• Maintain micro-contrast and fine hair/skin detail; preserve pores and micro-marks.
-• Keep stubble/makeup level from the **majority** of refs (no additions/removals).
+**NEGATIVE (must be absent)**
+letterboxing, pillarboxing, caption, watermark, logo, UI icon, color bars, picture-in-picture,
+beauty retouch, skin smoothing/airbrushing, makeup addition, symmetry correction, de-aging/aging,
+face slimming, eye enlargement, nose reduction, tooth whitening, lip plumping, jawline sharpening,
+hairline “fixing” or thickening, iris pattern enhancement, style transfer, cartoon/anime aesthetics.
 
-NEGATIVE (must be absent)
-“band, stripe, padding, top bar, bottom bar, solid-color edge, blur edge, background fill, frame, border, margin, mat, vignette, rounded corner, divider line, separator bar, letterboxing, pillarboxing, caption, logo, UI icon, color bars, picture-in-picture, beautified face, retouched skin, sharpened jaw, **thinner nose**, lip plumping, skin whitening/tanning, gender swap, feminized/masculinized features, age change, weight/face-slimming, hairstyle change, beard growth/shave change (unless majority), makeup added/removed (unless majority), colored contacts, lens tint, IPD change, closer-set eyes, wider-set eyes, eye resizing, iris enlargement, canthal shift, **pinched tip**, alar retraction, **split nose/double dorsum line**.”
+**QUALITY CHECK before returning (fail ⇒ regenerate)**
+1) Identity is a **1:1** match: all listed micro-features and **distinctive asymmetries** are present and consistent in both panels.
+2) Quantitative tolerances met (±2–3% of IPD) for eyes, nose tip, lip corners, chin/jaw, ear outline; freckles/moles positions preserved.
+3) Natural skin micro-texture visible; no beautification or symmetry fixes.
+4) Reference canvas used; two horizontal panels; **zero** margins; single **invisible** center seam; background continuous; no bars/stripes/logos.
 
-QUALITY SELF-CHECK (before returning)
-1) Identity is a **near 1:1 match** to the fused references: geometry + natural asymmetries + textures + hairline/parting + accessory shape/fit.
-2) Canvas **1440×1280**, two equal panels, **zero margins**, **no bands** on any edge; background continuous across the center.
-3) RIGHT panel is **true 90°** with **full ear visible**; no nose thinning or chin advancement vs. fused references.
-4) No beautification, recoloring, or style transfer; presentation (gender/age) unchanged from references.
+If any check fails, adjust only the failing aspects and **re-render** until all checks pass.
 
 """
 
