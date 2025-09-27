@@ -2,27 +2,13 @@
 import asyncio
 import io
 import math
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import cv2
 import mediapipe as mp
 import numpy as np
 import structlog
 from PIL import Image, ImageOps
-
-
-def load_image_bgr_from_bytes(data: bytes) -> Optional[np.ndarray]:
-    """Loads an image from bytes into a BGR NumPy array."""
-    try:
-        img = Image.open(io.BytesIO(data))
-        img = ImageOps.exif_transpose(img)
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-        return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-    except Exception:
-        logger.exception("Failed to load image from bytes.")
-        return None
-
 
 logger = structlog.get_logger(__name__)
 
@@ -37,184 +23,186 @@ MOUTH_CENTER = 3
 RIGHT_EAR_TRAGION = 4
 LEFT_EAR_TRAGION = 5
 
+class PhotoAnalysisResult(Tuple):
+    """A type hint for the output of the analysis function."""
+    aligned_image_bytes: bytes
+    score: float
+    file_unique_id: str
+    file_id: str
 
-def _analyze_face_quality(
-    img_bgr: np.ndarray,
-) -> List[Dict[str, Any]]:
+def load_image_bgr_from_bytes(data: bytes) -> Optional[np.ndarray]:
+    """Loads an image from bytes into a BGR NumPy array."""
+    try:
+        img = Image.open(io.BytesIO(data))
+        img = ImageOps.exif_transpose(img)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+    except Exception:
+        logger.exception("Failed to load image from bytes.")
+        return None
+
+def convert_bgr_to_jpeg_bytes(img_bgr: np.ndarray, quality: int = 95) -> bytes:
+    """Converts a BGR NumPy array to JPEG bytes in memory."""
+    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+    buf = io.BytesIO()
+    Image.fromarray(img_rgb).save(buf, format="JPEG", quality=quality, optimize=True)
+    return buf.getvalue()
+
+def _calculate_rotation_angle(keypoints: np.ndarray) -> float:
     """
-    Analyzes an image to find faces and extract their quality properties using MediaPipe.
-    Includes a geometric check to filter out occluded or distorted faces.
+    Calculates the rotation angle to make the head upright.
+    It intelligently chooses between eye-to-eye or ear-to-nose vector
+    based on the visibility of facial features (frontal vs. profile view).
+
+    Args:
+        keypoints: A NumPy array of facial keypoints.
 
     Returns:
-        A list of dictionaries, each containing properties of a detected face.
+        The angle in degrees for counter-clockwise rotation.
+    """
+    p_right_eye, p_left_eye = keypoints[RIGHT_EYE], keypoints[LEFT_EYE]
+    p_nose_tip = keypoints[NOSE_TIP]
+    p_right_ear, p_left_ear = keypoints[RIGHT_EAR_TRAGION], keypoints[LEFT_EAR_TRAGION]
+
+    # Check if both eyes are clearly visible and separated, indicating a frontal view
+    inter_eye_dist = np.linalg.norm(p_left_eye - p_right_eye)
+    # A simple heuristic: if inter-eye distance is very small, it's likely a profile.
+    # We use a threshold relative to a hypothetical face width.
+    # A more robust check might use ear distances, but this is effective.
+    is_frontal_view = inter_eye_dist > 10  # A small pixel threshold
+
+    if is_frontal_view:
+        # For frontal views, align the eyes horizontally.
+        eye_delta_y = p_left_eye[1] - p_right_eye[1]
+        eye_delta_x = p_left_eye[0] - p_right_eye[0]
+        angle = math.degrees(math.atan2(eye_delta_y, eye_delta_x))
+    else:
+        # For profile views, align the ear-to-nose line horizontally.
+        # Determine which ear is visible to use for the calculation.
+        # This simple check assumes one ear is more 'central' in profile shots.
+        if p_left_ear[0] > 0 and p_right_ear[0] > 0: # Check if both ears were detected
+             ear_to_use = p_left_ear if p_left_ear[0] < p_right_ear[0] else p_right_ear
+        else: # Fallback if one ear is not detected
+            ear_to_use = p_left_ear if p_left_ear[0] > 0 else p_right_ear
+
+        ear_delta_y = p_nose_tip[1] - ear_to_use[1]
+        ear_delta_x = p_nose_tip[0] - ear_to_use[0]
+        angle = math.degrees(math.atan2(ear_delta_y, ear_delta_x))
+        
+    return angle
+
+def _analyze_and_align_one_photo(
+    img_bgr: np.ndarray, file_unique_id: str, file_id: str
+) -> Optional[PhotoAnalysisResult]:
+    """
+    Analyzes a single image for face quality, pose, and alignment.
+
+    - Rejects images with zero or more than one face.
+    - Rejects images where the face is likely a back-of-head view.
+    - Rotates the image to align the head vertically.
+    - Calculates a quality score.
+
+    Returns:
+        A PhotoAnalysisResult tuple containing the aligned image bytes and metadata,
+        or None if the image is rejected.
     """
     h, w = img_bgr.shape[:2]
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-    results_list: List[Dict[str, Any]] = []
 
     with mp_face_detection.FaceDetection(
         model_selection=1, min_detection_confidence=0.5
     ) as face_detection:
         results = face_detection.process(img_rgb)
 
-        if not results.detections:
-            return results_list
+        # RULE 1: Must have exactly one face.
+        if not results.detections or len(results.detections) != 1:
+            return None
 
-        for detection in results.detections:
-            # Bounding box
-            box_data = detection.location_data.relative_bounding_box
-            x1 = int(box_data.xmin * w)
-            y1 = int(box_data.ymin * h)
-            face_w = int(box_data.width * w)
-            face_h = int(box_data.height * h)
-            x2, y2 = x1 + face_w, y1 + face_h
+        detection = results.detections[0]
 
-            # Keypoints
-            keypoints = detection.location_data.relative_keypoints
-            kps = np.array([(kp.x * w, kp.y * h) for kp in keypoints])
+        # Extract keypoints
+        keypoints_relative = detection.location_data.relative_keypoints
+        keypoints = np.array([(kp.x * w, kp.y * h) for kp in keypoints_relative])
 
-            # --- Scoring ---
-            # 1. Detection score
-            detection_score = detection.score[0]
+        # RULE 2: Filter out back-of-head shots.
+        # A simple but effective check is to ensure the core facial features (eyes, nose, mouth) are detected.
+        # MediaPipe's 6 keypoints include these, so if they are all present (within image bounds), it's not a back view.
+        if not all(0 <= kp.x < 1 and 0 <= kp.y < 1 for kp in keypoints_relative[:4]):
+             return None # Missing eye, nose, or mouth center.
 
-            # 2. Keypoint visibility score
-            visible_kps = [0 <= kp.x < 1 and 0 <= kp.y < 1 for kp in keypoints]
-            keypoint_score = sum(visible_kps) / len(visible_kps)
+        # RULE 3: Rotate image to align head vertically.
+        angle = _calculate_rotation_angle(keypoints)
+        
+        # Calculate the center of the face bounding box for rotation
+        box_data = detection.location_data.relative_bounding_box
+        center_x = int((box_data.xmin + box_data.width / 2) * w)
+        center_y = int((box_data.ymin + box_data.height / 2) * h)
 
-            # 3. Geometric consistency score (for occlusion/distortion)
-            # This score checks if facial features are in expected positions relative to each other.
-            # It helps reject images with significant occlusions (e.g., hand over mouth) or distortions.
-            try:
-                p_right_eye, p_left_eye = kps[RIGHT_EYE], kps[LEFT_EYE]
-                p_nose_tip = kps[NOSE_TIP]
-                p_mouth_center = kps[MOUTH_CENTER]
+        rotation_matrix = cv2.getRotationMatrix2D((center_x, center_y), angle, 1.0)
+        
+        # Apply the rotation
+        aligned_img_bgr = cv2.warpAffine(img_bgr, rotation_matrix, (w, h), borderMode=cv2.BORDER_REPLICATE)
+        aligned_image_bytes = convert_bgr_to_jpeg_bytes(aligned_img_bgr)
 
-                # Use inter-eye distance as a scale-invariant unit of measurement.
-                inter_eye_dist = np.linalg.norm(p_left_eye - p_right_eye)
-                if inter_eye_dist < 1e-6:  # Avoid division by zero
-                    raise ZeroDivisionError
+        # Scoring (can be simplified or expanded as needed)
+        detection_score = detection.score[0]
+        face_area = (box_data.width * w * box_data.height * h) / (w * h)
+        size_score = min(1.0, face_area / 0.20) # Normalize, assuming 20% of image area is a good size
 
-                eyes_center = (p_left_eye + p_right_eye) / 2.0
+        final_score = (detection_score * 0.8) + (size_score * 0.2)
 
-                # Check 1: Horizontal alignment of nose and mouth relative to eyes' center.
-                # A large horizontal deviation suggests a severe head tilt or occlusion.
-                eye_vector = p_left_eye - p_right_eye
-                nose_projection_offset = abs(np.dot(p_nose_tip - eyes_center, eye_vector) / (inter_eye_dist**2))
-                mouth_projection_offset = abs(np.dot(p_mouth_center - eyes_center, eye_vector) / (inter_eye_dist**2))
-                
-                # Normalize error: score is 1.0 for perfect alignment, 0.0 for high deviation.
-                alignment_error = nose_projection_offset + mouth_projection_offset
-                alignment_score = max(0.0, 1.0 - (alignment_error / 0.7))
-
-                # Check 2: Vertical distance ratio between nose and mouth.
-                # An object (like a hotdog) can push the mouth landmark, altering this ratio.
-                nose_mouth_dist = np.linalg.norm(p_nose_tip - p_mouth_center)
-                ratio = nose_mouth_dist / inter_eye_dist
-                
-                # Use a Gaussian-like function to score the ratio. Ideal is ~1.0.
-                ratio_score = math.exp(-(((ratio - 1.0) ** 2) / (2 * 0.2**2)))
-
-                geometric_consistency_score = (alignment_score * 0.5) + (ratio_score * 0.5)
-            except (ZeroDivisionError, IndexError):
-                geometric_consistency_score = 0.0
-
-            # 4. Face size score (relative to image area)
-            face_area = (face_w * face_h) / (w * h)
-            size_score = min(
-                1.0, face_area / 0.25
-            )  # Normalize, assuming 25% of image area is a good size
-
-            # 5. Sharpness score
-            face_roi = img_bgr[max(0, y1) : min(h, y2), max(0, x1) : min(w, x2)]
-            if face_roi.size > 0:
-                gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
-                sharpness = cv2.Laplacian(gray, cv2.CV_64F).var()
-                sharpness_score = min(
-                    1.0, sharpness / 150.0
-                )  # Normalize, assuming good photo > 100
-            else:
-                sharpness_score = 0.0
-
-            # --- Final Score (UPDATED with occlusion check) ---
-            final_score = (
-                (detection_score * 0.25)
-                + (keypoint_score * 0.30)
-                + (geometric_consistency_score * 0.30)  # Added new score
-                + (sharpness_score * 0.10)
-                + (size_score * 0.05)
-            )
-
-            results_list.append(
-                {
-                    "bbox": (x1, y1, x2, y2),
-                    "keypoints": kps,
-                    "score": final_score,
-                }
-            )
-
-    return results_list
+        return PhotoAnalysisResult((aligned_image_bytes, final_score, file_unique_id, file_id))
 
 
 async def select_best_photos(
     photo_inputs: List[Tuple[bytes, str, str]],
 ) -> Optional[List[Tuple[str, str, bytes]]]:
     """
-    Selects the best photos from a list based on face detection quality.
+    Selects the best photos from a list based on face detection quality and alignment.
 
-    The "best" photos are those with exactly one, clear, and visible face.
+    The "best" photos are those with exactly one, clear, and visible face (from front to profile).
     It returns ALL photos that meet the criteria, sorted by quality score.
+    Each returned photo is aligned to have the head be vertical.
 
     Args:
         photo_inputs: A list of tuples, each containing (image_bytes, file_unique_id, file_id).
 
     Returns:
-        A list of tuples (file_unique_id, file_id, image_bytes) for all suitable photos,
+        A list of tuples (file_unique_id, file_id, aligned_image_bytes) for all suitable photos,
         or None if no suitable photos are found.
     """
     if not photo_inputs:
         return None
 
-    MIN_ACCEPTABLE_SCORE = 0.60  # Stricter threshold for a single good face
+    MIN_ACCEPTABLE_SCORE = 0.65  # Stricter threshold for a single good face
 
     analysis_tasks = []
     for image_bytes, unique_id, file_id in photo_inputs:
         img_bgr = load_image_bgr_from_bytes(image_bytes)
         if img_bgr is not None:
-            task = asyncio.to_thread(_analyze_face_quality, img_bgr)
-            analysis_tasks.append((task, unique_id, file_id, image_bytes))
+            task = asyncio.to_thread(_analyze_and_align_one_photo, img_bgr, unique_id, file_id)
+            analysis_tasks.append(task)
 
-    results = await asyncio.gather(
-        *(task for task, _, _, _ in analysis_tasks), return_exceptions=True
-    )
+    results = await asyncio.gather(*analysis_tasks, return_exceptions=True)
 
     valid_photos = []
-    for i, face_result in enumerate(results):
-        _, unique_id, file_id, image_bytes = analysis_tasks[i]
-
-        if isinstance(face_result, Exception):
-            logger.warning(
-                "Photo analysis failed for one image",
-                exc_info=face_result,
-                file_unique_id=unique_id,
-            )
+    for analysis_result in results:
+        if isinstance(analysis_result, Exception):
+            logger.warning("Photo analysis failed for one image", exc_info=analysis_result)
+            continue
+        
+        if analysis_result is None:
             continue
 
-        # Rule: Must have exactly one face
-        if len(face_result) != 1:
-            continue
-
-        face = face_result[0]
-        score = face["score"]
-
+        aligned_bytes, score, unique_id, file_id = analysis_result
         if score >= MIN_ACCEPTABLE_SCORE:
-            valid_photos.append(
-                {
-                    "unique_id": unique_id,
-                    "file_id": file_id,
-                    "bytes": image_bytes,
-                    "score": score,
-                }
-            )
+            valid_photos.append({
+                "unique_id": unique_id,
+                "file_id": file_id,
+                "bytes": aligned_bytes,
+                "score": score,
+            })
 
     if not valid_photos:
         logger.warning(
@@ -227,7 +215,7 @@ async def select_best_photos(
     valid_photos.sort(key=lambda x: x["score"], reverse=True)
 
     logger.info(
-        "Selected best photos",
+        "Selected best photos after alignment and scoring",
         count=len(valid_photos),
         scores=[p["score"] for p in valid_photos],
     )

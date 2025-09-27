@@ -18,14 +18,18 @@ router = Router(name="photo-handler")
 album_message_cache: Dict[str, List[Message]] = {}
 album_tasks: Dict[str, asyncio.Task] = {}
 
+# The minimum number of high-quality photos required for EACH parent.
+MIN_PHOTOS_PER_PARENT = 5
+
 async def proceed_to_child_params(message: Message, state: FSMContext) -> None:
     """
-    After collecting photos, starts the child parameter selection flow
-    by asking for the gender.
+    After collecting enough photos for both parents, starts the child parameter
+    selection flow by asking for the gender.
     """
     await state.set_state(Generation.choosing_child_gender)
     await message.answer(
-        _("Great, I have both sets of photos! Now, let's imagine your future child.\n\n"
+        _("Excellent! I have enough high-quality photos for both parents. "
+          "Now, let's imagine your future child.\n\n"
           "First, what is the desired gender?"),
         reply_markup=gender_kb()
     )
@@ -59,17 +63,19 @@ async def process_photo_batch(
     messages: List[Message], state: FSMContext, bot: Bot, cache_pool: Redis
 ):
     """
-    Handles the logic for processing a single photo or an album of photos.
-    It selects the best photos and updates the state.
+    Handles the logic for processing a batch of photos.
+    It scores them, adds valid ones to the state, and iteratively asks for more
+    until the minimum count per parent is reached.
     """
     message = messages[0]
+    log = structlog.get_logger(__name__)
     status_msg = await message.answer(_("Analyzing your photo(s)... ⏳"))
 
     try:
+        # Step 1: Download all photos from the message batch
         download_tasks = []
         for msg in messages:
             if msg.photo:
-                # Use the highest resolution photo available
                 photo = max(msg.photo, key=lambda p: p.width * p.height)
                 download_tasks.append(_download_one_photo(photo, bot))
 
@@ -77,80 +83,83 @@ async def process_photo_batch(
         photo_inputs = [res for res in downloaded_results if res is not None]
 
         if not photo_inputs:
-            await status_msg.edit_text(_("I couldn't process the photos. Please try sending them again."))
+            await status_msg.edit_text(_("I couldn't process these photos. Please try sending them again."))
             return
 
-        # --- MODIFICATION: Call select_best_photos without num_to_select ---
+        # Step 2: Score, align, and filter the downloaded photos
         best_photos_info = await similarity_scorer.select_best_photos(photo_inputs)
         
         if not best_photos_info:
             rejection_text = _(
-                "Unfortunately, I couldn't find a suitable photo among the ones you sent.\n\n"
-                "To get the best possible result, I need photos that meet a few criteria:\n"
-                "• <b>Only one person</b> in the frame.\n"
-                "• The face is <b>clearly visible, facing forward</b>, and not tilted.\n"
-                "• No glasses, hats, or other objects <b>covering the face</b>.\n"
-                "• The photo is <b>sharp and not blurry</b>.\n\n"
-                "Please try sending another photo(s). Thank you! 😊"
+                "Unfortunately, none of the photos you sent were suitable.\n\n"
+                "I'm looking for photos with:\n"
+                "• <b>Exactly one person</b> in the frame.\n"
+                "• A clear view of the face (<b>not the back of the head</b>).\n"
+                "• No major obstructions like sunglasses or hands covering the face.\n\n"
+                "Please try sending another photo or two. Thank you! 😊"
             )
             await status_msg.edit_text(rejection_text)
             return
         
-        # Cache all selected images
-        cache_tasks = []
-        for unique_id, a, photo_bytes in best_photos_info:
-            cache_tasks.append(
-                image_cache.cache_image_bytes(unique_id, photo_bytes, "image/jpeg", cache_pool)
-            )
-        await asyncio.gather(*cache_tasks)
+        # Step 3: Cache all newly selected and aligned images
+        await asyncio.gather(*(
+            image_cache.cache_image_bytes(unique_id, photo_bytes, "image/jpeg", cache_pool)
+            for unique_id, file_id, photo_bytes in best_photos_info
+        ))
 
         await status_msg.delete()
         
+        # Step 4: Determine current role and update the state
         data = await state.get_data()
         photos_collected = data.get("photos_collected", [])
         
-        # Determine if we are collecting for Mom or Dad
-        # A simple way to check is by counting existing unique roles
-        roles_present = {p.get("role") for p in photos_collected if p.get("role")}
+        mom_photos_count = sum(1 for p in photos_collected if p.get("role") == ImageRole.MOTHER.value)
         
-        if ImageRole.MOTHER.value not in roles_present:
-            current_role = ImageRole.MOTHER
-            next_prompt = _("Perfect! Now, please send one or more photos of the Dad.")
-        elif ImageRole.FATHER.value not in roles_present:
-            current_role = ImageRole.FATHER
-            # If we've just collected for Dad, then proceed to child params
-            next_prompt = None # No prompt needed, will proceed to child params
-        else:
-            # Should not happen if flow is sequential, but for safety
-            current_role = ImageRole.MOTHER # Fallback
-            next_prompt = _("Unexpected state. Please send one or more photos of the Mom.")
+        current_role = ImageRole.MOTHER if mom_photos_count < MIN_PHOTOS_PER_PARENT else ImageRole.FATHER
 
-
-        # --- MODIFICATION: Store a list of photos for the current role ---
-        selected_photos_dto = [
-            {
-                "file_id": file_id,
-                "file_unique_id": unique_id,
-                "role": current_role.value
-            }
-            for unique_id, file_id, a in best_photos_info
-        ]
-
-        photos_collected.extend(selected_photos_dto)
+        photos_collected.extend([
+            {"file_id": file_id, "file_unique_id": unique_id, "role": current_role.value}
+            for unique_id, file_id, _ in best_photos_info
+        ])
         await state.update_data(photos_collected=photos_collected)
+        
+        log.info(
+            "Added new valid photos to state",
+            role=current_role.value,
+            count=len(best_photos_info)
+        )
 
-        # Check if we have photos for both parents
-        final_roles_present = {p.get("role") for p in photos_collected if p.get("role")}
+        # Step 5: Check the counts and decide the next action
+        mom_photos_count = sum(1 for p in photos_collected if p.get("role") == ImageRole.MOTHER.value)
+        dad_photos_count = sum(1 for p in photos_collected if p.get("role") == ImageRole.FATHER.value)
 
-        if ImageRole.MOTHER.value in final_roles_present and ImageRole.FATHER.value in final_roles_present:
+        if mom_photos_count >= MIN_PHOTOS_PER_PARENT and dad_photos_count >= MIN_PHOTOS_PER_PARENT:
             await proceed_to_child_params(message, state)
-        elif next_prompt: # If we need more photos for the other parent
+        elif mom_photos_count < MIN_PHOTOS_PER_PARENT:
+            next_prompt = _(
+                "Got it! I now have <b>{count}/{min_count}</b> good photos of the Mom. "
+                "Please send a few more photos of her."
+            ).format(count=mom_photos_count, min_count=MIN_PHOTOS_PER_PARENT)
+            await message.answer(next_prompt)
+        else: # Mom's photos are done, collecting for Dad
+            # Check if this is the very first time we're asking for Dad's photos
+            is_first_dad_request = (dad_photos_count == 0)
+            
+            if is_first_dad_request:
+                next_prompt = _(
+                    "Perfect, that's enough for the Mom! Now I need photos of the Dad. "
+                    "Please send at least {min_count} high-quality photos of him."
+                ).format(min_count=MIN_PHOTOS_PER_PARENT)
+            else:
+                next_prompt = _(
+                    "Thanks! I now have <b>{count}/{min_count}</b> good photos of the Dad. "
+                    "Please send a few more of him."
+                ).format(count=dad_photos_count, min_count=MIN_PHOTOS_PER_PARENT)
             await message.answer(next_prompt)
 
-
     except Exception as e:
-        structlog.get_logger(__name__).error("Error processing photo batch", exc_info=e)
-        await status_msg.edit_text(_("I couldn't process these images. Please try another one or /cancel."))
+        log.error("Error processing photo batch", exc_info=e)
+        await status_msg.edit_text(_("I ran into an issue. Please try sending another photo or use /cancel to start over."))
 
 
 @router.message(Generation.collecting_photos, F.photo)

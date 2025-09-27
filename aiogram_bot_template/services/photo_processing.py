@@ -18,8 +18,8 @@ HEAD_VERTICAL_MARGIN_RATIO = 0.70
 HEAD_HORIZONTAL_MARGIN_RATIO = 0.50
 
 # --- Fixed canvas (must NOT change) ---
-TIKTOK_CANVAS_W = 1440
-TIKTOK_CANVAS_H = 1280
+TIKTOK_CANVAS_W = 2160
+TIKTOK_CANVAS_H = 1920
 TIKTOK_BG_FALLBACK_BGR = (128, 128, 128) # Neutral gray background
 
 # ---------------- I/O ----------------
@@ -223,8 +223,9 @@ def create_portrait_collage_from_bytes(image_bytes_list: List[bytes]) -> Optiona
     if not image_bytes_list:
         return None
     try:
+        target_face_width = int(TIKTOK_CANVAS_W/2)
         # Step 1: Extract, crop, and normalize all faces to a standard width.
-        faces = _extract_and_prepare_faces(image_bytes_list, target_face_width=360)
+        faces = _extract_and_prepare_faces(image_bytes_list, target_face_width=target_face_width)
         if not faces:
             logger.warning("No faces could be prepared from the provided images.")
             return None
