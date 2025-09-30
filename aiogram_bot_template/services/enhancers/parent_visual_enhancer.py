@@ -1,8 +1,10 @@
 # aiogram_bot_template/services/enhancers/parent_visual_enhancer.py
 import structlog
+import numpy as np
 from typing import Optional, List
 
 from aiogram_bot_template.data.settings import settings
+from aiogram_bot_template.services import similarity_scorer, photo_processing
 from aiogram_bot_template.services.clients import factory as client_factory
 
 logger = structlog.get_logger(__name__)
@@ -18,21 +20,20 @@ You are an expert AI photo analyst. Your mission is to distill the unique, perma
 
 **Feature Analysis Checklist (Address each point):**
 *   **Overall Face Shape:** Describe the geometric shape of the face (e.g., oval, long, square with a strong jaw).
-*   **Hair:** State the consensus color, length, texture, and parting style (e.g., 'shoulder-length, dark brown wavy hair parted on the left').
 *   **Eyes:** Detail the consensus eye color and their specific shape (e.g., 'deep-set, almond-shaped hazel eyes').
 *   **Eyebrows:** Describe their shape, thickness, and spacing (e.g., 'thick, straight eyebrows set close together').
 *   **Nose:** Characterize the bridge, tip, and nostril shape (e.g., 'a straight nasal bridge with a slightly upturned, rounded tip').
 *   **Mouth & Lips:** Note the shape and fullness (e.g., 'thin upper lip with a sharply defined Cupid's bow').
 *   **Chin & Jawline:** Describe the chin's shape and the jaw's definition (e.g., 'a prominent, square chin and a well-defined jawline').
 *   **Distinctive Features:** Mention any prominent asymmetries, scars, moles, or freckle patterns and their locations (e.g., 'a small mole above the right eyebrow; the left corner of the mouth is slightly higher than the right').
-*   **Eyewear:** Explicitly state 'no glasses' or describe the consensus frame style if present (e.g., 'wears thin, black rectangular-framed glasses').
+*   **Eyewear:** Describe the consensus frame style only if present in ALL images (e.g., 'wears thin, black rectangular-framed glasses').
 
 **Output Format:**
 - A single, dense, descriptive paragraph.
 - No markdown, no labels, no bullet points.
 - Start directly with the description.
 
-**Example Output:** "This person has a long, oval face with high cheekbones. Their hair is dark brown, straight, and cut in a chin-length bob with a center part. Key features to preserve are their deep-set, dark brown eyes and thick, arched eyebrows. The nose is characterized by a straight dorsal bridge and a well-defined tip. They have a prominent square chin. A noticeable feature is a small mole on the left cheek, just beside the nostril. The person does not wear glasses."
+**Example Output:** "This person has a long, oval face with high cheekbones. Key features to preserve are their deep-set, dark brown eyes and thick, arched eyebrows. The nose is characterized by a straight dorsal bridge and a well-defined tip. They have a prominent square chin. A noticeable feature is a small mole on the left cheek, just beside the nostril. The person does not wear glasses."
 """
 
 # --- MODIFIED: System prompt for the Visual Generator, now with a placeholder ---
@@ -45,8 +46,8 @@ INPUT
 
 GOAL
 Produce ONE photorealistic image with TWO equal-width, full-bleed panels arranged horizontally:
-• LEFT panel — NEAR-FRONTAL view (yaw ≤ 10°), eyes open, relaxed expression, gentle smile.
-• RIGHT panel — STRICT RIGHT PROFILE (yaw 90° ± 3°), eyes open, natural posture.
+• LEFT panel — ONE FULL-BLEED NEAR-FRONTAL view (yaw ≤ 10°), eyes open, relaxed expression, gentle smile.
+• RIGHT panel — ONE FULL-BLEED STRICT RIGHT PROFILE (yaw 90° ± 3°), eyes open, natural posture.
 
 CRITICAL IDENTITY DIRECTIVES (from prior analysis):
 {{ENHANCED_IDENTITY_FEATURES}}
@@ -85,7 +86,7 @@ FINAL QUALITY CHECK (if any fail ⇒ adjust only that aspect and re-render)
 1) Identity is a 1:1 match (all micro-features and asymmetries consistent across both panels).
 2) LEFT = near-frontal; RIGHT = strict right profile 90° ± 3°.
 3) Same hair part/length and glasses status in both panels.
-4) Both panels full-bleed, correct scale, eye-line within the specified bands.
+4) Both panels full-bleed, without borders, correct scale, eye-line within the specified bands.
 
 OUTPUT
 • Return ONE image only: landscape canvas with those two side-by-side full-bleed panels (no borders, no captions).
@@ -93,7 +94,9 @@ OUTPUT
 
 
 async def get_parent_visual_representation(
-    image_urls: List[str], role: str = "mother"
+    image_urls: List[str],
+    role: str = "mother",
+    identity_centroid: Optional[np.ndarray] = None,
 ) -> Optional[bytes]:
     """
     Generates a consolidated visual representation (front and side view) of a parent
@@ -104,10 +107,14 @@ async def get_parent_visual_representation(
        description of unique facial features.
     2. It then injects this text into a specialized prompt for a visual model,
        which generates a high-fidelity front-and-side portrait of the parent.
+    3. If an identity_centroid is provided, it calculates and logs the similarity
+       score of the generated frontal view against the original photos.
 
     Args:
         image_urls: A list of public URLs to the collage of the parent's photos.
         role: The role of the parent ('mother' or 'father').
+        identity_centroid: An optional NumPy array representing the identity vector
+                           of the parent from the source images.
 
     Returns:
         The generated image as bytes, or None on failure.
@@ -158,9 +165,7 @@ async def get_parent_visual_representation(
         final_visual_prompt = _PARENT_VISUAL_ENHANCER_SYSTEM_PROMPT.replace(
             "{{ENHANCED_IDENTITY_FEATURES}}", feature_description_text.strip()
         )
-        log.info("Successfully received final_visual_prompt", final_visual_prompt=final_visual_prompt)
         
-        # Pass role for mock client differentiation if needed
         if type(visual_client).__name__ == 'MockAIClient':
             final_visual_prompt = f"ROLE: {role}. {final_visual_prompt}"
 
@@ -181,6 +186,27 @@ async def get_parent_visual_representation(
                 response_payload=getattr(visual_response, "response_payload", None),
             )
             return None
+        
+        if identity_centroid is not None:
+            try:
+                # The generated image is a horizontal stack (front|side). We need the front part.
+                front_bytes, side_bytes = photo_processing.split_and_stack_image_bytes(image_bytes)
+                if front_bytes:
+                    generated_embedding = await similarity_scorer._get_best_face_embedding(front_bytes)
+                    if generated_embedding is not None:
+                        # Cosine similarity is the dot product of two normalized vectors
+                        similarity_score = np.dot(generated_embedding, identity_centroid)
+                        log.info(
+                            "Calculated similarity for generated parent visual.",
+                            similarity_score=round(float(similarity_score), 4),
+                            role=role
+                        )
+                    else:
+                        log.warning("Could not extract face embedding from generated visual.", role=role)
+                else:
+                    log.warning("Failed to split generated visual to get frontal view for scoring.", role=role)
+            except Exception:
+                log.exception("An error occurred during similarity scoring of the generated visual.", role=role)
 
         log.info("Successfully received parent visual representation.")
         return image_bytes

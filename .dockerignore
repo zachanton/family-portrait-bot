@@ -22,4 +22,3 @@ __pycache__/
 /pgdata/
 /redis_data/
 /ollama_data/
-/models/

@@ -1,8 +1,9 @@
 # aiogram_bot_template/services/pipelines/child_generation.py
 import asyncio
 import uuid
+import numpy as np
 from aiogram.utils.i18n import gettext as _
-from aiogram_bot_template.services import image_cache, photo_processing
+from aiogram_bot_template.services import image_cache, photo_processing, similarity_scorer
 from aiogram_bot_template.services.enhancers import (
     eye_enhancer,
     hairstyle_enhancer,
@@ -40,7 +41,7 @@ class ChildGenerationPipeline(BasePipeline):
                 "Could not identify Mom or Dad's photos from the collected images."
             )
 
-        async def get_all_bytes(photos):
+        async def get_all_processed_bytes(photos):
             tasks = [
                 image_cache.get_cached_image_bytes(
                     p["file_unique_id"], self.cache_pool
@@ -48,17 +49,35 @@ class ChildGenerationPipeline(BasePipeline):
                 for p in photos
             ]
             results = await asyncio.gather(*tasks)
-            return [b for b, _ in results if b is not None]
+            return [b for b, a in results if b is not None]
 
-        father_bytes_list = await get_all_bytes(dad_photos)
-        mother_bytes_list = await get_all_bytes(mom_photos)
+        father_bytes_list = await get_all_processed_bytes(dad_photos)
+        mother_bytes_list = await get_all_processed_bytes(mom_photos)
+
+        # --- NEW: Calculate identity centroids for each parent ---
+        async def get_centroid(bytes_list):
+            if not bytes_list:
+                return None
+            embedding_tasks = [similarity_scorer._get_best_face_embedding(b) for b in bytes_list]
+            embeddings = await asyncio.gather(*embedding_tasks)
+            valid_embeddings = [emb for emb in embeddings if emb is not None]
+            if not valid_embeddings:
+                return None
+            embs_matrix = np.stack(valid_embeddings, axis=0)
+            return similarity_scorer._build_identity_centroid(embs_matrix)
+
+        mom_centroid, dad_centroid = await asyncio.gather(
+            get_centroid(mother_bytes_list),
+            get_centroid(father_bytes_list)
+        )
+        self.log.info("Calculated parent identity centroids.", has_mom_centroid=mom_centroid is not None, has_dad_centroid=dad_centroid is not None)
+        # --- END NEW ---
 
         await self.update_status_func(_("Preparing parent portraits... 🖼️"))
         
-        # Run collage creation in parallel
         collage_tasks = [
-            asyncio.to_thread(photo_processing.create_portrait_collage_from_bytes, mother_bytes_list),
-            asyncio.to_thread(photo_processing.create_portrait_collage_from_bytes, father_bytes_list),
+            asyncio.to_thread(photo_processing.create_portrait_collage_from_bytes, mother_bytes_list[:4]),
+            asyncio.to_thread(photo_processing.create_portrait_collage_from_bytes, father_bytes_list[:4]),
         ]
         mom_collage_bytes, dad_collage_bytes = await asyncio.gather(*collage_tasks)
 
@@ -87,10 +106,16 @@ class ChildGenerationPipeline(BasePipeline):
             _("Creating visual representations of parents... 🧑‍🎨")
         )
 
+        # --- MODIFIED: Pass centroids to the enhancer ---
         visual_tasks = [
-            parent_visual_enhancer.get_parent_visual_representation([mom_collage_url], role="mother"),
-            parent_visual_enhancer.get_parent_visual_representation([dad_collage_url], role="father"),
+            parent_visual_enhancer.get_parent_visual_representation(
+                [mom_collage_url], role="mother", identity_centroid=mom_centroid
+            ),
+            parent_visual_enhancer.get_parent_visual_representation(
+                [dad_collage_url], role="father", identity_centroid=dad_centroid
+            ),
         ]
+        # --- END MODIFICATION ---
         mom_visual_horizontal_bytes, dad_visual_horizontal_bytes = await asyncio.gather(*visual_tasks)
 
         mom_visual_front_bytes, mom_visual_side_bytes = (

@@ -1,41 +1,25 @@
 # aiogram_bot_template/services/photo_processing.py
 import cv2
 import io
-import math
-import mediapipe as mp
 import numpy as np
+import mediapipe as mp
+
 import structlog
-from typing import Optional, Tuple, Dict, List
+from typing import Optional, List, Dict
 from PIL import Image, ImageOps
 
 logger = structlog.get_logger(__name__)
 
-# --- MediaPipe setup ---
-mp_face_detection = mp.solutions.face_detection
-mp_selfie_seg = mp.solutions.selfie_segmentation
-
-
-# --- Cropping parameters ---
-HEAD_VERTICAL_MARGIN_RATIO = 0.40
-HEAD_HORIZONTAL_MARGIN_RATIO = 0.50
-
-# --- Fixed canvas (must NOT change) ---
+# --- Collage constants ---
 TIKTOK_CANVAS_W = 1152
 TIKTOK_CANVAS_H = 1024
-TIKTOK_BG_FALLBACK_BGR = (128, 128, 128) # Neutral gray background
 
-# ---------------- I/O ----------------
+mp_face_detection = mp.solutions.face_detection
 
+
+# --- I/O Functions ---
 def load_image_bgr_from_bytes(data: bytes) -> Optional[np.ndarray]:
-    """
-    Loads an image from bytes into a BGR NumPy array.
-
-    Args:
-        data: Image file bytes.
-
-    Returns:
-        A NumPy array in BGR format, or None if loading fails.
-    """
+    """Loads an image from bytes into a BGR NumPy array."""
     try:
         img = Image.open(io.BytesIO(data))
         img = ImageOps.exif_transpose(img)
@@ -46,69 +30,22 @@ def load_image_bgr_from_bytes(data: bytes) -> Optional[np.ndarray]:
         logger.exception("Failed to load image from bytes.")
         return None
 
-
 def convert_bgr_to_jpeg_bytes(img_bgr: np.ndarray, quality: int = 95) -> bytes:
-    """
-    Converts a BGR NumPy array to JPEG bytes in memory.
-
-    Args:
-        img_bgr: The image as a BGR NumPy array.
-        quality: The JPEG quality setting (0-100).
-
-    Returns:
-        The JPEG image as bytes.
-    """
+    """Converts a BGR NumPy array to JPEG bytes in memory."""
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     buf = io.BytesIO()
     Image.fromarray(img_rgb).save(buf, format="JPEG", quality=quality, optimize=True)
     return buf.getvalue()
 
-
-    # ---------- helpers (English only) ----------
-
-def _srgb_to_linear_01(bgr_u8: np.ndarray) -> np.ndarray:
-    x = bgr_u8.astype(np.float32) / 255.0
-    a = 0.055
-    low = x <= 0.04045
-    out = np.empty_like(x)
-    out[low]  = x[low] / 12.92
-    out[~low] = ((x[~low] + a) / (1 + a)) ** 2.4
-    return out
-
-def _linear_to_srgb_u8(lin: np.ndarray) -> np.ndarray:
-    x = np.clip(lin, 0.0, 1.0)
-    a = 0.055
-    low = x <= 0.0031308
-    out = np.empty_like(x)
-    out[low]  = x[low] * 12.92
-    out[~low] = (1 + a) * (x[~low] ** (1/2.4)) - a
-    return np.clip(out * 255.0 + 0.5, 0, 255).astype(np.uint8)
-
-def _shades_of_gray_cc_linear(bgr: np.ndarray, p: int = 4, gain_clip=(0.90, 1.10)) -> np.ndarray:
-    # Linear-space SoG; skip if gains are near-neutral to avoid "plastic skin".
-    lin = _srgb_to_linear_01(bgr)
-    m = np.power(np.mean(np.power(lin, p), axis=(0, 1)) + 1e-8, 1.0 / p)
-    g = float(np.mean(m))
-    gains = g / (m + 1e-8)
-    if (np.max(gains) - np.min(gains)) < 0.06:
-        return bgr.copy()
-    gains = np.clip(gains, gain_clip[0], gain_clip[1])
-    return _linear_to_srgb_u8(lin * gains[None, None, :])
-
-def _clahe_conditional(bgr: np.ndarray, clip_limit: float = 1.05, tile=(8, 8), std_thresh: float = 45.0) -> np.ndarray:
-    # Apply CLAHE only when L-channel has low contrast.
-    lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-    if float(l.std()) < std_thresh:
-        clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile)
-        l = clahe.apply(l)
-    return cv2.cvtColor(cv2.merge((l, a, b)), cv2.COLOR_LAB2BGR)
+# --- Collage-Specific Helpers (logic that requires multiple images) ---
 
 def _variance_of_laplacian(bgr: np.ndarray) -> float:
+    """Calculates the sharpness of an image."""
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     return float(cv2.Laplacian(gray, cv2.CV_64F, ksize=3).var())
 
 def _choose_reference_index(tiles: List[np.ndarray]) -> int:
+    """Selects the best tile from a list to be the color reference."""
     best_idx, best_score = 0, -1e9
     for i, t in enumerate(tiles):
         sharp = _variance_of_laplacian(t)
@@ -119,107 +56,23 @@ def _choose_reference_index(tiles: List[np.ndarray]) -> int:
             best_score, best_idx = score, i
     return best_idx
 
-def _center_crop_to_aspect(bgr: np.ndarray, aspect: float) -> np.ndarray:
-    h, w = bgr.shape[:2]
-    ar = w / float(h)
-    if ar > aspect:
-        new_w = int(round(h * aspect))
-        x1 = max(0, (w - new_w) // 2)
-        return bgr[:, x1:x1 + new_w]
-    else:
-        new_h = int(round(w / aspect))
-        y1 = max(0, (h - new_h) // 2 - int(0.05 * h))  # slight upward bias
-        y1 = max(0, min(y1, h - new_h))
-        return bgr[y1:y1 + new_h, :]
-
-def _crop_around_face(bgr: np.ndarray, aspect: float) -> np.ndarray:
-    h, w = bgr.shape[:2]
-    with mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.35) as fd:
-        res = fd.process(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
-    bbox = None
-    if res and res.detections:
-        best, best_area = None, -1.0
-        for det in res.detections:
-            r = det.location_data.relative_bounding_box
-            xa = max(0.0, r.xmin) * w
-            ya = max(0.0, r.ymin) * h
-            wa = max(1.0, r.width * w)
-            ha = max(1.0, r.height * h)
-            area = wa * ha
-            if area > best_area:
-                best_area, best = area, (xa, ya, wa, ha)
-        bbox = best
-    if bbox is None:
-        return _center_crop_to_aspect(bgr, aspect)
-    x, y, bw, bh = bbox
-    cx, cy = x + bw / 2.0, y + bh / 2.0
-    s = max(bw, bh) * 2.4  # cover head+shoulders
-    tw, th = s, s / aspect
-    scale = min(w / max(tw, 1e-6), h / max(th, 1e-6), 1.0)
-    tw *= scale; th *= scale
-    left = int(round(cx - tw / 2.0)); top = int(round(cy - th / 2.0))
-    left = max(0, min(left, w - int(tw))); top = max(0, min(top, h - int(th)))
-    right = left + int(tw); bottom = top + int(th)
-    return bgr[top:bottom, left:right]
-
-def _resize_smart(bgr: np.ndarray, W: int, H: int) -> np.ndarray:
-    h, w = bgr.shape[:2]
-    interp = cv2.INTER_AREA if (w > W or h > H) else cv2.INTER_CUBIC
-    return cv2.resize(bgr, (W, H), interpolation=interp)
-
 def _skin_mask_ycrcb(bgr: np.ndarray) -> np.ndarray:
-    # Conservative skin mask in YCrCb; output [0..1]
+    """Creates a conservative skin mask in YCrCb color space."""
     ycrcb = cv2.cvtColor(bgr, cv2.COLOR_BGR2YCrCb)
     skin = cv2.inRange(ycrcb, (0, 133, 77), (255, 173, 127))
     skin = cv2.medianBlur(skin, 5)
-    skin = cv2.morphologyEx(skin, cv2.MORPH_CLOSE, np.ones((3,3), np.uint8), iterations=1)
     return (skin.astype(np.float32) / 255.0)
 
-def _person_alpha_mask_improved(bgr: np.ndarray, t_fg=0.92, t_bg=0.18, feather_px=6) -> np.ndarray:
-    # Selfie segmentation + distance transform alpha + bilateral smoothing.
-    h, w = bgr.shape[:2]
-    with mp.solutions.selfie_segmentation.SelfieSegmentation(model_selection=1) as seg:
-        res = seg.process(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
-    if res is None or res.segmentation_mask is None:
-        return np.ones((h, w), dtype=np.float32)
-    prob = res.segmentation_mask.astype(np.float32)
-    sure_fg = (prob >= t_fg).astype(np.uint8) * 255
-    sure_bg = (prob <= t_bg).astype(np.uint8) * 255
-    kernel = np.ones((5, 5), np.uint8)
-    sure_fg = cv2.morphologyEx(sure_fg, cv2.MORPH_CLOSE, kernel, iterations=1)
-    sure_bg = cv2.morphologyEx(sure_bg, cv2.MORPH_CLOSE, kernel, iterations=1)
-    dist_fg = cv2.distanceTransform(cv2.bitwise_not(sure_fg), cv2.DIST_L2, 3)
-    dist_bg = cv2.distanceTransform(cv2.bitwise_not(sure_bg), cv2.DIST_L2, 3)
-    eps = 1e-6
-    a_unknown = dist_bg / (dist_bg + dist_fg + eps)
-    a_unknown = np.clip(a_unknown, 0.0, 1.0)
-    alpha = np.where(sure_fg == 255, 1.0, np.where(sure_bg == 255, 0.0, a_unknown)).astype(np.float32)
-    alpha_bi = cv2.bilateralFilter(alpha, d=7, sigmaColor=0.15, sigmaSpace=5)
-    alpha = cv2.GaussianBlur(alpha_bi, (0, 0), sigmaX=max(3, feather_px)/3.0, sigmaY=max(3, feather_px)/3.0)
-    return np.clip(alpha, 0.0, 1.0)
-
-def _composite_on_gray_improved(bgr: np.ndarray, bg=(190, 190, 190)) -> np.ndarray:
-    a = _person_alpha_mask_improved(bgr)[:, :, None]
-    bg_img = np.full_like(bgr, bg, dtype=np.uint8)
-    comp = (a * bgr.astype(np.float32) + (1.0 - a) * bg_img.astype(np.float32)).astype(np.uint8)
-    return comp
-
-def _reinhard_color_transfer_masked(src_bgr: np.ndarray, ref_bgr: np.ndarray,
-                                    src_mask: Optional[np.ndarray] = None,
-                                    ref_mask: Optional[np.ndarray] = None,
-                                    alpha: float = 0.40) -> np.ndarray:
-    # Restrict stats to SKIN within PERSON.
-    if src_mask is not None:
-        src_mask = np.clip(src_mask * _skin_mask_ycrcb(src_bgr), 0.0, 1.0)
-    if ref_mask is not None:
-        ref_mask = np.clip(ref_mask * _skin_mask_ycrcb(ref_bgr), 0.0, 1.0)
+def _reinhard_color_transfer_masked(src_bgr: np.ndarray, ref_bgr: np.ndarray, alpha: float = 0.40) -> np.ndarray:
+    """
+    Transfers color from a reference image to a source image, focusing on skin tones.
+    Assumes person/background mask is already applied (gray background).
+    """
+    src_mask = _skin_mask_ycrcb(src_bgr)
+    ref_mask = _skin_mask_ycrcb(ref_bgr)
 
     def _stats_lab(bgr, mask):
         lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
-        if mask is None:
-            mean = np.array([lab[..., i].mean() for i in range(3)], np.float32)
-            std  = np.array([lab[..., i].std()  for i in range(3)], np.float32)
-            return lab, mean, std
         w = np.clip(mask.astype(np.float32), 0.0, 1.0)
         w3 = np.dstack([w, w, w]); tot = w.sum() + 1e-6
         mean = (lab * w3).reshape(-1, 3).sum(0) / tot
@@ -227,108 +80,66 @@ def _reinhard_color_transfer_masked(src_bgr: np.ndarray, ref_bgr: np.ndarray,
         return lab, mean, std
 
     src_lab, sm, ss = _stats_lab(src_bgr, src_mask)
-    ref_lab, rm, rs = _stats_lab(ref_bgr, ref_mask)
+    _, rm, rs = _stats_lab(ref_bgr, ref_mask)
+    
     out = np.empty_like(src_lab)
     for i in range(3):
         ch = src_lab[..., i]
         ch = (ch - sm[i]) / (ss[i] if ss[i] > 1e-6 else 1.0)
         ch = ch * (rs[i] if rs[i] > 1e-6 else 1.0) + rm[i]
         out[..., i] = ch
+    
     out = np.clip(out, 0, 255).astype(np.uint8)
     out_bgr = cv2.cvtColor(out, cv2.COLOR_LAB2BGR)
     return cv2.addWeighted(out_bgr, alpha, src_bgr, 1.0 - alpha, 0.0)
 
-def _usm(bgr: np.ndarray, amount: float = 0.45, radius: float = 0.7, thresh: int = 3) -> np.ndarray:
-    blur = cv2.GaussianBlur(bgr, (0, 0), radius)
-    mask = cv2.subtract(bgr, blur)
-    gray = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
-    mask[gray < thresh] = 0
-    return cv2.addWeighted(bgr, 1.0, mask, amount, 0)
+# --- Public API ---
 
-# --------------- Public API ---------------
-
-def create_portrait_collage_from_bytes(image_bytes_list: List[bytes]) -> Optional[bytes]:
+def create_portrait_collage_from_bytes(processed_tiles_bytes: List[bytes]) -> Optional[bytes]:
     """
-    Build ONE 2x2 portrait collage (1152x1024, AR 9:8) from exactly 4 images.
-    Pipeline:
-      1) Linear-sRGB Shades-of-Gray WB (soft, clipped, auto-skip if near-neutral),
-      2) Face crop to 9:8 via MediaPipe FaceDetection (head-and-shoulders),
-      3) Conditional CLAHE (very light) in Lab,
-      4) Resize tiles to 576x512,
-      5) Choose a reference tile by sharpness (variance of Laplacian),
-      6) Reinhard color transfer to reference on SKIN-within-PERSON mask (alpha=0.40),
-      7) Selfie Segmentation + distance-transform alpha + bilateral smoothing; gray BG (190,190,190),
-      8) Light Unsharp Mask (recover micro-textures),
-      9) Assemble 2x2 collage and return JPEG bytes.
+    Assembles a 2x2 portrait collage from a list of pre-processed image tiles.
+
+    This function expects exactly 4 byte strings, each representing a standardized
+    576x512 tile with a neutral gray background. Its responsibilities are:
+      1) Select the best tile as a color reference.
+      2) Apply color transfer from the reference to the other three tiles.
+      3) Assemble the final 2x2 collage (1152x1024).
+    
+    Args:
+        processed_tiles_bytes: A list of 4 byte strings for the pre-processed tiles.
+
+    Returns:
+        The final collage image as JPEG bytes, or None on failure.
     """
-
-    # ---------- pipeline ----------
-
-    if not image_bytes_list or len(image_bytes_list) != 4:
-        logger.warning("Exactly 4 images are required.")
+    if not processed_tiles_bytes or len(processed_tiles_bytes) != 4:
+        logger.warning("Exactly 4 pre-processed image tiles are required for the collage.")
         return None
 
     try:
-        canvas_w, canvas_h = TIKTOK_CANVAS_W, TIKTOK_CANVAS_H   # 1152x1024
-        tile_w, tile_h = canvas_w // 2, canvas_h // 2           # 576x512
-        target_aspect = float(tile_w) / float(tile_h)           # 9/8
+        tiles = [load_image_bgr_from_bytes(data) for data in processed_tiles_bytes]
+        if any(t is None for t in tiles):
+            raise ValueError("Failed to load one or more pre-processed tiles from bytes.")
 
-        pre_tiles: List[np.ndarray] = []
-        pre_masks: List[np.ndarray] = []
-
-        for data in image_bytes_list:
-            img = load_image_bgr_from_bytes(data)
-            if img is None:
-                pre_tiles.append(np.full((tile_h, tile_w, 3), (190, 190, 190), dtype=np.uint8))
-                pre_masks.append(np.ones((tile_h, tile_w), dtype=np.float32))
-                continue
-
-            # WB (soft, auto-skip if near-neutral)
-            img = _shades_of_gray_cc_linear(img, p=4, gain_clip=(0.90, 1.10))
-
-            # Crop to aspect around the face
-            crop = _crop_around_face(img, target_aspect)
-
-            # Light, conditional CLAHE
-            crop = _clahe_conditional(crop, clip_limit=1.05, tile=(8, 8), std_thresh=45.0)
-
-            # Resize to tile size
-            tile = _resize_smart(crop, tile_w, tile_h)
-
-            # Person mask for later color transfer and background replacement
-            person_mask = _person_alpha_mask_improved(tile, t_fg=0.92, t_bg=0.18, feather_px=6)
-
-            pre_tiles.append(tile)
-            pre_masks.append(person_mask)
-
-        # Choose the reference tile
-        ref_idx = _choose_reference_index(pre_tiles)
-        ref_tile = pre_tiles[ref_idx]
-        ref_mask = pre_masks[ref_idx]
-
-        # Color transfer to reference (only on skin within person), alpha=0.40
-        tiles_color = []
-        for i, t in enumerate(pre_tiles):
+        # 1. Choose the reference tile
+        ref_idx = _choose_reference_index(tiles)
+        ref_tile = tiles[ref_idx]
+        
+        # 2. Apply color transfer to the other tiles
+        final_tiles = []
+        for i, t in enumerate(tiles):
             if i == ref_idx:
-                tiles_color.append(t)
+                final_tiles.append(t)
             else:
-                tiles_color.append(
-                    _reinhard_color_transfer_masked(t, ref_tile, pre_masks[i], ref_mask, alpha=0.40)
-                )
-
-        # Composite on neutral gray and apply light USM
-        tiles_comp = []
-        for t in tiles_color:
-            comp = _composite_on_gray_improved(t, bg=(190, 190, 190))
-            comp = _usm(comp, amount=0.45, radius=0.7, thresh=3)
-            tiles_comp.append(comp)
-
-        # Assemble 2x2 collage
-        canvas = np.full((canvas_h, canvas_w, 3), (190, 190, 190), dtype=np.uint8)
-        canvas[0:tile_h, 0:tile_w] = tiles_comp[0]
-        canvas[0:tile_h, tile_w:canvas_w] = tiles_comp[1]
-        canvas[tile_h:canvas_h, 0:tile_w] = tiles_comp[2]
-        canvas[tile_h:canvas_h, tile_w:canvas_w] = tiles_comp[3]
+                final_tiles.append(_reinhard_color_transfer_masked(t, ref_tile, alpha=0.40))
+        
+        # 3. Assemble the 2x2 collage
+        tile_h, tile_w, _ = final_tiles[0].shape
+        canvas = np.full((TIKTOK_CANVAS_H, TIKTOK_CANVAS_W, 3), (190, 190, 190), dtype=np.uint8)
+        
+        canvas[0:tile_h, 0:tile_w] = final_tiles[0]
+        canvas[0:tile_h, tile_w:TIKTOK_CANVAS_W] = final_tiles[1]
+        canvas[tile_h:TIKTOK_CANVAS_H, 0:tile_w] = final_tiles[2]
+        canvas[tile_h:TIKTOK_CANVAS_H, tile_w:TIKTOK_CANVAS_W] = final_tiles[3]
 
         return convert_bgr_to_jpeg_bytes(canvas, quality=95)
 
@@ -337,11 +148,9 @@ def create_portrait_collage_from_bytes(image_bytes_list: List[bytes]) -> Optiona
         return None
 
 
-
 def split_and_stack_image_bytes(image_bytes: bytes) -> tuple[bytes | None, bytes | None]:
     """
-    Split a horizontally concatenated image (front + side view) into two separate images.
-    No letterbox removal here: generation must be full-bleed by prompt & collage.
+    Splits a horizontally concatenated image (front + side view) into two separate images.
     """
     try:
         img_bgr = load_image_bgr_from_bytes(image_bytes)

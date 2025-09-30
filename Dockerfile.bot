@@ -43,6 +43,8 @@ WORKDIR /app
 COPY --from=builder /app/.venv ./.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
+COPY ./models /root/.insightface/models
+
 COPY ./aiogram_bot_template /app/aiogram_bot_template
 COPY ./entrypoint.sh /app/entrypoint.sh
 COPY ./alembic.ini /app/alembic.ini
