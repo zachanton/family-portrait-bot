@@ -124,10 +124,10 @@ async def process_photo_batch(
         parent_to_sort = None
         if len(mom_photos) >= MIN_PHOTOS_PER_PARENT and not data.get("mom_photos_sorted"):
             parent_to_sort = (mom_photos, ImageRole.MOTHER.value, "mom_photos_sorted")
-            await status_msg.edit_text(_("Great! Analyzing Mom's photos for similarity... ✨"))
+            await status_msg.edit_text(_("Great! Checking consistency of photos... ✨"))
         elif len(dad_photos) >= MIN_PHOTOS_PER_PARENT and not data.get("dad_photos_sorted"):
             parent_to_sort = (dad_photos, ImageRole.FATHER.value, "dad_photos_sorted")
-            await status_msg.edit_text(_("Perfect! Analyzing Dad's photos for similarity... ✨"))
+            await status_msg.edit_text(_("Perfect! Checking consistency of photos... ✨"))
         
         if parent_to_sort:
             photos_list, role_str, state_flag = parent_to_sort

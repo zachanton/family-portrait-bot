@@ -54,7 +54,6 @@ class ChildGenerationPipeline(BasePipeline):
         father_bytes_list = await get_all_processed_bytes(dad_photos)
         mother_bytes_list = await get_all_processed_bytes(mom_photos)
 
-        # --- NEW: Calculate identity centroids for each parent ---
         async def get_centroid(bytes_list):
             if not bytes_list:
                 return None
@@ -71,7 +70,6 @@ class ChildGenerationPipeline(BasePipeline):
             get_centroid(father_bytes_list)
         )
         self.log.info("Calculated parent identity centroids.", has_mom_centroid=mom_centroid is not None, has_dad_centroid=dad_centroid is not None)
-        # --- END NEW ---
 
         await self.update_status_func(_("Preparing parent portraits... 🖼️"))
         
@@ -106,13 +104,13 @@ class ChildGenerationPipeline(BasePipeline):
             _("Creating visual representations of parents... 🧑‍🎨")
         )
 
-        # --- MODIFIED: Pass centroids to the enhancer ---
+        # --- MODIFIED: Pass cache_pool to the enhancer ---
         visual_tasks = [
             parent_visual_enhancer.get_parent_visual_representation(
-                [mom_collage_url], role="mother", identity_centroid=mom_centroid
+                [mom_collage_url], role="mother", identity_centroid=mom_centroid, cache_pool=self.cache_pool
             ),
             parent_visual_enhancer.get_parent_visual_representation(
-                [dad_collage_url], role="father", identity_centroid=dad_centroid
+                [dad_collage_url], role="father", identity_centroid=dad_centroid, cache_pool=self.cache_pool
             ),
         ]
         # --- END MODIFICATION ---
