@@ -107,10 +107,10 @@ class ChildGenerationPipeline(BasePipeline):
         # --- MODIFIED: Pass cache_pool to the enhancer ---
         visual_tasks = [
             parent_visual_enhancer.get_parent_visual_representation(
-                [mom_collage_url], role="mother", identity_centroid=mom_centroid, cache_pool=self.cache_pool
+                mom_collage_url, role="mother", identity_centroid=mom_centroid, cache_pool=self.cache_pool
             ),
             parent_visual_enhancer.get_parent_visual_representation(
-                [dad_collage_url], role="father", identity_centroid=dad_centroid, cache_pool=self.cache_pool
+                dad_collage_url, role="father", identity_centroid=dad_centroid, cache_pool=self.cache_pool
             ),
         ]
         # --- END MODIFICATION ---

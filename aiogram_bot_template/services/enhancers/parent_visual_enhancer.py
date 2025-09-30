@@ -136,7 +136,7 @@ async def _run_identity_feedback_check(
 
 
 async def get_parent_visual_representation(
-    image_urls: List[str],
+    image_url: str,
     role: str = "mother",
     identity_centroid: Optional[np.ndarray] = None,
     cache_pool: Optional[object] = None, # Accept cache_pool for the new task
@@ -152,7 +152,7 @@ async def get_parent_visual_representation(
        - A detailed, LLM-based textual feedback on identity preservation.
 
     Args:
-        image_urls: A list of public URLs to the collage of the parent's photos.
+        image_url: A public URL to the collage of the parent's photos.
         role: The role of the parent ('mother' or 'father').
         identity_centroid: An optional NumPy array representing the identity vector.
         cache_pool: An optional Redis connection pool, required for feedback check.
@@ -170,7 +170,7 @@ async def get_parent_visual_representation(
     log = logger.bind(
         visual_model=visual_config.model,
         text_model=text_config.model,
-        image_urls=image_urls,
+        image_url=image_url,
         role=role
     )
 
@@ -187,7 +187,7 @@ async def get_parent_visual_representation(
                 {"role": "system", "content": _TEXTUAL_ENHANCEMENT_SYSTEM_PROMPT},
                 {"role": "user", "content": [
                     {"type": "text", "text": user_prompt_text},
-                    {"type": "image_url", "image_url": {"url": image_urls[0]}},
+                    {"type": "image_url", "image_url": {"url": image_url}},
                 ]},
             ],
             max_tokens=250,
@@ -215,7 +215,7 @@ async def get_parent_visual_representation(
         visual_response = await visual_client.images.generate(
             model=visual_config.model,
             prompt=final_visual_prompt,
-            image_urls=image_urls,
+            image_url=image_url,
             temperature=0.1,
         )
 
@@ -253,7 +253,7 @@ async def get_parent_visual_representation(
         if cache_pool:
             asyncio.create_task(
                 _run_identity_feedback_check(
-                    reference_url=image_urls[0],
+                    reference_url=image_url,
                     generated_bytes=image_bytes,
                     role=role,
                     cache_pool=cache_pool,
