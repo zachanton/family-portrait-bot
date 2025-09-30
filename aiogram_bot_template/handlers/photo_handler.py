@@ -19,7 +19,7 @@ album_message_cache: Dict[str, List[Message]] = {}
 album_tasks: Dict[str, asyncio.Task] = {}
 
 # The minimum number of high-quality photos required for EACH parent.
-MIN_PHOTOS_PER_PARENT = 5
+MIN_PHOTOS_PER_PARENT = 3
 
 async def proceed_to_child_params(message: Message, state: FSMContext) -> None:
     """

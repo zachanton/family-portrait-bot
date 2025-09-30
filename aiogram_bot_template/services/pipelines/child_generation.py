@@ -88,8 +88,8 @@ class ChildGenerationPipeline(BasePipeline):
         )
 
         visual_tasks = [
-            parent_visual_enhancer.get_parent_visual_representation(mom_collage_url, role="mother"),
-            parent_visual_enhancer.get_parent_visual_representation(dad_collage_url, role="father"),
+            parent_visual_enhancer.get_parent_visual_representation([mom_collage_url], role="mother"),
+            parent_visual_enhancer.get_parent_visual_representation([dad_collage_url], role="father"),
         ]
         mom_visual_horizontal_bytes, dad_visual_horizontal_bytes = await asyncio.gather(*visual_tasks)
 
