@@ -70,7 +70,7 @@ def load_image_bgr_from_bytes(data: bytes) -> Optional[np.ndarray]:
         img = ImageOps.exif_transpose(img)
         if img.mode != "RGB":
             img = img.convert("RGB")
-        return cv2.cvtColor(np.array(img), cv2.COLOR_RGB_BGR)
+        return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
     except Exception:
         logger.exception("Failed to load image from bytes.")
         return None

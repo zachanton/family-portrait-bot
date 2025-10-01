@@ -3,16 +3,21 @@ import asyncio
 import uuid
 import structlog
 import numpy as np
-from typing import Optional, List
+import json
+from typing import Optional, Tuple
 
 from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.services import similarity_scorer, photo_processing, image_cache
 from aiogram_bot_template.services.clients import factory as client_factory
-# --- NEW: Import the identity feedback enhancer ---
 from aiogram_bot_template.services.enhancers import identity_feedback_enhancer
+from aiogram_bot_template.services.enhancers.identity_feedback_enhancer import IdentityFeedbackResponse
 
 
 logger = structlog.get_logger(__name__)
+
+# --- NEW: Configuration for the iterative refinement process ---
+MAX_REFINEMENT_ITERATIONS = 2  # Total attempts: 1 initial + (N-1) refinements
+MIN_SIMILARITY_THRESHOLD = 0.8  # The target score for both embedding and LLM feedback
 
 # --- Textual Feature Extractor Prompt (unchanged) ---
 _TEXTUAL_ENHANCEMENT_SYSTEM_PROMPT = """
@@ -41,7 +46,7 @@ You are an expert AI photo analyst. Your mission is to distill the unique, perma
 **Example Output:** "This person has a long, oval face with high cheekbones. Key features to preserve are their deep-set, dark brown eyes and thick, arched eyebrows. The nose is characterized by a straight dorsal bridge and a well-defined tip. They have a prominent square chin. A noticeable feature is a small mole on the left cheek, just beside the nostril. The person does not wear glasses."
 """
 
-# --- Visual Generator Prompt (unchanged) ---
+# --- Initial Visual Generator Prompt (unchanged) ---
 _PARENT_VISUAL_ENHANCER_SYSTEM_PROMPT = """
 You are Nano Banana (Gemini 2.5 Flash Image) acting as an ID-consolidation module (InstantID / PhotoMaker / ID-Adapter style).
 
@@ -97,16 +102,65 @@ OUTPUT
 • Return ONE image only: landscape canvas with those two side-by-side full-bleed panels (no borders, no captions).
 """
 
-# --- NEW: Background task for identity feedback ---
-async def _run_identity_feedback_check(
+# --- NEW: Visual Refinement Prompt ---
+_PARENT_VISUAL_REFINEMENT_PROMPT = """
+You are Nano Banana (Gemini 2.5 Flash Image) acting as an advanced ID-refinement module. Your task is to perform targeted, in-place editing on a candidate image to maximize its identity match with a reference.
+
+**INPUTS**
+*   **Image A (Reference Collage):** The absolute ground truth for the person's identity. This is a 2x2 collage.
+*   **Image B (Candidate to Refine):** The image you must edit. This is a horizontal image with two panels (front and side view).
+
+**GOAL**
+Edit **Image B** *in-place*. Do NOT regenerate it from scratch. Your goal is to modify it to perfectly match the identity in **Image A**, based on the specific feedback provided below. The final output must retain the exact two-panel layout and style of Image B.
+
+**DETAILED FEEDBACK FOR REFINEMENT (Apply these changes to Image B):**
+{{DETAILED_FEEDBACK}}
+
+**UNCHANGING CONSTRAINTS (These must be preserved from Image B):**
+*   **Layout:** One landscape canvas, aspect ratio 9:8, with two equal-width, full-bleed panels (front view on left, profile on right).
+*   **Background:** Uniform light gray (sRGB ≈ 190,190,190).
+*   **Wardrobe:** White T-shirt.
+*   **Lighting:** Neutral studio lighting.
+*   **Overall Style:** Photorealistic, no beautification.
+
+**REFINEMENT PROCESS:**
+1.  Analyze the `DETAILED_FEEDBACK`.
+2.  For each point of feedback, precisely adjust the corresponding feature in **Image B** to match **Image A**.
+3.  For any features marked as a "Perfect match", do not change them.
+4.  Preserve all natural asymmetries, skin textures (moles, freckles), and unique characteristics from Image A.
+
+**OUTPUT**
+*   Return ONE image only: the edited, refined version of Image B that now has a higher identity similarity to Image A.
+"""
+
+
+def _format_feedback_for_prompt(feedback: IdentityFeedbackResponse) -> str:
+    """Formats the structured feedback into a human-readable string for the prompt."""
+    if not feedback:
+        return "No specific feedback available. Perform a general identity enhancement."
+    
+    lines = [
+        f"The previous attempt had a similarity score of {feedback.similarity_score:.2f}. "
+        "Focus on the following corrections:"
+    ]
+    for feature, details in feedback.feedback_details.items():
+        if not details.is_match:
+            lines.append(f"- **{feature.replace('_', ' ').title()}:** {details.feedback}")
+    
+    if len(lines) == 1:
+        return "The previous image was a very close match. Perform a final pass to perfect all micro-features like skin texture and subtle asymmetries."
+
+    return "\n".join(lines)
+
+
+async def _get_identity_feedback_and_score(
     reference_url: str,
     generated_bytes: bytes,
-    role: str,
     cache_pool,
     log: structlog.typing.FilteringBoundLogger
-) -> None:
+) -> tuple[float | None, IdentityFeedbackResponse | None]:
     """
-    A background task to run the identity feedback enhancer and log the results.
+    Runs the identity feedback enhancer and returns the score and full response.
     """
     temp_uid = f"temp_feedback_candidate_{uuid.uuid4().hex}"
     try:
@@ -121,15 +175,16 @@ async def _run_identity_feedback_check(
         if feedback_result:
             log.info(
                 "LLM-based identity feedback received.",
-                role=role,
                 llm_similarity_score=feedback_result.similarity_score,
-                feedback_details=feedback_result.model_dump_json(indent=2)
             )
+            return feedback_result.similarity_score, feedback_result
         else:
-            log.warning("LLM-based identity feedback task failed to produce a result.", role=role)
+            log.warning("LLM-based identity feedback task failed to produce a result.")
+            return None, None
 
     except Exception:
-        log.exception("Error in background identity feedback check task.", role=role)
+        log.exception("Error in identity feedback check.")
+        return None, None
     finally:
         # Clean up the temporary cached image
         await cache_pool.delete(temp_uid)
@@ -139,26 +194,11 @@ async def get_parent_visual_representation(
     image_url: str,
     role: str = "mother",
     identity_centroid: Optional[np.ndarray] = None,
-    cache_pool: Optional[object] = None, # Accept cache_pool for the new task
+    cache_pool: Optional[object] = None,
 ) -> Optional[bytes]:
     """
-    Generates a consolidated visual representation (front and side view) of a parent.
-
-    This function performs a two-stage process:
-    1. Textual analysis to extract key facial features.
-    2. Visual generation of a high-fidelity front-and-side portrait.
-    3. It also runs two background checks on the generated image:
-       - An embedding-based similarity score against the original photos.
-       - A detailed, LLM-based textual feedback on identity preservation.
-
-    Args:
-        image_url: A public URL to the collage of the parent's photos.
-        role: The role of the parent ('mother' or 'father').
-        identity_centroid: An optional NumPy array representing the identity vector.
-        cache_pool: An optional Redis connection pool, required for feedback check.
-
-    Returns:
-        The generated image as bytes, or None on failure.
+    Generates a consolidated visual representation (front and side view) of a parent,
+    iteratively refining it to meet a similarity threshold.
     """
     visual_config = settings.visual_enhancer
     text_config = settings.text_enhancer
@@ -175,12 +215,10 @@ async def get_parent_visual_representation(
     )
 
     try:
-        # STAGE 1: Textual Feature Extraction
+        # STAGE 1: Textual Feature Extraction (done once)
         log.info("Requesting textual feature extraction for parent visual.")
         text_client = client_factory.get_ai_client(text_config.client)
-
         user_prompt_text = "Analyze the person in this collage and generate the feature description based on the system prompt rules."
-
         text_response = await text_client.chat.completions.create(
             model=text_config.model,
             messages=[
@@ -189,83 +227,103 @@ async def get_parent_visual_representation(
                     {"type": "text", "text": user_prompt_text},
                     {"type": "image_url", "image_url": {"url": image_url}},
                 ]},
-            ],
-            max_tokens=250,
-            temperature=0.2,
+            ], max_tokens=250, temperature=0.2,
         )
         feature_description_text = text_response.choices[0].message.content
         if not feature_description_text:
-            log.warning("Text enhancer returned an empty response. Proceeding without enhancement.")
-            feature_description_text = ""
+            log.warning("Text enhancer returned empty response. Proceeding without enhancement.")
+            feature_description_text = "A detailed description of the person's face."
         else:
             log.info("Successfully received textual features.", features=feature_description_text.strip())
 
-        # STAGE 2: Visual Representation Generation
+        # STAGE 2: Iterative Visual Generation and Refinement
         visual_client = client_factory.get_ai_client(visual_config.client)
-
-        final_visual_prompt = _PARENT_VISUAL_ENHANCER_SYSTEM_PROMPT.replace(
-            "{{ENHANCED_IDENTITY_FEATURES}}", feature_description_text.strip()
-        )
         
-        if type(visual_client).__name__ == 'MockAIClient':
-            final_visual_prompt = f"ROLE: {role}. {final_visual_prompt}"
+        best_image_bytes: Optional[bytes] = None
+        best_combined_score: float = -1.0
+        current_candidate_bytes: Optional[bytes] = None
+        feedback_for_next_iteration: Optional[IdentityFeedbackResponse] = None
 
-        log.info("Requesting parent visual representation with enhanced prompt.")
+        for attempt in range(1, MAX_REFINEMENT_ITERATIONS + 1):
+            attempt_log = log.bind(attempt=f"{attempt}/{MAX_REFINEMENT_ITERATIONS}")
+            
+            image_urls = [image_url]
+            prompt = ""
+            
+            generation_kwargs = {
+                "model": visual_config.model,
+                "prompt": "",
+                "image_urls": [],
+                "temperature": 0.1,
+                "role": role 
+            }
 
-        visual_response = await visual_client.images.generate(
-            model=visual_config.model,
-            prompt=final_visual_prompt,
-            image_url=image_url,
-            temperature=0.1,
-        )
+            if attempt == 1:
+                # --- Initial Generation ---
+                attempt_log.info("Performing initial visual representation generation.")
+                generation_kwargs["prompt"] = _PARENT_VISUAL_ENHANCER_SYSTEM_PROMPT.replace(
+                    "{{ENHANCED_IDENTITY_FEATURES}}", feature_description_text.strip()
+                )
+                generation_kwargs["image_urls"] = [image_url]
+            else:
+                # --- Refinement Iteration ---
+                if not current_candidate_bytes or not feedback_for_next_iteration:
+                    attempt_log.warning("Skipping refinement attempt due to missing data from previous iteration.")
+                    continue
+                
+                attempt_log.info("Performing refinement of visual representation.")
+                
+                candidate_uid = f"candidate_refine_{uuid.uuid4().hex}"
+                await image_cache.cache_image_bytes(candidate_uid, current_candidate_bytes, "image/jpeg", cache_pool)
+                candidate_url = image_cache.get_cached_image_proxy_url(candidate_uid)
+                
+                generation_kwargs["image_urls"] = [image_url, candidate_url]
 
-        image_bytes = getattr(visual_response, "image_bytes", None)
-        if not image_bytes:
-            log.warning(
-                "Parent visual enhancer returned no image bytes.",
-                response_payload=getattr(visual_response, "response_payload", None),
-            )
-            return None
-        
-        # STAGE 3: Post-Generation Analysis (run in background)
-        
-        # 3a. Embedding-based Similarity Score
-        if identity_centroid is not None:
-            try:
-                front_bytes, _ = photo_processing.split_and_stack_image_bytes(image_bytes)
+                feedback_str = _format_feedback_for_prompt(feedback_for_next_iteration)
+                generation_kwargs["prompt"] = _PARENT_VISUAL_REFINEMENT_PROMPT.replace("{{DETAILED_FEEDBACK}}", feedback_str)
+
+            # --- Generate the image ---
+            visual_response = await visual_client.images.generate(**generation_kwargs)
+            current_candidate_bytes = getattr(visual_response, "image_bytes", None)
+
+            if not current_candidate_bytes:
+                attempt_log.warning("Visual generator returned no image bytes for this attempt.")
+                continue
+
+            # --- Evaluate the generated image ---
+            embedding_score = 0.0
+            if identity_centroid is not None:
+                front_bytes, _ = photo_processing.split_and_stack_image_bytes(current_candidate_bytes)
                 if front_bytes:
                     generated_embedding = await similarity_scorer._get_best_face_embedding(front_bytes)
                     if generated_embedding is not None:
-                        similarity_score = np.dot(generated_embedding, identity_centroid)
-                        log.info(
-                            "Calculated embedding similarity for generated visual.",
-                            embedding_similarity_score=round(float(similarity_score), 4),
-                            role=role
-                        )
-                    else:
-                        log.warning("Could not extract face embedding from generated visual.", role=role)
-                else:
-                    log.warning("Failed to split generated visual for embedding scoring.", role=role)
-            except Exception:
-                log.exception("Error during embedding similarity scoring.", role=role)
+                        embedding_score = float(np.dot(generated_embedding, identity_centroid))
 
-        # 3b. LLM-based Identity Feedback
-        if cache_pool:
-            asyncio.create_task(
-                _run_identity_feedback_check(
-                    reference_url=image_url,
-                    generated_bytes=image_bytes,
-                    role=role,
-                    cache_pool=cache_pool,
-                    log=log
-                )
+            llm_score, feedback_for_next_iteration = await _get_identity_feedback_and_score(
+                image_url, current_candidate_bytes, cache_pool, attempt_log
             )
-        else:
-            log.warning("cache_pool not provided to parent_visual_enhancer; skipping LLM feedback check.", role=role)
+            llm_score = llm_score or 0.0
 
-        log.info("Successfully received parent visual representation.")
-        return image_bytes
+            attempt_log.info("Iteration evaluation complete.", embedding_score=embedding_score, llm_score=llm_score)
+
+            # Track the best result so far
+            combined_score = (embedding_score + llm_score) / 2
+            if combined_score > best_combined_score:
+                best_combined_score = combined_score
+                best_image_bytes = current_candidate_bytes
+
+            # Check exit condition
+            if embedding_score >= MIN_SIMILARITY_THRESHOLD and llm_score >= MIN_SIMILARITY_THRESHOLD:
+                attempt_log.info("Similarity thresholds met. Exiting refinement loop.")
+                break
+        
+        if not best_image_bytes:
+            log.error("Failed to generate any valid visual representation after all attempts.")
+            return None
+
+        log.info("Parent visual representation process complete.", final_score=best_combined_score)
+        return best_image_bytes
 
     except Exception:
-        log.exception("An error occurred during parent visual representation generation.")
+        log.exception("An unhandled error occurred during parent visual representation generation.")
         return None

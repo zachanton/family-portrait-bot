@@ -36,21 +36,30 @@ class _MockImagesNamespace:
         logger.info("MOCK Images: Simulating final image generation...")
         await asyncio.sleep(1)
 
-        # Determine which mock image to use based on the context
         generation_type = kwargs.get("generation_type")
         prompt = kwargs.get("prompt", "")
+        # --- NEW: Explicitly get the role ---
+        role = kwargs.get("role")
+        
+        image_path = None
+        fallback_color = "red" # Default fallback color
 
         # 1. Check for the specific prompt of the parent visual enhancer first.
-        # We use a unique phrase from its system prompt.
-        if "ID-consolidation" in prompt:
-            if "mother" in prompt.lower():
+        if "ID-consolidation" in prompt or "ID-refinement" in prompt:
+            # --- REVISED LOGIC: Use the 'role' parameter directly ---
+            if role == "mother":
                 image_path = _MOCK_MOM_VISUAL_IMAGE_PATH
-                fallback_color = "purple"  # A unique color for fallback
+                fallback_color = "purple"
                 logger.info("MOCK Images: Using mock mother visual representation image.")
-            elif "father" in prompt.lower():
+            elif role == "father":
                 image_path = _MOCK_DAD_VISUAL_IMAGE_PATH
-                fallback_color = "orange"  # A unique color for fallback
+                fallback_color = "orange"
                 logger.info("MOCK Images: Using mock father visual representation image.")
+            else:
+                # --- NEW: Safety fallback to prevent UnboundLocalError ---
+                image_path = _MOCK_FAMILY_IMAGE_PATH
+                fallback_color = "gray"
+                logger.warning("MOCK: ID-consolidation prompt detected but role was not specified. Using default family image.")
         
         # 2. Check for the child generation type.
         elif generation_type == GenerationType.CHILD_GENERATION.value:
@@ -65,6 +74,7 @@ class _MockImagesNamespace:
             logger.info("MOCK Images: Using standard mock family image.")
 
         try:
+            # This line will now always have a valid image_path
             image_bytes = image_path.read_bytes()
         except FileNotFoundError:
             logger.error("Mock image asset not found!", path=image_path)
