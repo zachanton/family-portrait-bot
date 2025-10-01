@@ -54,22 +54,15 @@ class ChildGenerationPipeline(BasePipeline):
         father_bytes_list = await get_all_processed_bytes(dad_photos)
         mother_bytes_list = await get_all_processed_bytes(mom_photos)
 
-        async def get_centroid(bytes_list):
-            if not bytes_list:
-                return None
-            embedding_tasks = [similarity_scorer._get_best_face_embedding(b) for b in bytes_list]
-            embeddings = await asyncio.gather(*embedding_tasks)
-            valid_embeddings = [emb for emb in embeddings if emb is not None]
-            if not valid_embeddings:
-                return None
-            embs_matrix = np.stack(valid_embeddings, axis=0)
-            return similarity_scorer._build_identity_centroid(embs_matrix)
-
         mom_centroid, dad_centroid = await asyncio.gather(
-            get_centroid(mother_bytes_list),
-            get_centroid(father_bytes_list)
+            similarity_scorer.calculate_identity_centroid(mother_bytes_list),
+            similarity_scorer.calculate_identity_centroid(father_bytes_list)
         )
-        self.log.info("Calculated parent identity centroids.", has_mom_centroid=mom_centroid is not None, has_dad_centroid=dad_centroid is not None)
+        self.log.info(
+            "Calculated parent identity centroids.",
+            has_mom_centroid=mom_centroid is not None,
+            has_dad_centroid=dad_centroid is not None
+        )
 
         await self.update_status_func(_("Preparing parent portraits... 🖼️"))
         
@@ -104,7 +97,6 @@ class ChildGenerationPipeline(BasePipeline):
             _("Creating visual representations of parents... 🧑‍🎨")
         )
 
-        # --- MODIFIED: Pass cache_pool to the enhancer ---
         visual_tasks = [
             parent_visual_enhancer.get_parent_visual_representation(
                 mom_collage_url, role="mother", identity_centroid=mom_centroid, cache_pool=self.cache_pool
@@ -113,7 +105,6 @@ class ChildGenerationPipeline(BasePipeline):
                 dad_collage_url, role="father", identity_centroid=dad_centroid, cache_pool=self.cache_pool
             ),
         ]
-        # --- END MODIFICATION ---
         mom_visual_horizontal_bytes, dad_visual_horizontal_bytes = await asyncio.gather(*visual_tasks)
 
         mom_visual_front_bytes, mom_visual_side_bytes = (

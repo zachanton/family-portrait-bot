@@ -70,7 +70,7 @@ def load_image_bgr_from_bytes(data: bytes) -> Optional[np.ndarray]:
         img = ImageOps.exif_transpose(img)
         if img.mode != "RGB":
             img = img.convert("RGB")
-        return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+        return cv2.cvtColor(np.array(img), cv2.COLOR_RGB_BGR)
     except Exception:
         logger.exception("Failed to load image from bytes.")
         return None
@@ -342,7 +342,7 @@ async def select_best_photos_and_process(
     return [(p["unique_id"], p["file_id"], p["bytes"]) for p in valid_photos]
 
 
-# --- NEW: Identity Sorting Logic ---
+# --- NEW: Identity Sorting and Centroid Logic ---
 
 async def _get_best_face_embedding(img_bytes: bytes) -> Optional[np.ndarray]:
     """
@@ -389,6 +389,41 @@ def _build_identity_centroid(embs: np.ndarray, outlier_idx: int = -1) -> np.ndar
     centroid = embs_for_centroid.mean(axis=0)
     norm = np.linalg.norm(centroid)
     return centroid / max(norm, 1e-12)
+
+
+async def calculate_identity_centroid(image_bytes_list: List[bytes]) -> Optional[np.ndarray]:
+    """
+    Calculates a single, robust identity vector (centroid) from a list of images.
+
+    This function extracts face embeddings from all provided images, optionally
+    removes an outlier, and averages the remaining embeddings to create a
+    stable representation of a person's identity.
+
+    Args:
+        image_bytes_list: A list of image bytes, each expected to contain one person.
+
+    Returns:
+        A normalized NumPy array representing the identity centroid, or None if no
+        valid faces could be processed.
+    """
+    if not image_bytes_list:
+        return None
+    
+    embedding_tasks = [_get_best_face_embedding(b) for b in image_bytes_list]
+    embeddings = await asyncio.gather(*embedding_tasks)
+    
+    valid_embeddings = [emb for emb in embeddings if emb is not None]
+    if not valid_embeddings:
+        logger.warning("Could not extract any valid face embeddings to calculate centroid.")
+        return None
+        
+    embs_matrix = np.stack(valid_embeddings, axis=0)
+    outlier_idx = _find_outlier_index(embs_matrix)
+    
+    centroid = _build_identity_centroid(embs_matrix, outlier_idx)
+    logger.info("Calculated identity centroid.", num_embeddings=len(valid_embeddings), outlier_removed=outlier_idx != -1)
+    return centroid
+
 
 async def sort_and_filter_by_identity(
     photos_data: List[dict],
