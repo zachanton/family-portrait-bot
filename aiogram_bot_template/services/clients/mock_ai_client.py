@@ -18,8 +18,8 @@ logger = structlog.get_logger(__name__)
 _ASSETS_DIR = Path(__file__).parent.parent.parent / "assets"
 _MOCK_FAMILY_IMAGE_PATH = _ASSETS_DIR / "family.jpg"
 _MOCK_CHILD_IMAGE_PATH = _ASSETS_DIR / "mock_child_11.jpg"
-_MOCK_MOM_VISUAL_IMAGE_PATH = _ASSETS_DIR / "mock_mom_front_side.png"
-_MOCK_DAD_VISUAL_IMAGE_PATH = _ASSETS_DIR / "mock_dad_front_side.png"
+_MOCK_MOM_VISUAL_IMAGE_PATH = _ASSETS_DIR / "mock_mom_front_side2.png"
+_MOCK_DAD_VISUAL_IMAGE_PATH = _ASSETS_DIR / "mock_dad_front_side2.png"
 
 
 class MockAIClientResponse(BaseModel):

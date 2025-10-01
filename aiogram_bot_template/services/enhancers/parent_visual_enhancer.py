@@ -282,6 +282,7 @@ async def get_parent_visual_representation(
                 feedback_str = _format_feedback_for_prompt(feedback_for_next_iteration)
                 generation_kwargs["prompt"] = _PARENT_VISUAL_REFINEMENT_PROMPT.replace("{{DETAILED_FEEDBACK}}", feedback_str)
 
+            attempt_log.info("Final visual enhancer prompt.", final_prompt=generation_kwargs["prompt"])
             # --- Generate the image ---
             visual_response = await visual_client.images.generate(**generation_kwargs)
             current_candidate_bytes = getattr(visual_response, "image_bytes", None)
@@ -295,8 +296,9 @@ async def get_parent_visual_representation(
             if identity_centroid is not None:
                 front_bytes, _ = photo_processing.split_and_stack_image_bytes(current_candidate_bytes)
                 if front_bytes:
-                    generated_embedding = await similarity_scorer._get_best_face_embedding(front_bytes)
-                    if generated_embedding is not None:
+                    features = await similarity_scorer._extract_face_features(front_bytes)
+                    if features and features.get("embedding") is not None:
+                        generated_embedding = features["embedding"]
                         embedding_score = float(np.dot(generated_embedding, identity_centroid))
 
             llm_score, feedback_for_next_iteration = await _get_identity_feedback_and_score(
@@ -313,7 +315,7 @@ async def get_parent_visual_representation(
                 best_image_bytes = current_candidate_bytes
 
             # Check exit condition
-            if embedding_score >= MIN_SIMILARITY_THRESHOLD and llm_score >= MIN_SIMILARITY_THRESHOLD:
+            if embedding_score >= MIN_SIMILARITY_THRESHOLD or llm_score >= MIN_SIMILARITY_THRESHOLD:
                 attempt_log.info("Similarity thresholds met. Exiting refinement loop.")
                 break
         

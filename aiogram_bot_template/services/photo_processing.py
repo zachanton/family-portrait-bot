@@ -13,6 +13,7 @@ logger = structlog.get_logger(__name__)
 # --- Collage constants ---
 TIKTOK_CANVAS_W = 1152
 TIKTOK_CANVAS_H = 1024
+BACKGROUND_COLOR_TUPLE = (190, 190, 190) # The color used for backgrounds
 
 mp_face_detection = mp.solutions.face_detection
 
@@ -63,13 +64,37 @@ def _skin_mask_ycrcb(bgr: np.ndarray) -> np.ndarray:
     skin = cv2.medianBlur(skin, 5)
     return (skin.astype(np.float32) / 255.0)
 
-def _reinhard_color_transfer_masked(src_bgr: np.ndarray, ref_bgr: np.ndarray, alpha: float = 0.40) -> np.ndarray:
+
+def _create_mask_from_gray_bg(bgr: np.ndarray, bg_color: tuple, threshold: int = 15) -> np.ndarray:
     """
-    Transfers color from a reference image to a source image, focusing on skin tones.
-    Assumes person/background mask is already applied (gray background).
+    Creates a precise person mask by selecting all pixels that are NOT the background color.
+    This is fast and accurate because we know the exact background color.
+    
+    Args:
+        bgr: The source image with a uniform gray background.
+        bg_color: The BGR tuple of the background color.
+        threshold: Tolerance for color differences due to compression artifacts.
+
+    Returns:
+        A single-channel float32 mask (0.0 for background, 1.0 for person).
     """
-    src_mask = _skin_mask_ycrcb(src_bgr)
-    ref_mask = _skin_mask_ycrcb(ref_bgr)
+    diff = cv2.absdiff(bgr, bg_color)
+    total_diff = np.sum(diff, axis=2)
+    mask = (total_diff > threshold).astype(np.uint8) * 255
+    
+    kernel = np.ones((5, 5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    
+    return (mask.astype(np.float32) / 255.0)[:, :, np.newaxis]
+
+# --- MODIFIED ---
+def _reinhard_color_transfer_masked(src_bgr: np.ndarray, ref_bgr: np.ndarray, alpha: float = 0.6) -> np.ndarray:
+    """
+    Transfers color from a reference image to a source image, applying a blended
+    correction ONLY to the person, leaving the background untouched.
+    """
+    src_skin_mask = _skin_mask_ycrcb(src_bgr)
+    ref_skin_mask = _skin_mask_ycrcb(ref_bgr)
 
     def _stats_lab(bgr, mask):
         lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
@@ -79,8 +104,8 @@ def _reinhard_color_transfer_masked(src_bgr: np.ndarray, ref_bgr: np.ndarray, al
         std  = np.sqrt((((lab - mean) * w3) ** 2).reshape(-1, 3).sum(0) / tot + 1e-6)
         return lab, mean, std
 
-    src_lab, sm, ss = _stats_lab(src_bgr, src_mask)
-    _, rm, rs = _stats_lab(ref_bgr, ref_mask)
+    src_lab, sm, ss = _stats_lab(src_bgr, src_skin_mask)
+    _, rm, rs = _stats_lab(ref_bgr, ref_skin_mask)
     
     out = np.empty_like(src_lab)
     for i in range(3):
@@ -91,7 +116,21 @@ def _reinhard_color_transfer_masked(src_bgr: np.ndarray, ref_bgr: np.ndarray, al
     
     out = np.clip(out, 0, 255).astype(np.uint8)
     out_bgr = cv2.cvtColor(out, cv2.COLOR_LAB2BGR)
-    return cv2.addWeighted(out_bgr, alpha, src_bgr, 1.0 - alpha, 0.0)
+
+    # --- THE FIX IS HERE ---
+    # 1. First, create a 'softened' version of the color correction by blending
+    #    the aggressive result with the original image. This prevents oversaturation.
+    blended_bgr = cv2.addWeighted(out_bgr, alpha, src_bgr, 1.0 - alpha, 0.0)
+
+    # 2. Then, create a precise mask of the person from the original image.
+    person_mask = _create_mask_from_gray_bg(src_bgr, BACKGROUND_COLOR_TUPLE)
+
+    # 3. Finally, composite the blended result onto the original image using the mask.
+    #    This applies the softened correction only to the person, preserving the perfect gray background.
+    final_bgr = (person_mask * blended_bgr.astype(np.float32) + (1.0 - person_mask) * src_bgr.astype(np.float32)).astype(np.uint8)
+    
+    return final_bgr
+
 
 # --- Public API ---
 
@@ -120,21 +159,18 @@ def create_portrait_collage_from_bytes(processed_tiles_bytes: List[bytes]) -> Op
         if any(t is None for t in tiles):
             raise ValueError("Failed to load one or more pre-processed tiles from bytes.")
 
-        # 1. Choose the reference tile
         ref_idx = _choose_reference_index(tiles)
         ref_tile = tiles[ref_idx]
         
-        # 2. Apply color transfer to the other tiles
         final_tiles = []
         for i, t in enumerate(tiles):
             if i == ref_idx:
                 final_tiles.append(t)
             else:
-                final_tiles.append(_reinhard_color_transfer_masked(t, ref_tile, alpha=0.40))
+                final_tiles.append(_reinhard_color_transfer_masked(t, ref_tile))
         
-        # 3. Assemble the 2x2 collage
         tile_h, tile_w, _ = final_tiles[0].shape
-        canvas = np.full((TIKTOK_CANVAS_H, TIKTOK_CANVAS_W, 3), (190, 190, 190), dtype=np.uint8)
+        canvas = np.full((TIKTOK_CANVAS_H, TIKTOK_CANVAS_W, 3), BACKGROUND_COLOR_TUPLE, dtype=np.uint8)
         
         canvas[0:tile_h, 0:tile_w] = final_tiles[0]
         canvas[0:tile_h, tile_w:TIKTOK_CANVAS_W] = final_tiles[1]
@@ -172,7 +208,6 @@ def _analyze_image_safe_zone(img: np.ndarray) -> Dict[str, int]:
     """
     h, w, _ = img.shape
     
-    # Запасной вариант, если лицо не будет найдено
     safe_zone = {'y_start': int(h * 0.1), 'y_end': int(h * 0.9)}
 
     with mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5) as face_detection:
@@ -187,14 +222,13 @@ def _analyze_image_safe_zone(img: np.ndarray) -> Dict[str, int]:
             y_min_head = min(all_y_coords)
             y_max_head = max(all_y_coords)
             
-            # Добавляем отступы для эстетики
             head_height = y_max_head - y_min_head
             safe_zone['y_start'] = max(0, y_min_head - int(head_height * 0.5))
             safe_zone['y_end'] = min(h, y_max_head + int(head_height * 0.3))
 
     safe_zone['height'] = safe_zone['y_end'] - safe_zone['y_start']
-    safe_zone['headroom'] = safe_zone['y_start']  # Пространство сверху, которое можно обрезать
-    safe_zone['chinroom'] = h - safe_zone['y_end'] # Пространство снизу
+    safe_zone['headroom'] = safe_zone['y_start']
+    safe_zone['chinroom'] = h - safe_zone['y_end']
     return safe_zone
 
 def _crop_to_center_face(img: np.ndarray, target_h: int) -> np.ndarray:
@@ -230,7 +264,6 @@ def stack_three_images(
     if img_mom is None or img_dad is None or img_child is None:
         raise ValueError("Одно или несколько изображений не удалось загрузить.")
 
-    # 1. Приведение к единой ширине
     target_width = min(img_mom.shape[1], img_dad.shape[1])
     
     def resize_to_width(img, new_width):
@@ -242,33 +275,27 @@ def stack_three_images(
     dad_resized = resize_to_width(img_dad, target_width)
     child_resized = resize_to_width(img_child, target_width // 2)
     
-    # 2. Анализ безопасных зон на масштабированных изображениях
     safe_mom = _analyze_image_safe_zone(mom_resized)
     safe_dad = _analyze_image_safe_zone(dad_resized)
     safe_child = _analyze_image_safe_zone(child_resized)
 
-    # 3. Динамическое распределение высоты
     final_width = target_width
     final_height = int(final_width * 16 / 9)
 
     total_safe_height = safe_mom['height'] + safe_dad['height'] + safe_child['height']
     
-    # Общее пространство, доступное для обрезки
     total_croppable_space = (safe_mom['headroom'] + safe_mom['chinroom'] + 
                              safe_dad['headroom'] + safe_dad['chinroom'] + 
                              safe_child['headroom'] + safe_child['chinroom'])
     
-    # Пространство, которое нужно распределить под фон
     extra_height_to_distribute = final_height - total_safe_height
 
     if extra_height_to_distribute < 0:
-        # Критический случай: головы не помещаются. Сжимаем все пропорционально.
         scale = final_height / total_safe_height
         h_mom = int(safe_mom['height'] * scale)
         h_dad = int(safe_dad['height'] * scale)
         h_child = final_height - h_mom - h_dad
     else:
-        # Распределяем дополнительное пространство пропорционально доступному для обрезки фону
         def get_share(safe_zone):
             return (safe_zone['headroom'] + safe_zone['chinroom']) / total_croppable_space if total_croppable_space > 0 else 1/3
 
@@ -280,22 +307,17 @@ def stack_three_images(
         h_dad = safe_dad['height'] + extra_dad
         h_child = safe_child['height'] + extra_child
 
-    # 4. Финальная обрезка до рассчитанных высот
     mom_final = _crop_to_center_face(mom_resized, h_mom)
     dad_final = _crop_to_center_face(dad_resized, h_dad)
     child_final = _crop_to_center_face(child_resized, h_child)
     
-    # 5. Сборка холста
     canvas = np.full((final_height, final_width, 3), 128, dtype=np.uint8)
     
     current_y = 0
-    # Мать
     canvas[current_y : current_y + h_mom, :] = mom_final
     current_y += h_mom
-    # Отец
     canvas[current_y : current_y + h_dad, :] = dad_final
     current_y += h_dad
-    # Ребенок (слева внизу)
     child_h, child_w, _ = child_final.shape
     canvas[current_y : current_y + child_h, 0 : child_w] = child_final
 

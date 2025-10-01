@@ -2,6 +2,9 @@
 import asyncio
 import io
 import math
+import hashlib
+import threading
+from collections import OrderedDict
 from typing import List, Optional, Tuple
 
 import cv2
@@ -10,49 +13,66 @@ import numpy as np
 import structlog
 from PIL import Image, ImageOps
 
-# NEW: Import insightface for advanced identity analysis
+# Import insightface for advanced identity analysis
 from insightface.app import FaceAnalysis
 
 logger = structlog.get_logger(__name__)
 
-# --- MediaPipe Initialization ---
-mp_face_detection = mp.solutions.face_detection
+# --- MediaPipe Initialization (only for Selfie Segmentation) ---
 mp_selfie_seg = mp.solutions.selfie_segmentation
 
-# --- NEW: InsightFace Singleton Initialization ---
+# --- InsightFace Singleton & Concurrency Control ---
 _face_analysis_app: Optional[FaceAnalysis] = None
+_FACE_APP_LOCK = threading.Lock() # Lock for thread-safe access to app.get()
 
 def _get_face_analysis_app() -> FaceAnalysis:
-    """
-    Initializes and returns a singleton FaceAnalysis instance.
-    This ensures the model is loaded into memory only once.
-    """
+    """Initializes and returns a singleton FaceAnalysis instance."""
     global _face_analysis_app
-    if _face_analysis_app is None:
-        logger.info("Initializing InsightFace model for the first time...")
-        # Force CPU provider to avoid accidental GPU requirement.
-        app = FaceAnalysis(name="buffalo_l", providers=['CPUExecutionProvider'])
-        app.prepare(ctx_id=0, det_size=(640, 640))
-        _face_analysis_app = app
-        logger.info("InsightFace model initialized successfully.")
+    with _FACE_APP_LOCK:
+        if _face_analysis_app is None:
+            logger.info("Initializing InsightFace model for the first time...")
+            app = FaceAnalysis(name="buffalo_l", providers=['CPUExecutionProvider'])
+            app.prepare(ctx_id=0, det_size=(640, 640))
+            _face_analysis_app = app
+            logger.info("InsightFace model initialized successfully.")
     return _face_analysis_app
 
-# --- NEW: Processing constants ---
-# The standard size for each tile in the final collage
+# --- Embedding Cache ---
+class _EmbeddingCache:
+    def __init__(self, maxsize: int = 2048):
+        self.maxsize = maxsize
+        self._store: OrderedDict[str, dict] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, key: str):
+        with self._lock:
+            if key in self._store:
+                self._store.move_to_end(key)
+                return self._store[key]
+            return None
+
+    def put(self, key: str, value: dict):
+        with self._lock:
+            self._store[key] = value
+            self._store.move_to_end(key)
+            if len(self._store) > self.maxsize:
+                self._store.popitem(last=False)
+
+_EMB_CACHE = _EmbeddingCache(maxsize=2048)
+
+def _sha1_bytes(b: bytes) -> str:
+    h = hashlib.sha1()
+    h.update(b)
+    return h.hexdigest()
+
+# --- Processing constants ---
 STANDARD_TILE_WIDTH = 576
 STANDARD_TILE_HEIGHT = 512
-# A photo will be rejected if the detected face area is less than this percentage of the total image area.
-# This prevents extreme upscaling of low-quality images.
-MIN_FACE_AREA_RATIO = 0.05  # 5% of the image
-
-# Keypoint indices from MediaPipe Face Detection (6 keypoints)
-RIGHT_EYE = 0
-LEFT_EYE = 1
-NOSE_TIP = 2
-MOUTH_CENTER = 3
-RIGHT_EAR_TRAGION = 4
-LEFT_EAR_TRAGION = 5
-
+MIN_FACE_AREA_RATIO = 0.05
+TARGET_FACE_HEIGHT_RATIO = 0.55
+VERTICAL_CENTER_OFFSET = -0.1
+BACKGROUND_COLOR = (190, 190, 190)
+KPS_TO_BBOX_HEIGHT_RATIO = 2.2 # Heuristic ratio between core face height (eyes-to-mouth) and full bbox height
 
 class PhotoAnalysisResult(Tuple):
     """A type hint for the output of the analysis and processing function."""
@@ -62,7 +82,7 @@ class PhotoAnalysisResult(Tuple):
     file_id: str
 
 
-# --- I/O Functions (unchanged) ---
+# --- I/O Functions ---
 def load_image_bgr_from_bytes(data: bytes) -> Optional[np.ndarray]:
     """Loads an image from bytes into a BGR NumPy array."""
     try:
@@ -83,33 +103,27 @@ def convert_bgr_to_jpeg_bytes(img_bgr: np.ndarray, quality: int = 95) -> bytes:
     return buf.getvalue()
 
 
-# --- Image Processing Helpers (Moved from photo_processing.py) ---
+# --- Image Processing Helpers ---
 
 def _srgb_to_linear_01(bgr_u8: np.ndarray) -> np.ndarray:
-    x = bgr_u8.astype(np.float32) / 255.0
-    a = 0.055
-    low = x <= 0.04045
-    out = np.empty_like(x)
-    out[low]  = x[low] / 12.92
+    x = bgr_u8.astype(np.float32) / 255.0; a = 0.055
+    low = x <= 0.04045; out = np.empty_like(x)
+    out[low] = x[low] / 12.92
     out[~low] = ((x[~low] + a) / (1 + a)) ** 2.4
     return out
 
 def _linear_to_srgb_u8(lin: np.ndarray) -> np.ndarray:
-    x = np.clip(lin, 0.0, 1.0)
-    a = 0.055
-    low = x <= 0.0031308
-    out = np.empty_like(x)
-    out[low]  = x[low] * 12.92
+    x = np.clip(lin, 0.0, 1.0); a = 0.055
+    low = x <= 0.0031308; out = np.empty_like(x)
+    out[low] = x[low] * 12.92
     out[~low] = (1 + a) * (x[~low] ** (1/2.4)) - a
     return np.clip(out * 255.0 + 0.5, 0, 255).astype(np.uint8)
 
 def _shades_of_gray_cc_linear(bgr: np.ndarray, p: int = 4, gain_clip=(0.90, 1.10)) -> np.ndarray:
     lin = _srgb_to_linear_01(bgr)
     m = np.power(np.mean(np.power(lin, p), axis=(0, 1)) + 1e-8, 1.0 / p)
-    g = float(np.mean(m))
-    gains = g / (m + 1e-8)
-    if (np.max(gains) - np.min(gains)) < 0.06:
-        return bgr.copy()
+    g = float(np.mean(m)); gains = g / (m + 1e-8)
+    if (np.max(gains) - np.min(gains)) < 0.06: return bgr.copy()
     gains = np.clip(gains, gain_clip[0], gain_clip[1])
     return _linear_to_srgb_u8(lin * gains[None, None, :])
 
@@ -121,66 +135,26 @@ def _clahe_conditional(bgr: np.ndarray, clip_limit: float = 1.05, tile=(8, 8), s
         l = clahe.apply(l)
     return cv2.cvtColor(cv2.merge((l, a, b)), cv2.COLOR_LAB2BGR)
 
-def _center_crop_to_aspect(bgr: np.ndarray, aspect: float) -> np.ndarray:
-    h, w = bgr.shape[:2]
-    ar = w / float(h)
-    if ar > aspect:
-        new_w = int(round(h * aspect))
-        x1 = max(0, (w - new_w) // 2)
-        return bgr[:, x1:x1 + new_w]
-    else:
-        new_h = int(round(w / aspect))
-        y1 = max(0, (h - new_h) // 2 - int(0.05 * h))
-        y1 = max(0, min(y1, h - new_h))
-        return bgr[y1:y1 + new_h, :]
-
-def _crop_around_face(bgr: np.ndarray, aspect: float, detection) -> np.ndarray:
-    h, w = bgr.shape[:2]
-    r = detection.location_data.relative_bounding_box
-    xa = max(0.0, r.xmin) * w
-    ya = max(0.0, r.ymin) * h
-    bw = max(1.0, r.width * w)
-    bh = max(1.0, r.height * h)
-    
-    cx, cy = xa + bw / 2.0, ya + bh / 2.0
-    s = max(bw, bh) * 2.4
-    tw, th = s, s / aspect
-    scale = min(w / max(tw, 1e-6), h / max(th, 1e-6), 1.0)
-    tw *= scale; th *= scale
-    left = int(round(cx - tw / 2.0)); top = int(round(cy - th / 2.0))
-    left = max(0, min(left, w - int(tw))); top = max(0, min(top, h - int(th)))
-    right = left + int(tw); bottom = top + int(th)
-    return bgr[top:bottom, left:right]
-
-def _resize_smart(bgr: np.ndarray, W: int, H: int) -> np.ndarray:
-    h, w = bgr.shape[:2]
-    interp = cv2.INTER_AREA if (w > W or h > H) else cv2.INTER_CUBIC
-    return cv2.resize(bgr, (W, H), interpolation=interp)
-
 def _person_alpha_mask_improved(bgr: np.ndarray, t_fg=0.92, t_bg=0.18, feather_px=6) -> np.ndarray:
     h, w = bgr.shape[:2]
     with mp_selfie_seg.SelfieSegmentation(model_selection=1) as seg:
         res = seg.process(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
-    if res is None or res.segmentation_mask is None:
-        return np.ones((h, w), dtype=np.float32)
+    if res is None or res.segmentation_mask is None: return np.ones((h, w), dtype=np.float32)
     prob = res.segmentation_mask.astype(np.float32)
-    sure_fg = (prob >= t_fg).astype(np.uint8) * 255
-    sure_bg = (prob <= t_bg).astype(np.uint8) * 255
+    sure_fg = (prob >= t_fg).astype(np.uint8) * 255; sure_bg = (prob <= t_bg).astype(np.uint8) * 255
     kernel = np.ones((5, 5), np.uint8)
     sure_fg = cv2.morphologyEx(sure_fg, cv2.MORPH_CLOSE, kernel, iterations=1)
     sure_bg = cv2.morphologyEx(sure_bg, cv2.MORPH_CLOSE, kernel, iterations=1)
     dist_fg = cv2.distanceTransform(cv2.bitwise_not(sure_fg), cv2.DIST_L2, 3)
     dist_bg = cv2.distanceTransform(cv2.bitwise_not(sure_bg), cv2.DIST_L2, 3)
-    eps = 1e-6
-    a_unknown = dist_bg / (dist_bg + dist_fg + eps)
-    a_unknown = np.clip(a_unknown, 0.0, 1.0)
+    a_unknown = dist_bg / (dist_bg + dist_fg + 1e-6); a_unknown = np.clip(a_unknown, 0.0, 1.0)
     alpha = np.where(sure_fg == 255, 1.0, np.where(sure_bg == 255, 0.0, a_unknown)).astype(np.float32)
     alpha_bi = cv2.bilateralFilter(alpha, d=7, sigmaColor=0.15, sigmaSpace=5)
     return cv2.GaussianBlur(alpha_bi, (0, 0), sigmaX=max(3, feather_px)/3.0, sigmaY=max(3, feather_px)/3.0)
 
-def _composite_on_gray_improved(bgr: np.ndarray, bg=(190, 190, 190)) -> np.ndarray:
+def _composite_on_gray_improved(bgr: np.ndarray) -> np.ndarray:
     a = _person_alpha_mask_improved(bgr)[:, :, None]
-    bg_img = np.full_like(bgr, bg, dtype=np.uint8)
+    bg_img = np.full_like(bgr, BACKGROUND_COLOR, dtype=np.uint8)
     return (a * bgr.astype(np.float32) + (1.0 - a) * bg_img.astype(np.float32)).astype(np.uint8)
 
 def _usm(bgr: np.ndarray, amount: float = 0.45, radius: float = 0.7, thresh: int = 3) -> np.ndarray:
@@ -190,332 +164,346 @@ def _usm(bgr: np.ndarray, amount: float = 0.45, radius: float = 0.7, thresh: int
     mask[gray < thresh] = 0
     return cv2.addWeighted(bgr, 1.0, mask, amount, 0)
 
-# --- Core Logic ---
+# --- Alignment and Cropping Helpers ---
 
-def _calculate_rotation_angle(keypoints: np.ndarray) -> float:
-    """Calculates the rotation angle to make the head upright."""
-    p_right_eye, p_left_eye = keypoints[RIGHT_EYE], keypoints[LEFT_EYE]
-    eye_delta_y = p_left_eye[1] - p_right_eye[1]
-    eye_delta_x = p_left_eye[0] - p_right_eye[0]
-    return math.degrees(math.atan2(eye_delta_y, eye_delta_x))
+def _calc_roll_angle_from_kps(kps: np.ndarray) -> float:
+    if kps is None or kps.shape != (5, 2): return 0.0
+    left_eye, right_eye = kps[0], kps[1]
+    dy, dx = float(right_eye[1] - left_eye[1]), float(right_eye[0] - left_eye[0])
+    return math.degrees(math.atan2(dy, dx))
+
+def _rotate_image_around_point(img: np.ndarray, center: Tuple, angle: float) -> Tuple[np.ndarray, np.ndarray]:
+    h, w = img.shape[:2]
+    M = cv2.getRotationMatrix2D(tuple(map(float, center)), angle, 1.0)
+    return cv2.warpAffine(img, M, (w, h), flags=cv2.INTER_LINEAR,
+                             borderMode=cv2.BORDER_CONSTANT, borderValue=BACKGROUND_COLOR), M
+
+def _affine_transform_points(M: np.ndarray, pts: Optional[np.ndarray]) -> Optional[np.ndarray]:
+    if pts is None: return None
+    return cv2.transform(np.array([pts]), M)[0].astype(np.float32)
+
+def _transform_bbox_by_affine(M: np.ndarray, bbox: Tuple) -> Tuple[float, float, float, float]:
+    x1, y1, x2, y2 = bbox
+    corners = np.array([[x1,y1],[x2,y1],[x2,y2],[x1,y2]], dtype=np.float32)
+    tc = _affine_transform_points(M, corners)
+    return float(np.min(tc[:,0])), float(np.min(tc[:,1])), float(np.max(tc[:,0])), float(np.max(tc[:,1]))
+
+def _bbox_area_ratio(bbox: Tuple, w: int, h: int) -> float:
+    x1, y1, x2, y2 = bbox
+    return (max(0, x2 - x1) * max(0, y2 - y1)) / max(1.0, w * h)
+
+def _get_stable_face_height_from_kps(kps: np.ndarray) -> float:
+    """Calculates a stable face height metric from keypoints (eyes to mouth distance)."""
+    eye_mid_y = (kps[0][1] + kps[1][1]) / 2
+    mouth_mid_y = (kps[3][1] + kps[4][1]) / 2
+    core_height = abs(mouth_mid_y - eye_mid_y)
+    return core_height * KPS_TO_BBOX_HEIGHT_RATIO
+
+def _crop_and_resize_to_standard(
+    bgr: np.ndarray, bbox: Tuple, kps: np.ndarray, target_w: int, target_h: int
+) -> np.ndarray:
+    """Crops and resizes via a single affine transform for consistent face scale."""
+    stable_face_h_src = _get_stable_face_height_from_kps(kps)
+    face_cx_src, face_cy_src = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
+    face_h_dst = target_h * TARGET_FACE_HEIGHT_RATIO
+    scale = face_h_dst / stable_face_h_src if stable_face_h_src > 0 else 1.0
+    center_y_adjusted = face_cy_src + (stable_face_h_src * VERTICAL_CENTER_OFFSET)
+    
+    src_pts = np.array([
+        [face_cx_src - (0.5 * target_w / scale), center_y_adjusted - (0.5 * target_h / scale)],
+        [face_cx_src + (0.5 * target_w / scale), center_y_adjusted - (0.5 * target_h / scale)],
+        [face_cx_src - (0.5 * target_w / scale), center_y_adjusted + (0.5 * target_h / scale)],
+    ], dtype=np.float32)
+    dst_pts = np.array([[0, 0], [target_w, 0], [0, target_h]], dtype=np.float32)
+    
+    M = cv2.getAffineTransform(src_pts, dst_pts)
+    return cv2.warpAffine(bgr, M, (target_w, target_h), flags=cv2.INTER_LINEAR,
+                          borderMode=cv2.BORDER_CONSTANT, borderValue=BACKGROUND_COLOR)
+
+# --- Image Quality Scoring ---
+
+def _compute_image_quality_score(img: np.ndarray, bbox: Tuple, kps: Optional[np.ndarray]) -> float:
+    h, w = img.shape[:2]
+    x1,y1,x2,y2 = map(int, bbox); x1,y1=max(0,x1),max(0,y1)
+    face = img[y1:min(h,y2), x1:min(w,x2)]
+    if face.size == 0: return 0.0
+    gray = cv2.cvtColor(face, cv2.COLOR_BGR2GRAY)
+    sharp = min(float(cv2.Laplacian(gray, cv2.CV_64F).var()) / 500.0, 1.0)
+    exposure = 1.0 - min(abs(float(gray.mean()) - 128.0) / 128.0, 1.0)
+    pose = max(0.0, 1.0 - min(abs(_calc_roll_angle_from_kps(kps) if kps is not None else 0.0), 30.0) / 30.0)
+    size = max(0.0, min((_bbox_area_ratio(bbox, w, h) - 0.05) / (0.20 - 0.05), 1.0))
+    return float(0.35 * sharp + 0.25 * exposure + 0.20 * pose + 0.20 * size)
+
+
+# --- Core Logic ---
 
 def _analyze_and_process_one_photo(
     img_bgr: np.ndarray, file_unique_id: str, file_id: str
 ) -> Optional[PhotoAnalysisResult]:
-    """
-    Analyzes a single image for face quality and fully preprocesses it into a
-    standardized tile for collage creation.
-
-    This function performs the entire single-image pipeline:
-    - Rejects images with zero or more than one face.
-    - Rejects images where the face is too small.
-    - Rotates the image to align the head vertically.
-    - Applies color correction and light contrast enhancement.
-    - Crops around the face to a standard aspect ratio.
-    - Resizes to a standard tile size.
-    - Removes the background and composites onto a neutral gray.
-    - Applies a light sharpening filter.
-    - Calculates a quality score.
-
-    Returns:
-        A PhotoAnalysisResult tuple containing the processed image bytes and metadata,
-        or None if the image is rejected.
-    """
     h, w = img_bgr.shape[:2]
-    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+    app = _get_face_analysis_app()
+    with _FACE_APP_LOCK: faces = app.get(img_bgr)
 
-    with mp_face_detection.FaceDetection(
-        model_selection=1, min_detection_confidence=0.5
-    ) as face_detection:
-        results = face_detection.process(img_rgb)
+    if not faces or len(faces) != 1: return None
+    face = faces[0]
+    bbox = tuple(map(float, face.bbox))
+    kps = face.kps.astype(np.float32) if face.kps is not None else None
+    if kps is None: return None # Keypoints are essential for the new logic
+    det_score = float(face.det_score)
 
-        if not results.detections or len(results.detections) != 1:
-            return None # RULE 1: Must have exactly one face.
-        
-        detection = results.detections[0]
-        box_data = detection.location_data.relative_bounding_box
-        
-        # RULE 2: Face must be a minimum size relative to the image.
-        face_area_ratio = box_data.width * box_data.height
-        if face_area_ratio < MIN_FACE_AREA_RATIO:
-            logger.debug("Rejected image: face too small", ratio=face_area_ratio)
-            return None
+    if _bbox_area_ratio(bbox, w, h) < MIN_FACE_AREA_RATIO:
+        logger.debug("Rejected: face too small", ratio=_bbox_area_ratio(bbox, w, h))
+        return None
 
-        # --- Start Processing Pipeline ---
-        # 1. Rotate image to align head vertically.
-        keypoints_relative = detection.location_data.relative_keypoints
-        keypoints = np.array([(kp.x * w, kp.y * h) for kp in keypoints_relative])
-        angle = _calculate_rotation_angle(keypoints)
-        center_x = int((box_data.xmin + box_data.width / 2) * w)
-        center_y = int((box_data.ymin + box_data.height / 2) * h)
-        rotation_matrix = cv2.getRotationMatrix2D((center_x, center_y), angle, 1.0)
-        aligned_img_bgr = cv2.warpAffine(img_bgr, rotation_matrix, (w, h), borderMode=cv2.BORDER_REPLICATE)
-        
-        # 2. Apply color and contrast enhancements
-        processed_img = _shades_of_gray_cc_linear(aligned_img_bgr)
-        processed_img = _clahe_conditional(processed_img)
+    angle = _calc_roll_angle_from_kps(kps)
+    face_center = ((bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2)
+    aligned_img, M = _rotate_image_around_point(img_bgr, face_center, angle)
+    bbox_t = _transform_bbox_by_affine(M, bbox)
+    kps_t = _affine_transform_points(M, kps)
 
-        # 3. Crop around the face to the standard tile aspect ratio
-        target_aspect = STANDARD_TILE_WIDTH / STANDARD_TILE_HEIGHT
-        processed_img = _crop_around_face(processed_img, target_aspect, detection)
-
-        # 4. Resize to standard tile dimensions
-        processed_img = _resize_smart(processed_img, STANDARD_TILE_WIDTH, STANDARD_TILE_HEIGHT)
-
-        # 5. Remove background and composite on neutral gray
-        processed_img = _composite_on_gray_improved(processed_img)
-        
-        # 6. Apply light Unsharp Mask to recover texture
-        processed_img = _usm(processed_img)
-
-        processed_image_bytes = convert_bgr_to_jpeg_bytes(processed_img)
-
-        # Scoring
-        detection_score = detection.score[0]
-        size_score = min(1.0, face_area_ratio / 0.20)
-        final_score = (detection_score * 0.8) + (size_score * 0.2)
-
-        return PhotoAnalysisResult((processed_image_bytes, final_score, file_unique_id, file_id))
+    processed_img = _shades_of_gray_cc_linear(aligned_img)
+    processed_img = _clahe_conditional(processed_img)
+    processed_img = _crop_and_resize_to_standard(
+        processed_img, bbox_t, kps_t, STANDARD_TILE_WIDTH, STANDARD_TILE_HEIGHT
+    )
+    processed_img = _composite_on_gray_improved(processed_img)
+    processed_img = _usm(processed_img)
+    
+    processed_bytes = convert_bgr_to_jpeg_bytes(processed_img)
+    quality_score = _compute_image_quality_score(aligned_img, bbox_t, kps_t)
+    final_score = 0.5 * det_score + 0.5 * quality_score
+    
+    logger.debug("Analyzed photo", file_unique_id=file_unique_id, score=round(final_score, 4))
+    return PhotoAnalysisResult((processed_bytes, float(final_score), file_unique_id, file_id))
 
 
 async def select_best_photos_and_process(
     photo_inputs: List[Tuple[bytes, str, str]],
 ) -> Optional[List[Tuple[str, str, bytes]]]:
-    """
-    Selects the best photos from a list, processes them into standardized tiles,
-    and returns the results.
-
-    The "best" photos are those with exactly one, clear, and sufficiently large face.
-    It returns ALL photos that meet the criteria, sorted by quality score.
-    Each returned photo is a fully processed 576x512 tile ready for collage assembly.
-
-    Args:
-        photo_inputs: A list of tuples, each containing (image_bytes, file_unique_id, file_id).
-
-    Returns:
-        A list of tuples (file_unique_id, file_id, processed_image_bytes) for all suitable photos,
-        or None if no suitable photos are found.
-    """
-    if not photo_inputs:
-        return None
-
-    MIN_ACCEPTABLE_SCORE = 0.65
-
-    analysis_tasks = []
-    for image_bytes, unique_id, file_id in photo_inputs:
-        img_bgr = load_image_bgr_from_bytes(image_bytes)
-        if img_bgr is not None:
-            task = asyncio.to_thread(_analyze_and_process_one_photo, img_bgr, unique_id, file_id)
-            analysis_tasks.append(task)
-
-    results = await asyncio.gather(*analysis_tasks, return_exceptions=True)
-
-    valid_photos = []
-    for res in results:
+    if not photo_inputs: return None
+    MIN_ACCEPTABLE_SCORE = 0.55
+    tasks = [asyncio.to_thread(_analyze_and_process_one_photo, load_image_bgr_from_bytes(b), uid, fid)
+             for b, uid, fid in photo_inputs if load_image_bgr_from_bytes(b) is not None]
+    
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    all_scores, valid_photos = [], []
+    for i, res in enumerate(results):
+        unique_id = photo_inputs[i][1]
         if isinstance(res, Exception):
-            logger.warning("Photo processing failed for one image", exc_info=res)
+            logger.warning("Photo processing failed", file_unique_id=unique_id, exc_info=res)
             continue
-        if res is None:
-            continue
-
-        processed_bytes, score, unique_id, file_id = res
-        if score >= MIN_ACCEPTABLE_SCORE:
-            valid_photos.append({
-                "unique_id": unique_id, "file_id": file_id, "bytes": processed_bytes, "score": score,
-            })
-
+        if res:
+            processed_bytes, score, _, file_id = res
+            all_scores.append(round(score, 4))
+            if score >= MIN_ACCEPTABLE_SCORE:
+                valid_photos.append({"unique_id": unique_id, "file_id": file_id, "bytes": processed_bytes, "score": score})
+    
+    logger.info("Photo analysis complete", total=len(results), scores=all_scores, threshold=MIN_ACCEPTABLE_SCORE)
     if not valid_photos:
-        logger.warning(
-            "No suitable photo found among candidates that meets the minimum quality score.",
-            threshold=MIN_ACCEPTABLE_SCORE,
-        )
+        logger.warning("No suitable photos found meeting minimum quality score.")
         return None
-
+        
     valid_photos.sort(key=lambda x: x["score"], reverse=True)
-
-    logger.info(
-        "Selected and processed best photos",
-        count=len(valid_photos),
-        scores=[p["score"] for p in valid_photos],
-    )
-
+    logger.info("Selected best photos", count=len(valid_photos), scores=[round(p["score"], 4) for p in valid_photos])
     return [(p["unique_id"], p["file_id"], p["bytes"]) for p in valid_photos]
 
 
-# --- NEW: Identity Sorting and Centroid Logic ---
+# --- Robust Identity Centroid and Sorting Logic ---
 
-async def _get_best_face_embedding(img_bytes: bytes) -> Optional[np.ndarray]:
-    """
-    Extracts the ArcFace embedding from the largest face in an image.
-    This is an async wrapper around a synchronous, CPU-bound function.
-    """
-    def sync_get_embedding():
+async def _extract_face_features(img_bytes: bytes) -> Optional[dict]:
+    def sync_extract():
+        key = _sha1_bytes(img_bytes)
+        if (cached := _EMB_CACHE.get(key)) is not None: return cached
         app = _get_face_analysis_app()
-        img_bgr = load_image_bgr_from_bytes(img_bytes)
-        if img_bgr is None:
-            return None
-            
-        faces = app.get(img_bgr)
-        if not faces:
-            return None
+        img = load_image_bgr_from_bytes(img_bytes)
+        if img is None: return None
+        with _FACE_APP_LOCK: faces = app.get(img)
+        if not faces: return None
+        best_face = max(faces, key=lambda f: (f.bbox[2]-f.bbox[0])*(f.bbox[3]-f.bbox[1]))
+        if best_face.normed_embedding is None: return None
+        result = {"embedding": best_face.normed_embedding.astype(np.float32), "bbox": tuple(map(float, best_face.bbox)),
+                  "kps": best_face.kps.astype(np.float32) if best_face.kps is not None else None,
+                  "det_score": float(best_face.det_score), "image_sha1": key}
+        _EMB_CACHE.put(key, result)
+        return result
+    return await asyncio.to_thread(sync_extract)
+
+def _cosine_sim_matrix(embs: np.ndarray) -> np.ndarray: return embs @ embs.T
+
+def _largest_component_by_threshold(embs: np.ndarray, tau: float=0.35) -> np.ndarray:
+    n = embs.shape[0]
+    if n <= 1: return np.arange(n)
+    adj = (_cosine_sim_matrix(embs) >= tau)
+    visited, best_comp = set(), []
+    for i in range(n):
+        if i not in visited:
+            comp, q = [], [i]; visited.add(i)
+            while q:
+                u = q.pop(0); comp.append(u)
+                for v in np.where(adj[u])[0]:
+                    if v not in visited: visited.add(v); q.append(v)
+            if len(comp) > len(best_comp): best_comp = comp
+    return np.array(sorted(best_comp))
+
+def _mad_outliers_by_mean_similarity(embs: np.ndarray, z: float=3.5) -> np.ndarray:
+    if embs.shape[0] <= 2: return np.array([])
+    S = _cosine_sim_matrix(embs); np.fill_diagonal(S, np.nan)
+    mean_sim = np.nanmean(S, axis=1)
+    med = np.nanmedian(mean_sim); mad = np.nanmedian(np.abs(mean_sim - med)) + 1e-12
+    return np.where((med - mean_sim) / mad > z)[0]
+
+def _geometric_median(pts: np.ndarray, eps: float=1e-6) -> np.ndarray:
+    x = pts.mean(axis=0)
+    for _ in range(200):
+        w = 1.0 / (np.linalg.norm(pts - x, axis=1) + 1e-12)
+        x_new = (pts * w[:, None]).sum(axis=0) / w.sum()
+        if np.linalg.norm(x_new - x) < eps: x = x_new; break
+        x = x_new
+    return x / max(np.linalg.norm(x), 1e-12)
+
+def _build_robust_centroid(embs: np.ndarray) -> np.ndarray:
+    """
+    Calculates a robust centroid from a pre-filtered set of embeddings.
+    This version assumes the input 'embs' is already a cohesive group and
+    focuses on finding a stable geometric center, resistant to mild in-group variations.
+    """
+    if embs.shape[0] <= 1: return embs[0]
+    log = logger.bind(initial_count=embs.shape[0])
+    
+    # Start with the mean as a good initial guess for the center
+    c = embs.mean(axis=0); c /= max(np.linalg.norm(c), 1e-12)
+    final_inliers = embs
+
+    # Iteratively refine the centroid by trimming the 20% least similar embeddings
+    for i in range(2):
+        sims = embs @ c
+        quantile_threshold = np.quantile(sims, 0.20)
+        trimmed_embs = embs[sims >= quantile_threshold]
+
+        if trimmed_embs.shape[0] > 0:
+            c = trimmed_embs.mean(axis=0)
+            c /= max(np.linalg.norm(c), 1e-12)
+            final_inliers = trimmed_embs
         
-        # Choose the largest face by area
-        areas = [(max(0, f.bbox[2] - f.bbox[0]) * max(0, f.bbox[3] - f.bbox[1])) for f in faces]
-        best_face = faces[np.argmax(areas)]
-        
-        emb = best_face.normed_embedding
-        return emb.astype(np.float32) if emb is not None and emb.size > 0 else None
-
-    return await asyncio.to_thread(sync_get_embedding)
-
-def _find_outlier_index(embs: np.ndarray) -> int:
-    """Finds the single impostor by lowest average cosine similarity."""
-    if embs.shape[0] <= 2: # Not enough data to find an outlier
-        return -1
-    S = embs @ embs.T
-    np.fill_diagonal(S, 0.0)
-    mean_sim = S.mean(axis=1)
-    return int(np.argmin(mean_sim))
-
-def _build_identity_centroid(embs: np.ndarray, outlier_idx: int = -1) -> np.ndarray:
-    """Builds a robust, normalized identity centroid from inlier embeddings."""
-    if outlier_idx != -1 and embs.shape[0] > 1:
-        inlier_mask = np.ones(embs.shape[0], dtype=bool)
-        inlier_mask[outlier_idx] = False
-        embs_for_centroid = embs[inlier_mask]
-    else:
-        embs_for_centroid = embs
-
-    centroid = embs_for_centroid.mean(axis=0)
-    norm = np.linalg.norm(centroid)
-    return centroid / max(norm, 1e-12)
-
+        log = log.bind(**{f"after_trim_iter_{i+1}": trimmed_embs.shape[0]})
+    
+    log.info("Robust centroid refinement steps")
+    # The geometric median is the final step for a stable center
+    return _geometric_median(final_inliers)
 
 async def calculate_identity_centroid(image_bytes_list: List[bytes]) -> Optional[np.ndarray]:
-    """
-    Calculates a single, robust identity vector (centroid) from a list of images.
-
-    This function extracts face embeddings from all provided images, optionally
-    removes an outlier, and averages the remaining embeddings to create a
-    stable representation of a person's identity.
-
-    Args:
-        image_bytes_list: A list of image bytes, each expected to contain one person.
-
-    Returns:
-        A normalized NumPy array representing the identity centroid, or None if no
-        valid faces could be processed.
-    """
-    if not image_bytes_list:
-        return None
+    if not image_bytes_list: return None
+    sem = asyncio.Semaphore(6)
+    async def _guarded_extract(b: bytes):
+        async with sem: return await _extract_face_features(b)
+    feats = await asyncio.gather(*[_guarded_extract(b) for b in image_bytes_list])
+    embs = [f["embedding"] for f in feats if f and f.get("embedding") is not None]
+    if not embs:
+        logger.warning("Could not extract any valid face embeddings for centroid."); return None
     
-    embedding_tasks = [_get_best_face_embedding(b) for b in image_bytes_list]
-    embeddings = await asyncio.gather(*embedding_tasks)
+    embeddings_stack = np.stack(embs)
+    log = logger.bind(initial_count=embeddings_stack.shape[0])
     
-    valid_embeddings = [emb for emb in embeddings if emb is not None]
-    if not valid_embeddings:
-        logger.warning("Could not extract any valid face embeddings to calculate centroid.")
-        return None
-        
-    embs_matrix = np.stack(valid_embeddings, axis=0)
-    outlier_idx = _find_outlier_index(embs_matrix)
-    
-    centroid = _build_identity_centroid(embs_matrix, outlier_idx)
-    logger.info("Calculated identity centroid.", num_embeddings=len(valid_embeddings), outlier_removed=outlier_idx != -1)
-    return centroid
+    # Step 1: Find the largest group of similar faces
+    inlier_indices = _largest_component_by_threshold(embeddings_stack)
+    if inlier_indices.size == 0:
+        log.warning("No cohesive identity group found, falling back to all embeddings.")
+        inlier_embs = embeddings_stack
+    else:
+        inlier_embs = embeddings_stack[inlier_indices]
+    log = log.bind(after_component_filter=inlier_embs.shape[0])
+
+    if inlier_embs.shape[0] == 0:
+        log.warning("All embeddings filtered out, falling back to initial mean."); c = embeddings_stack.mean(axis=0)
+        return c / max(np.linalg.norm(c), 1e-12)
+
+    return _build_robust_centroid(inlier_embs)
 
 
 async def sort_and_filter_by_identity(
-    photos_data: List[dict],
-    target_count: int,
-    min_similarity_score: float = 0.8
+    photos_data: List[dict], target_count: int
 ) -> List[dict]:
     """
-    Sorts photos by identity, filters by a similarity score, and pads the list
-    with duplicates of the best images to reach a target count.
+    Filters a list of photos to find a cohesive identity group, sorts them by
+    similarity to a robust centroid of that group, and ensures the list has
+    'target_count' items by duplicating the best ones if necessary.
 
     Args:
-        photos_data: A list of dictionaries, each containing 'bytes' and identifiers.
-        target_count: The exact number of photos to return.
-        min_similarity_score: The minimum cosine similarity score to be considered a high-quality photo.
+        photos_data: A list of dictionaries, each with at least a 'bytes' key.
+        target_count: The desired number of photos in the output list.
 
     Returns:
-        A list of photo data dictionaries with exactly `target_count` items.
+        A list of 'target_count' photos, sorted by identity similarity.
     """
-    if not photos_data:
-        return []
+    if not photos_data: return []
+    log = logger.bind(initial_count=len(photos_data), target_count=target_count)
+    log.info("Starting identity filtering and sorting...")
     
-    # If we already have fewer photos than the target, we can't do much sorting.
-    # The padding logic will handle this case, so we can proceed.
+    # 1. Extract features from all provided photos
+    sem = asyncio.Semaphore(6)
+    async def _guarded_extract(p: dict):
+        async with sem: return await _extract_face_features(p['bytes'])
+    feats = await asyncio.gather(*[_guarded_extract(p) for p in photos_data])
     
-    log = logger.bind(num_photos=len(photos_data), target_count=target_count)
-    log.info("Starting identity similarity analysis, filtering, and padding...")
-
-    embedding_tasks = [_get_best_face_embedding(p['bytes']) for p in photos_data]
-    results = await asyncio.gather(*embedding_tasks)
-
-    valid_embeddings, valid_photos_data = [], []
-    for i, emb in enumerate(results):
-        if emb is not None:
-            valid_embeddings.append(emb)
-            valid_photos_data.append(photos_data[i])
-            
-    if len(valid_embeddings) < 1:
-        log.warning("No valid faces found for similarity sorting. Cannot proceed.")
-        # As a fallback, just return the first `target_count` items if they exist
+    valid_data = [(p, f) for p, f in zip(photos_data, feats) if f and f.get("embedding") is not None]
+    if not valid_data:
+        log.warning("No valid faces found for identity analysis. Returning original photos.")
         return photos_data[:target_count]
-
-    embs_matrix = np.stack(valid_embeddings, axis=0)
     
-    outlier_idx = _find_outlier_index(embs_matrix)
-    centroid = _build_identity_centroid(embs_matrix, outlier_idx)
-    similarities = embs_matrix @ centroid
+    all_photos, all_embs_list = zip(*[(p, f["embedding"]) for p, f in valid_data])
+    all_embs = np.stack(all_embs_list)
+
+    # 2. Filter to find the core identity group (inliers)
+    # Step 2a: Find the largest connected component
+    inlier_indices = _largest_component_by_threshold(all_embs)
+    if inlier_indices.size < len(all_photos):
+        log.info("Filtered by largest component", before=len(all_photos), after=inlier_indices.size)
+
+    # Step 2b: Remove MAD outliers from this component
+    component_embs = all_embs[inlier_indices]
+    mad_outlier_indices_in_component = _mad_outliers_by_mean_similarity(component_embs)
     
-    sorted_indices = np.argsort(-similarities)
+    final_inlier_indices = np.delete(inlier_indices, mad_outlier_indices_in_component)
+    if final_inlier_indices.size < inlier_indices.size:
+        log.info("Filtered by MAD outliers", before=inlier_indices.size, after=final_inlier_indices.size)
     
-    sorted_photos = [
-        {**valid_photos_data[idx], 'similarity_score': float(similarities[idx])}
-        for idx in sorted_indices
-    ]
-
-    # --- NEW: Filtering and Padding Logic ---
-
-    # 1. Filter by the minimum score threshold
-    high_quality_photos = [
-        p for p in sorted_photos if p['similarity_score'] >= min_similarity_score
-    ]
-    log.info("Filtered photos by similarity score.", initial_count=len(sorted_photos), high_quality_count=len(high_quality_photos))
-
-    # 2. Decide which list to use for the final selection (the high-quality one, or the original sorted one as a fallback)
-    source_for_selection = high_quality_photos
-    if not high_quality_photos:
-        log.warning(
-            "No photos met the similarity threshold. Using best available photos as a fallback.",
-            threshold=min_similarity_score
-        )
-        source_for_selection = sorted_photos
-
-    # 3. Pad or truncate the list to meet the target_count
-    final_photos = []
-    source_len = len(source_for_selection)
-
-    if source_len >= target_count:
-        # We have enough (or more than enough), so just take the best ones
-        final_photos = source_for_selection[:target_count]
+    if final_inlier_indices.size == 0:
+        log.warning("All photos were filtered out as outliers. Falling back to using all valid photos.")
+        inlier_photos = list(all_photos)
+        inlier_embs = all_embs
     else:
-        # We have fewer than needed, so we must pad with duplicates
-        final_photos = list(source_for_selection) # Start with all available high-quality photos
-        while len(final_photos) < target_count:
-            # Cycle through the source list to pick duplicates from the top
-            index_to_copy = (len(final_photos) - source_len) % source_len
-            # Create a copy to avoid modifying the original list in place
-            photo_to_add = source_for_selection[index_to_copy].copy()
-            final_photos.append(photo_to_add)
-            
-    log.info(
-        "Identity analysis complete. Final photo selection prepared.",
-        final_count=len(final_photos),
-        similarity_scores=[round(p['similarity_score'], 4) for p in final_photos]
-    )
+        inlier_photos = [all_photos[i] for i in final_inlier_indices]
+        inlier_embs = all_embs[final_inlier_indices]
+
+    # 3. Build a robust centroid from the clean, inlier embeddings
+    centroid = _build_robust_centroid(inlier_embs)
     
+    # 4. Score all inlier photos against the centroid and sort them
+    similarities = inlier_embs @ centroid
+    
+    sorted_photos = sorted(
+        [{**p, 'similarity_score': float(s)} for p, s in zip(inlier_photos, similarities)],
+        key=lambda x: x['similarity_score'], reverse=True
+    )
+
+    # 5. Select the best photos and duplicate if necessary
+    source_for_final_list = sorted_photos
+    if not source_for_final_list:
+        log.error("No photos remaining after filtering. Cannot proceed.")
+        return []
+        
+    final_photos = list(source_for_final_list[:target_count])
+    
+    # If we don't have enough photos, duplicate the best ones to reach target_count
+    if len(final_photos) < target_count:
+        num_needed = target_count - len(final_photos)
+        # Use modulo to cycle through the available best photos
+        duplicates_to_add = [
+            dict(source_for_final_list[i % len(source_for_final_list)]) for i in range(num_needed)
+        ]
+        final_photos.extend(duplicates_to_add)
+        log.info("Duplicated best photos to meet target count.", needed=num_needed, final_count=len(final_photos))
+
+    log.info("Identity analysis complete.", final_count=len(final_photos), scores=[round(p['similarity_score'], 4) for p in final_photos])
     return final_photos
