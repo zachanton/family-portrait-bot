@@ -3,12 +3,10 @@ import asyncio
 import uuid
 from aiogram.utils.i18n import gettext as _
 from aiogram_bot_template.services import image_cache, photo_processing
-from aiogram_bot_template.services.enhancers import style_enhancer
+from aiogram_bot_template.services.enhancers import family_prompt_enhancer
 from aiogram_bot_template.data.settings import settings
-from aiogram_bot_template.services.prompting.factory import get_prompt_strategy
 from aiogram_bot_template.data.constants import GenerationType, ImageRole
-from .base import BasePipeline, PipelineOutput
-from aiogram.types import BufferedInputFile
+from ..base import BasePipeline, PipelineOutput
 
 class FamilyPhotoPipeline(BasePipeline):
     
@@ -53,19 +51,8 @@ class FamilyPhotoPipeline(BasePipeline):
         await self.update_status_func("Creating family composite for the AI... 🖼️")
 
         request_id_str = self.gen_data.get('request_id', uuid.uuid4().hex)
-        mother_horizontal_uid = f"mother_horizontal_{request_id_str}"
-        await image_cache.cache_image_bytes(mother_horizontal_uid, mother_horizontal_bytes, "image/jpeg", self.cache_pool)
-        mother_horizontal_url = image_cache.get_cached_image_proxy_url(mother_horizontal_uid)
-
-        father_horizontal_uid = f"father_horizontal_{request_id_str}"
-        await image_cache.cache_image_bytes(father_horizontal_uid, father_horizontal_bytes, "image/jpeg", self.cache_pool)
-        father_horizontal_url = image_cache.get_cached_image_proxy_url(father_horizontal_uid)
-
-        child_uid = f"child_{request_id_str}"
-        await image_cache.cache_image_bytes(child_uid, child_bytes, "image/jpeg", self.cache_pool)
-        child_url = image_cache.get_cached_image_proxy_url(child_uid)
-
-
+        
+        # This composite is the main input for the prompt enhancer and the generation model
         vertical_stack_bytes = photo_processing.stack_three_images(mother_horizontal_bytes, child_bytes, father_horizontal_bytes)
         vertical_stack_uid = f"vertical_stack_{request_id_str}"
         await image_cache.cache_image_bytes(vertical_stack_uid, vertical_stack_bytes, "image/jpeg", self.cache_pool)
@@ -80,25 +67,29 @@ class FamilyPhotoPipeline(BasePipeline):
              raise ValueError(f"Tier configuration for {generation_type} level {quality_level} not found.")
 
         await self.update_status_func("Designing your photoshoot... 🎨")
-        generation_count = tier_config.count
-        # photoshoot_plan = await style_enhancer.get_style_data(main_composite_url, num_shots=generation_count)
-        photoshoot_plan = None
-
-        strategy = get_prompt_strategy(tier_config.client)
-        prompt_payload = strategy.create_family_photo_payload(style=self.gen_data.get("style"))
+        
+        # A single call gets us the list of final, ready-to-use prompts
+        completed_prompts = await family_prompt_enhancer.get_enhanced_family_prompts(
+            composite_image_url=vertical_stack_url,
+            num_prompts=tier_config.count
+        )
+        if not completed_prompts:
+            self.log.error("Family prompt enhancer failed. Cannot proceed with generation.")
+            raise RuntimeError("Failed to generate family photo prompts.")
 
         request_payload = {
             "model": tier_config.model,
-            "image_urls": [ vertical_stack_url ],
+            "image_urls": [vertical_stack_url],
             "generation_type": GenerationType.FAMILY_PHOTO.value,
-            **prompt_payload,
+            "prompt": completed_prompts[0], # Use the first prompt as a representative base
+            "temperature": 0.5
         }
         
         caption = None
         
         metadata = { 
-            "processed_uids": [ vertical_stack_uid ],
-            "photoshoot_plan": photoshoot_plan.shots if photoshoot_plan else None
+            "processed_uids": [vertical_stack_uid],
+            "completed_prompts": completed_prompts # Pass the full list to the worker
         }
 
         return PipelineOutput(request_payload=request_payload, caption=caption, metadata=metadata)

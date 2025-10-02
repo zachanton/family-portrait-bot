@@ -5,8 +5,8 @@ from enum import Enum
 class GenerationType(str, Enum):
     """Types of generations used in the system."""
     CHILD_GENERATION = "child_generation"
-    PAIR_PHOTO = "pair_photo"  # Renamed from GROUP_PHOTO
-    FAMILY_PHOTO = "family_photo"  # New type for 3 people
+    PAIR_PHOTO = "pair_photo"
+    FAMILY_PHOTO = "family_photo"
 
 
 class ImageRole(str, Enum):
@@ -25,9 +25,9 @@ class ChildGender(str, Enum):
     GIRL = "girl"
 
 class ChildAge(str, Enum):
-    INFANT = "2"  # 0-2 years
-    CHILD = "6"    # 5-8 years
-    PRETEEN = "10"      # 13-16 years
+    INFANT = "2"
+    CHILD = "6"
+    PRETEEN = "10"
 
 class ChildResemblance(str, Enum):
     MOM = "Mother"

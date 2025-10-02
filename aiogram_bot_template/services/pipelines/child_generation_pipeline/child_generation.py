@@ -5,18 +5,16 @@ import numpy as np
 from aiogram.utils.i18n import gettext as _
 from aiogram_bot_template.services import image_cache, photo_processing, similarity_scorer
 from aiogram_bot_template.services.enhancers import (
-    eye_enhancer,
-    hairstyle_enhancer,
     parent_visual_enhancer,
+    child_prompt_enhancer,
 )
 from aiogram_bot_template.data.settings import settings
-from aiogram_bot_template.services.prompting.factory import get_prompt_strategy
 from aiogram_bot_template.data.constants import (
     ChildResemblance,
     GenerationType,
     ImageRole,
 )
-from .base import BasePipeline, PipelineOutput
+from ..base import BasePipeline, PipelineOutput
 
 
 class ChildGenerationPipeline(BasePipeline):
@@ -115,7 +113,7 @@ class ChildGenerationPipeline(BasePipeline):
             photo_processing.split_and_stack_image_bytes(dad_visual_horizontal_bytes)
             if dad_visual_horizontal_bytes else (None, None)
         )
-
+        
         vertical_stack_bytes = photo_processing.stack_two_images(mom_visual_horizontal_bytes, dad_visual_horizontal_bytes)
         vertical_stack_uid = f"vertical_two_stack_{request_id_str}"
         await image_cache.cache_image_bytes(vertical_stack_uid, vertical_stack_bytes, "image/jpeg", self.cache_pool)
@@ -124,6 +122,8 @@ class ChildGenerationPipeline(BasePipeline):
         mom_final_ref_url, dad_final_ref_url = mom_collage_url, dad_collage_url
         mom_visual_front_uid, mom_visual_side_uid = None, None
         dad_visual_front_uid, dad_visual_side_uid = None, None
+        
+        mom_visual_horizontal_uid, dad_visual_horizontal_uid = None, None
 
         if mom_visual_front_bytes:
             mom_visual_front_uid = f"visual_mom_front_{request_id_str}"
@@ -160,7 +160,7 @@ class ChildGenerationPipeline(BasePipeline):
             self.log.warning(
                 "Failed to generate Dad's visual representation, falling back to collage."
             )
-
+        
         child_resemblance = self.gen_data["child_resemblance"]
         if child_resemblance == ChildResemblance.MOM.value:
             resemblance_parent_final_url = mom_final_ref_url
@@ -171,14 +171,6 @@ class ChildGenerationPipeline(BasePipeline):
 
         await self.update_status_func(_("Designing child's features... ✨"))
 
-        eye_description_text = await eye_enhancer.get_eye_description(
-            non_resemblance_parent_url=non_resemblance_parent_final_url
-        )
-
-        if not eye_description_text:
-            self.log.warning("Eye enhancer failed, using fallback description.")
-            eye_description_text = "The child has clear, bright eyes."
-
         quality_level = self.gen_data.get("quality_level", 1)
         tier_config = settings.child_generation.tiers.get(quality_level)
         if not tier_config:
@@ -186,34 +178,27 @@ class ChildGenerationPipeline(BasePipeline):
                 f"Tier configuration for child_generation level {quality_level} not found."
             )
 
-        hairstyle_descriptions = await hairstyle_enhancer.get_hairstyle_descriptions(
-            num_hairstyles=tier_config.count,
+        # A single call to get a list of fully-formed prompts
+        completed_prompts = await child_prompt_enhancer.get_enhanced_child_prompts(
+            non_resemblance_parent_url=non_resemblance_parent_final_url,
+            num_prompts=tier_config.count,
             child_age=self.gen_data["child_age"],
             child_gender=self.gen_data["child_gender"],
-        )
-
-        if not hairstyle_descriptions or len(hairstyle_descriptions) < tier_config.count:
-            self.log.warning(
-                "Hairstyle enhancer failed or returned too few styles, using fallback.",
-                requested=tier_config.count,
-                returned=len(hairstyle_descriptions or []),
-            )
-            fallback_style = "a simple, neat hairstyle."
-            hairstyle_descriptions = [fallback_style] * tier_config.count
-
-        strategy = get_prompt_strategy(tier_config.client)
-
-        prompt_payload = strategy.create_child_generation_payload(
-            child_gender=self.gen_data["child_gender"],
-            child_age=self.gen_data["child_age"],
             child_resemblance=child_resemblance,
         )
 
+        if not completed_prompts:
+            self.log.error("Child prompt enhancer failed. Cannot proceed with generation.")
+            raise RuntimeError("Failed to generate child prompts.")
+
+        # The base payload now uses the first completed prompt as a template.
+        # The worker will cycle through the `completed_prompts` list.
         request_payload = {
             "model": tier_config.model,
-            "image_urls": [resemblance_parent_final_url],
+            "image_urls": [vertical_stack_url],
             "generation_type": GenerationType.CHILD_GENERATION.value,
-            **prompt_payload,
+            "prompt": completed_prompts[0], # Base prompt for logging purposes
+            "temperature": 0.3,
         }
 
         caption = None
@@ -225,9 +210,8 @@ class ChildGenerationPipeline(BasePipeline):
             "mom_visual_horizontal_uid": mom_visual_horizontal_uid,
             "dad_visual_front_uid": dad_visual_front_uid,
             "dad_visual_horizontal_uid": dad_visual_horizontal_uid,
-            "vertical_stack_uid":  vertical_stack_uid,
-            "eye_description_text": eye_description_text,
-            "hairstyle_descriptions": hairstyle_descriptions,
+            "vertical_stack_uid": vertical_stack_uid,
+            "completed_prompts": completed_prompts,
         }
 
         return PipelineOutput(

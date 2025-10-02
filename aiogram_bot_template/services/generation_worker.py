@@ -14,9 +14,7 @@ from aiogram.utils.i18n import gettext as _
 from redis.asyncio import Redis
 
 from aiogram_bot_template.data.constants import (
-    ChildResemblance,
     GenerationType,
-    ImageRole,
 )
 from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.db.db_api.storages import PostgresConnection
@@ -24,9 +22,8 @@ from aiogram_bot_template.db.repo import generations as generations_repo
 from aiogram_bot_template.keyboards.inline import feedback, next_step, child_selection, family_selection
 from aiogram_bot_template.services import image_cache
 from aiogram_bot_template.services.pipelines.base import BasePipeline
-from aiogram_bot_template.services.pipelines.child_generation import ChildGenerationPipeline
-from aiogram_bot_template.services.pipelines.family_photo import FamilyPhotoPipeline
-from aiogram_bot_template.services.enhancers.style_enhancer import format_shot_for_prompt
+from aiogram_bot_template.services.pipelines.child_generation_pipeline.child_generation import ChildGenerationPipeline
+from aiogram_bot_template.services.pipelines.family_photo_pipeline.family_photo import FamilyPhotoPipeline
 from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.utils.status_manager import StatusMessageManager
 
@@ -150,13 +147,12 @@ async def run_generation_worker(
             uid=pipeline_output.metadata.get("dad_visual_horizontal_uid"),
             caption="[DEBUG] dad_visual_horizontal_uid."
         )
-
+        
         await _send_debug_if_enabled(
             bot=bot, chat_id=chat_id, redis=cache_pool,
             uid=pipeline_output.metadata.get("vertical_stack_uid"),
             caption="[DEBUG] vertical_stack_uid."
         )
-
         
         for uid in pipeline_output.metadata.get("processed_uids", []):
             await _send_debug_if_enabled(
@@ -165,9 +161,8 @@ async def run_generation_worker(
                 caption=f"[DEBUG] This is a processed image sent to the AI (uid: {uid})."
             )
         
-        photoshoot_plan = pipeline_output.metadata.get("photoshoot_plan")
-        eye_description_text = pipeline_output.metadata.get("eye_description_text")
-        hairstyle_descriptions = pipeline_output.metadata.get("hairstyle_descriptions", [])
+        # Get the list of pre-made prompts from the pipeline
+        completed_prompts = pipeline_output.metadata.get("completed_prompts", [])
 
         for i in range(generation_count):
             current_iteration = i + 1
@@ -178,50 +173,14 @@ async def run_generation_worker(
             ))
 
             payload_override = pipeline_output.request_payload.copy()
-            prompt_template = payload_override["prompt"]
-            final_prompt = prompt_template
-            
-            if generation_type == GenerationType.FAMILY_PHOTO.value:
-                pose_text, wardrobe_text = None, None
-                
-                if photoshoot_plan and i < len(photoshoot_plan):
-                    current_shot = photoshoot_plan[i]
-                    parts = format_shot_for_prompt(current_shot)
-                    pose_text, wardrobe_text = parts['POSE_AND_COMPOSITION_DATA'], parts['PHOTOS_PLAN_DATA']
-                
-                elif photoshoot_plan: 
-                    log_task.warning("Reusing last available shot description.")
-                    last_shot = photoshoot_plan[-1]
-                    pose_text, wardrobe_text = last_shot.pose_and_composition, last_shot.wardrobe_plan
-                else:
-                    log_task.error("Photoshoot plan missing, using hardcoded fallback.")
-                    pose_text = "A beautiful family pose..."
-                    wardrobe_text = "Coordinated casual wear..."
 
-                final_prompt = final_prompt.replace("{{POSE_AND_COMPOSITION_DATA}}", pose_text)
-                final_prompt = final_prompt.replace("{{PHOTOS_PLAN_DATA}}", wardrobe_text)
-            
-            elif generation_type == GenerationType.CHILD_GENERATION.value:
-                if hairstyle_descriptions:
-                    hairstyle_desc = hairstyle_descriptions[i % len(hairstyle_descriptions)]
-                else:
-                    hairstyle_desc = "a simple, neat hairstyle"
-                    log_task.warning("Hairstyle description list was empty, using hardcoded fallback for injection.")
-
-                child_gender = user_data.get("child_gender", "girl")
-                child_role = "daughter" if child_gender.lower() == "girl" else "son"
-                resemblance_parent = user_data.get("child_resemblance", ChildResemblance.MOM.value)
-                nonresemblance_parent = (ChildResemblance.DAD.value if resemblance_parent == ChildResemblance.MOM.value else ChildResemblance.MOM.value)
-
-                final_prompt = final_prompt.replace("{{CHILD_AGE}}", user_data.get("child_age", "7"))
-                final_prompt = final_prompt.replace("{{CHILD_GENDER}}", user_data.get("child_gender", "girl"))
-                final_prompt = final_prompt.replace("{{CHILD_ROLE}}", child_role)
-                final_prompt = final_prompt.replace("{{INHERITED_EYE_FEATURES}}", eye_description_text)
-                final_prompt = final_prompt.replace("{{HAIRSTYLE_DESCRIPTION}}", hairstyle_desc)
-
-                final_prompt = final_prompt.replace("{{PARENT_A}}", resemblance_parent)
-                final_prompt = final_prompt.replace("{{PARENT_B}}", nonresemblance_parent)
-                final_prompt = final_prompt.replace("other parent", nonresemblance_parent)
+            # Get the correct, fully-formed prompt for this iteration
+            if completed_prompts and i < len(completed_prompts):
+                final_prompt = completed_prompts[i]
+            else:
+                log_task.error("Completed prompt missing for this iteration. Cannot generate.",
+                               gen_type=generation_type)
+                continue
                 
             payload_override["prompt"] = final_prompt
             payload_override["seed"] = random.randint(1, 1_000_000)
@@ -246,7 +205,8 @@ async def run_generation_worker(
                 quality_level=quality_level, trial_type=trial_type, seed=payload_override["seed"],
                 generation_time_ms=result.generation_time_ms,
                 api_request_payload=result.request_payload, api_response_payload=result.response_payload,
-                caption=pipeline_output.caption
+                caption=pipeline_output.caption,
+                enhanced_prompt=final_prompt # Log the final prompt used
             )
             generation_id = await generations_repo.create_generation_log(db, log_entry_draft)
 
