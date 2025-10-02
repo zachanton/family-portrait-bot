@@ -4,10 +4,9 @@ from aiogram.utils.i18n import gettext as _
 from pathlib import Path
 
 from .base_strategy import PromptStrategy
-# --- ChildGenerationHints is no longer needed here ---
 from aiogram_bot_template.data.constants import ChildAge
 
-from .styles import (
+from .pipelines import (
     PROMPT_RETRO_MOTEL,
     PROMPT_GOLDEN_HOUR,
     PROMPT_BAROQUE,
@@ -62,32 +61,6 @@ class FalStrategy(PromptStrategy):
     """
     Prompt strategy for models like Fal.ai and Google Gemini.
     """
-
-    def _get_child_prompt_template(
-        self, age: str, gender: str, resemblance: str
-    ) -> str:
-        """
-        Dynamically loads the correct prompt file based on the child's parameters.
-        """
-        try:
-            age_name = ChildAge(age).name.lower()
-        except ValueError:
-            if age == "2": age_name = "infant"
-            elif age == "7": age_name = "child"
-            else: age_name = "teen"
-
-        prompt_path = (
-            Path(__file__).parent
-            / "styles"
-            / "child_generation"
-            / age_name
-            / gender
-            / f"{resemblance}.txt"
-        )
-        if not prompt_path.exists():
-            raise FileNotFoundError(f"Prompt file not found at: {prompt_path}")
-
-        return prompt_path.read_text(encoding="utf-8")
 
     def create_group_photo_payload(self, style: str) -> Dict[str, Any]:
         prompt = STYLE_PROMPTS.get(style, PROMPT_GOLDEN_HOUR)

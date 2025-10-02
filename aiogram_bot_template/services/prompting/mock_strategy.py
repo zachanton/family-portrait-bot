@@ -2,40 +2,14 @@
 from typing import Dict, Any
 from pathlib import Path
 
-from aiogram_bot_template.data.constants import ChildAge
 from .base_strategy import PromptStrategy
-from .styles import PROMPT_DEFAULT, PROMPT_CHILD_DEFAULT, PROMPT_FAMILY_DEFAULT
+from .pipelines import PROMPT_DEFAULT, PROMPT_CHILD_DEFAULT, PROMPT_FAMILY_DEFAULT
 from .fal_strategy import STYLE_PROMPTS, STYLE_PROMPTS_NEXT
 
 class MockStrategy(PromptStrategy):
     """
     A mock strategy providing a dummy payload for robust testing.
     """
-    def _get_child_prompt_template(
-        self, age: str, gender: str, resemblance: str
-    ) -> str:
-        """
-        Dynamically loads the correct prompt file based on the child's parameters.
-        """
-        try:
-            age_name = ChildAge(age).name.lower()
-        except ValueError:
-            if age == "2": age_name = "infant"
-            elif age == "7": age_name = "child"
-            else: age_name = "teen"
-
-        prompt_path = (
-            Path(__file__).parent
-            / "styles"
-            / "child_generation"
-            / age_name
-            / gender
-            / f"{resemblance}.txt"
-        )
-        if not prompt_path.exists():
-            raise FileNotFoundError(f"Prompt file not found at: {prompt_path}")
-
-        return prompt_path.read_text(encoding="utf-8")
     
     def create_group_photo_payload(self, style: str | None = None) -> Dict[str, Any]:
         prompt = STYLE_PROMPTS.get(style, PROMPT_DEFAULT)

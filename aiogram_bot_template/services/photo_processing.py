@@ -322,3 +322,39 @@ def stack_three_images(
     canvas[current_y : current_y + child_h, 0 : child_w] = child_final
 
     return convert_bgr_to_jpeg_bytes(canvas)
+
+
+def stack_two_images(
+    img_top_bytes: bytes,
+    img_bottom_bytes: bytes,
+) -> bytes:
+    """
+    Интеллектуально объединяет изображения матери, отца и ребенка в один
+    вертикальный портрет 9:16 с динамическим распределением высоты.
+    """
+    img_mom = load_image_bgr_from_bytes(img_top_bytes)
+    img_dad = load_image_bgr_from_bytes(img_bottom_bytes)
+
+    if img_mom is None or img_dad is None:
+        raise ValueError("Одно или несколько изображений не удалось загрузить.")
+
+    target_width = min(img_mom.shape[1], img_dad.shape[1])
+    
+    def resize_to_width(img, new_width):
+        h, w, _ = img.shape
+        scale = new_width / w
+        return cv2.resize(img, (new_width, int(h * scale)), interpolation=cv2.INTER_AREA)
+
+    mom_resized = resize_to_width(img_mom, target_width)
+    dad_resized = resize_to_width(img_dad, target_width)
+    
+    final_height = mom_resized.shape[0] + dad_resized.shape[0]
+
+    canvas = np.full((final_height, target_width, 3), 128, dtype=np.uint8)
+    
+    current_y = 0
+    canvas[current_y : current_y + mom_resized.shape[0], :] = mom_resized
+    current_y += mom_resized.shape[0]
+    canvas[current_y : current_y + dad_resized.shape[0], :] = dad_resized
+
+    return convert_bgr_to_jpeg_bytes(canvas)

@@ -26,10 +26,10 @@ class ChildGender(str, Enum):
 
 class ChildAge(str, Enum):
     INFANT = "2"  # 0-2 years
-    CHILD = "7"    # 5-8 years
-    TEEN = "14"      # 13-16 years
+    CHILD = "6"    # 5-8 years
+    PRETEEN = "10"      # 13-16 years
 
 class ChildResemblance(str, Enum):
-    MOM = "mom"
-    DAD = "dad"
+    MOM = "Mother"
+    DAD = "Father"
     BOTH = "both"

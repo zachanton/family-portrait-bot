@@ -37,11 +37,11 @@ def _get_age_str(age_value: str) -> str:
     try:
         age_enum = ChildAge(age_value)
         if age_enum == ChildAge.INFANT:
-            return "infant or toddler (0-2 years)"
+            return "infant or toddler (1-3 years)"
         if age_enum == ChildAge.CHILD:
-            return "young child (5-8 years)"
-        if age_enum == ChildAge.TEEN:
-            return "teenager (13-16 years)"
+            return "young child (5-7 years)"
+        if age_enum == ChildAge.PRETEEN:
+            return "teenager (9-11 years)"
     except ValueError:
         return "child" # Fallback
     return "child"

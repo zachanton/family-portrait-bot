@@ -13,7 +13,11 @@ from aiogram.types import BufferedInputFile
 from aiogram.utils.i18n import gettext as _
 from redis.asyncio import Redis
 
-from aiogram_bot_template.data.constants import GenerationType
+from aiogram_bot_template.data.constants import (
+    ChildResemblance,
+    GenerationType,
+    ImageRole,
+)
 from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.db.db_api.storages import PostgresConnection
 from aiogram_bot_template.db.repo import generations as generations_repo
@@ -134,12 +138,26 @@ async def run_generation_worker(
             uid=pipeline_output.metadata.get("dad_collage_uid"),
             caption="[DEBUG] dad_collage_uid."
         )
+
+        await _send_debug_if_enabled(
+            bot=bot, chat_id=chat_id, redis=cache_pool,
+            uid=pipeline_output.metadata.get("dad_visual_front_uid"),
+            caption="[DEBUG] mom_visual_front_uid."
+        )
+
         await _send_debug_if_enabled(
             bot=bot, chat_id=chat_id, redis=cache_pool,
             uid=pipeline_output.metadata.get("dad_visual_horizontal_uid"),
             caption="[DEBUG] dad_visual_horizontal_uid."
         )
 
+        await _send_debug_if_enabled(
+            bot=bot, chat_id=chat_id, redis=cache_pool,
+            uid=pipeline_output.metadata.get("vertical_stack_uid"),
+            caption="[DEBUG] vertical_stack_uid."
+        )
+
+        
         for uid in pipeline_output.metadata.get("processed_uids", []):
             await _send_debug_if_enabled(
                 bot=bot, chat_id=chat_id, redis=cache_pool,
@@ -190,11 +208,21 @@ async def run_generation_worker(
                     hairstyle_desc = "a simple, neat hairstyle"
                     log_task.warning("Hairstyle description list was empty, using hardcoded fallback for injection.")
 
-                final_prompt = final_prompt.replace("{{child_age}}", user_data.get("child_age", "7"))
-                final_prompt = final_prompt.replace("{{child_gender}}", user_data.get("child_gender", "girl"))
+                child_gender = user_data.get("child_gender", "girl")
+                child_role = "daughter" if child_gender.lower() == "girl" else "son"
+                resemblance_parent = user_data.get("child_resemblance", ChildResemblance.MOM.value)
+                nonresemblance_parent = (ChildResemblance.DAD.value if resemblance_parent == ChildResemblance.MOM.value else ChildResemblance.MOM.value)
+
+                final_prompt = final_prompt.replace("{{CHILD_AGE}}", user_data.get("child_age", "7"))
+                final_prompt = final_prompt.replace("{{CHILD_GENDER}}", user_data.get("child_gender", "girl"))
+                final_prompt = final_prompt.replace("{{CHILD_ROLE}}", child_role)
                 final_prompt = final_prompt.replace("{{INHERITED_EYE_FEATURES}}", eye_description_text)
                 final_prompt = final_prompt.replace("{{HAIRSTYLE_DESCRIPTION}}", hairstyle_desc)
 
+                final_prompt = final_prompt.replace("{{PARENT_A}}", resemblance_parent)
+                final_prompt = final_prompt.replace("{{PARENT_B}}", nonresemblance_parent)
+                final_prompt = final_prompt.replace("other parent", nonresemblance_parent)
+                
             payload_override["prompt"] = final_prompt
             payload_override["seed"] = random.randint(1, 1_000_000)
 

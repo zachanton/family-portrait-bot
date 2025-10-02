@@ -116,6 +116,11 @@ class ChildGenerationPipeline(BasePipeline):
             if dad_visual_horizontal_bytes else (None, None)
         )
 
+        vertical_stack_bytes = photo_processing.stack_two_images(mom_visual_horizontal_bytes, dad_visual_horizontal_bytes)
+        vertical_stack_uid = f"vertical_two_stack_{request_id_str}"
+        await image_cache.cache_image_bytes(vertical_stack_uid, vertical_stack_bytes, "image/jpeg", self.cache_pool)
+        vertical_stack_url = image_cache.get_cached_image_proxy_url(vertical_stack_uid)
+
         mom_final_ref_url, dad_final_ref_url = mom_collage_url, dad_collage_url
         mom_visual_front_uid, mom_visual_side_uid = None, None
         dad_visual_front_uid, dad_visual_side_uid = None, None
@@ -220,6 +225,7 @@ class ChildGenerationPipeline(BasePipeline):
             "mom_visual_horizontal_uid": mom_visual_horizontal_uid,
             "dad_visual_front_uid": dad_visual_front_uid,
             "dad_visual_horizontal_uid": dad_visual_horizontal_uid,
+            "vertical_stack_uid":  vertical_stack_uid,
             "eye_description_text": eye_description_text,
             "hairstyle_descriptions": hairstyle_descriptions,
         }
