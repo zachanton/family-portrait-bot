@@ -100,10 +100,8 @@ async def run_generation_worker(
 
         if generation_type == GenerationType.CHILD_GENERATION.value:
             parent_visual_uids = {
-                "mom_visual_front_uid": pipeline_output.metadata.get("mom_visual_front_uid"),
-                "dad_visual_front_uid": pipeline_output.metadata.get("dad_visual_front_uid"),
-                "mom_visual_horizontal_uid": pipeline_output.metadata.get("mom_visual_horizontal_uid"),
-                "dad_visual_horizontal_uid": pipeline_output.metadata.get("dad_visual_horizontal_uid"),
+                "mom_profile_uid": pipeline_output.metadata.get("mom_profile_uid"),
+                "dad_profile_uid": pipeline_output.metadata.get("dad_profile_uid"),
             }
             if all(parent_visual_uids.values()):
                 await state.update_data(**parent_visual_uids)
@@ -120,14 +118,8 @@ async def run_generation_worker(
 
         await _send_debug_if_enabled(
             bot=bot, chat_id=chat_id, redis=cache_pool,
-            uid=pipeline_output.metadata.get("mom_visual_front_uid"),
-            caption="[DEBUG] mom_visual_front_uid."
-        )
-
-        await _send_debug_if_enabled(
-            bot=bot, chat_id=chat_id, redis=cache_pool,
-            uid=pipeline_output.metadata.get("mom_visual_horizontal_uid"),
-            caption="[DEBUG] mom_visual_horizontal_uid."
+            uid=pipeline_output.metadata.get("mom_profile_uid"),
+            caption="[DEBUG] mom_profile_uid."
         )
 
         await _send_debug_if_enabled(
@@ -136,16 +128,11 @@ async def run_generation_worker(
             caption="[DEBUG] dad_collage_uid."
         )
 
-        await _send_debug_if_enabled(
-            bot=bot, chat_id=chat_id, redis=cache_pool,
-            uid=pipeline_output.metadata.get("dad_visual_front_uid"),
-            caption="[DEBUG] mom_visual_front_uid."
-        )
 
         await _send_debug_if_enabled(
             bot=bot, chat_id=chat_id, redis=cache_pool,
-            uid=pipeline_output.metadata.get("dad_visual_horizontal_uid"),
-            caption="[DEBUG] dad_visual_horizontal_uid."
+            uid=pipeline_output.metadata.get("dad_profile_uid"),
+            caption="[DEBUG] dad_profile_uid."
         )
         
         await _send_debug_if_enabled(

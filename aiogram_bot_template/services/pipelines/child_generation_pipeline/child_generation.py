@@ -1,7 +1,9 @@
-# aiogram_bot_template/services/pipelines/child_generation.py
+# aiogram_bot_template/services/pipelines/child_generation_pipeline/child_generation.py
 import asyncio
 import uuid
+import random
 import numpy as np
+from typing import List, Optional
 from aiogram.utils.i18n import gettext as _
 from aiogram_bot_template.services import image_cache, photo_processing, similarity_scorer
 from aiogram_bot_template.services.enhancers import (
@@ -15,37 +17,32 @@ from aiogram_bot_template.data.constants import (
     ImageRole,
 )
 from ..base import BasePipeline, PipelineOutput
+from aiogram_bot_template.services.pipelines import PROMPT_CHILD_DEFAULT
 
 
 class ChildGenerationPipeline(BasePipeline):
     async def prepare_data(self) -> PipelineOutput:
+        """
+        Prepares data for child generation. This involves:
+        1. Creating collages for both parents from their source photos.
+        2. Stacking the collages vertically to create a single input image for the AI.
+        3. Calling an enhancer LLM to get parental feature analysis and N creative variations.
+        4. Assembling N complete, ready-to-use prompts for the image generation model.
+        """
         await self.update_status_func(_("Analyzing parental features... 🧬"))
 
         photos_collected = self.gen_data.get("photos_collected", [])
         if not photos_collected:
-            raise ValueError(
-                "Missing source images for child generation."
-            )
+            raise ValueError("Missing source images for child generation.")
 
-        mom_photos = [
-            p for p in photos_collected if p.get("role") == ImageRole.MOTHER.value
-        ]
-        dad_photos = [
-            p for p in photos_collected if p.get("role") == ImageRole.FATHER.value
-        ]
+        mom_photos = [p for p in photos_collected if p.get("role") == ImageRole.MOTHER.value]
+        dad_photos = [p for p in photos_collected if p.get("role") == ImageRole.FATHER.value]
 
         if not mom_photos or not dad_photos:
-            raise ValueError(
-                "Could not identify Mom or Dad's photos from the collected images."
-            )
+            raise ValueError("Could not identify Mom or Dad's photos from the collected images.")
 
         async def get_all_processed_bytes(photos):
-            tasks = [
-                image_cache.get_cached_image_bytes(
-                    p["file_unique_id"], self.cache_pool
-                )
-                for p in photos
-            ]
+            tasks = [image_cache.get_cached_image_bytes(p["file_unique_id"], self.cache_pool) for p in photos]
             results = await asyncio.gather(*tasks)
             return [b for b, a in results if b is not None]
 
@@ -103,117 +100,103 @@ class ChildGenerationPipeline(BasePipeline):
                 dad_collage_url, role="father", identity_centroid=dad_centroid, cache_pool=self.cache_pool
             ),
         ]
-        mom_visual_horizontal_bytes, dad_visual_horizontal_bytes = await asyncio.gather(*visual_tasks)
+        mom_profile_bytes, dad_profile_bytes = await asyncio.gather(*visual_tasks)
 
-        mom_visual_front_bytes, mom_visual_side_bytes = (
-            photo_processing.split_and_stack_image_bytes(mom_visual_horizontal_bytes)
-            if mom_visual_horizontal_bytes else (None, None)
-        )
-        dad_visual_front_bytes, dad_visual_side_bytes = (
-            photo_processing.split_and_stack_image_bytes(dad_visual_horizontal_bytes)
-            if dad_visual_horizontal_bytes else (None, None)
-        )
-        
-        vertical_stack_bytes = photo_processing.stack_two_images(mom_visual_horizontal_bytes, dad_visual_horizontal_bytes)
+        mom_profile_uid = f"mom_profile_{request_id_str}"
+        await image_cache.cache_image_bytes(mom_profile_uid, mom_profile_bytes, "image/jpeg", self.cache_pool)
+        dad_profile_uid = f"dad_profile_{request_id_str}"
+        await image_cache.cache_image_bytes(dad_profile_uid, dad_profile_bytes, "image/jpeg", self.cache_pool)
+
+        vertical_stack_bytes = photo_processing.stack_two_images(mom_profile_bytes, dad_profile_bytes)
         vertical_stack_uid = f"vertical_two_stack_{request_id_str}"
         await image_cache.cache_image_bytes(vertical_stack_uid, vertical_stack_bytes, "image/jpeg", self.cache_pool)
         vertical_stack_url = image_cache.get_cached_image_proxy_url(vertical_stack_uid)
-
-        mom_final_ref_url, dad_final_ref_url = mom_collage_url, dad_collage_url
-        mom_visual_front_uid, mom_visual_side_uid = None, None
-        dad_visual_front_uid, dad_visual_side_uid = None, None
-        
-        mom_visual_horizontal_uid, dad_visual_horizontal_uid = None, None
-
-        if mom_visual_front_bytes:
-            mom_visual_front_uid = f"visual_mom_front_{request_id_str}"
-            await image_cache.cache_image_bytes(
-                mom_visual_front_uid, mom_visual_front_bytes, "image/jpeg", self.cache_pool
-            )
-            mom_final_ref_url = image_cache.get_cached_image_proxy_url(mom_visual_front_uid)
-            self.log.info("Using enhanced front visual representation for Mom.")
-            
-            if mom_visual_horizontal_bytes:
-                mom_visual_horizontal_uid = f"visual_mom_horizontal_{request_id_str}"
-                await image_cache.cache_image_bytes(
-                    mom_visual_horizontal_uid, mom_visual_horizontal_bytes, "image/jpeg", self.cache_pool
-                )
-        else:
-            self.log.warning(
-                "Failed to generate Mom's visual representation, falling back to collage."
-            )
-
-        if dad_visual_front_bytes:
-            dad_visual_front_uid = f"visual_dad_front_{request_id_str}"
-            await image_cache.cache_image_bytes(
-                dad_visual_front_uid, dad_visual_front_bytes, "image/jpeg", self.cache_pool
-            )
-            dad_final_ref_url = image_cache.get_cached_image_proxy_url(dad_visual_front_uid)
-            self.log.info("Using enhanced front visual representation for Dad.")
-            
-            if dad_visual_horizontal_bytes:
-                dad_visual_horizontal_uid = f"visual_dad_horizontal_{request_id_str}"
-                await image_cache.cache_image_bytes(
-                    dad_visual_horizontal_uid, dad_visual_horizontal_bytes, "image/jpeg", self.cache_pool
-                )
-        else:
-            self.log.warning(
-                "Failed to generate Dad's visual representation, falling back to collage."
-            )
-        
-        child_resemblance = self.gen_data["child_resemblance"]
-        if child_resemblance == ChildResemblance.MOM.value:
-            resemblance_parent_final_url = mom_final_ref_url
-            non_resemblance_parent_final_url = dad_final_ref_url
-        else:
-            resemblance_parent_final_url = dad_final_ref_url
-            non_resemblance_parent_final_url = mom_final_ref_url
 
         await self.update_status_func(_("Designing child's features... ✨"))
 
         quality_level = self.gen_data.get("quality_level", 1)
         tier_config = settings.child_generation.tiers.get(quality_level)
         if not tier_config:
-            raise ValueError(
-                f"Tier configuration for child_generation level {quality_level} not found."
-            )
+            raise ValueError(f"Tier configuration for child_generation level {quality_level} not found.")
+        
+        generation_count = tier_config.count
+        
+        user_resemblance_choice = self.gen_data["child_resemblance"]
+        resemblance_list: List[str] = []
+        if user_resemblance_choice == ChildResemblance.MOM.value:
+            resemblance_list = [ChildResemblance.MOM.value] * generation_count
+        elif user_resemblance_choice == ChildResemblance.DAD.value:
+            resemblance_list = [ChildResemblance.DAD.value] * generation_count
+        else: # ChildResemblance.BOTH
+            resemblance_list = [random.choice([ChildResemblance.MOM.value, ChildResemblance.DAD.value]) for _ in range(generation_count)]
 
-        # A single call to get a list of fully-formed prompts
-        completed_prompts = await child_prompt_enhancer.get_enhanced_child_prompts(
-            non_resemblance_parent_url=non_resemblance_parent_final_url,
-            num_prompts=tier_config.count,
+        # Get the structured object containing both parent analysis and creative variations
+        feature_details = await child_prompt_enhancer.get_enhanced_child_features(
+            parent_composite_url=vertical_stack_url,
+            num_variations=generation_count,
             child_age=self.gen_data["child_age"],
             child_gender=self.gen_data["child_gender"],
-            child_resemblance=child_resemblance,
         )
 
-        if not completed_prompts:
+        if not feature_details:
             self.log.error("Child prompt enhancer failed. Cannot proceed with generation.")
             raise RuntimeError("Failed to generate child prompts.")
 
-        # The base payload now uses the first completed prompt as a template.
-        # The worker will cycle through the `completed_prompts` list.
+        completed_prompts = []
+        child_role = "daughter" if self.gen_data["child_gender"].lower() == "girl" else "son"
+        parental_analysis = feature_details.parental_analysis
+        
+        for i in range(generation_count):
+            creative_variation = feature_details.child_variations[i]
+            resemblance_parent = resemblance_list[i]
+            non_resemblance_parent = (
+                ChildResemblance.DAD.value if resemblance_parent == ChildResemblance.MOM.value else ChildResemblance.MOM.value
+            )
+            
+            selected_hair_color = random.choice([parental_analysis.mother_hair_color, parental_analysis.father_hair_color])
+            selected_eye_color = random.choice([parental_analysis.mother_eye_color, parental_analysis.father_eye_color])
+
+            if selected_hair_color == parental_analysis.mother_hair_color:
+                selected_hair_color = f"mothers' {selected_hair_color}, a few shades lighter than the mothers' hair."
+            else:
+                selected_hair_color = f"fathers' {selected_hair_color}, a few shades lighter than the fathers' hair."
+
+            if selected_eye_color == parental_analysis.mother_eye_color:
+                selected_eye_color = f"mothers' {selected_eye_color}."
+            else:
+                selected_eye_color = f"fathers' {selected_eye_color}."
+
+            final_prompt = PROMPT_CHILD_DEFAULT
+            final_prompt = final_prompt.replace("{{CHILD_AGE}}", self.gen_data["child_age"])
+            final_prompt = final_prompt.replace("{{CHILD_GENDER}}", self.gen_data["child_gender"])
+            final_prompt = final_prompt.replace("{{CHILD_ROLE}}", child_role)
+            final_prompt = final_prompt.replace("{{PARENT_A}}", resemblance_parent)
+            final_prompt = final_prompt.replace("{{PARENT_B}}", non_resemblance_parent)
+            
+            # Substitute features for the current variation
+            final_prompt = final_prompt.replace("{{HAIRSTYLE_DESCRIPTION}}", creative_variation.hairstyle_description)
+            
+            # Substitute the randomly chosen pigmentation
+            final_prompt = final_prompt.replace("{{HAIR_COLOR_DESCRIPTION}}", selected_hair_color)
+            final_prompt = final_prompt.replace("{{EYE_COLOR_DESCRIPTION}}", selected_eye_color)
+            
+            completed_prompts.append(final_prompt)
+
         request_payload = {
             "model": tier_config.model,
             "image_urls": [vertical_stack_url],
             "generation_type": GenerationType.CHILD_GENERATION.value,
-            "prompt": completed_prompts[0], # Base prompt for logging purposes
+            "prompt": completed_prompts[0], # Base prompt for logging
             "temperature": 0.3,
         }
-
-        caption = None
-
+        
         metadata = {
             "mom_collage_uid": mom_collage_uid,
             "dad_collage_uid": dad_collage_uid,
-            "mom_visual_front_uid": mom_visual_front_uid,
-            "mom_visual_horizontal_uid": mom_visual_horizontal_uid,
-            "dad_visual_front_uid": dad_visual_front_uid,
-            "dad_visual_horizontal_uid": dad_visual_horizontal_uid,
+            "mom_profile_uid": mom_profile_uid,
+            "dad_profile_uid": dad_profile_uid,
             "vertical_stack_uid": vertical_stack_uid,
-            "completed_prompts": completed_prompts,
+            "completed_prompts": completed_prompts, # Pass the full list to the worker
         }
 
-        return PipelineOutput(
-            request_payload=request_payload, caption=caption, metadata=metadata
-        )
+        return PipelineOutput(request_payload=request_payload, caption=None, metadata=metadata)

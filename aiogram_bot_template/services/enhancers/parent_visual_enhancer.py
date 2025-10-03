@@ -30,6 +30,7 @@ You are an expert AI photo analyst. Your mission is to distill the unique, perma
 
 **Feature Analysis Checklist (Address each point):**
 *   **Overall Face Shape:** Describe the geometric shape of the face (e.g., oval, long, square with a strong jaw).
+*   **Hair Color:** Detail the consensus hair color.
 *   **Eyes:** Detail the consensus eye color and their specific shape (e.g., 'deep-set, almond-shaped hazel eyes').
 *   **Eyebrows:** Describe their shape, thickness, and spacing (e.g., 'thick, straight eyebrows set close together').
 *   **Nose:** Characterize the bridge, tip, and nostril shape (e.g., 'a straight nasal bridge with a slightly upturned, rounded tip').
@@ -99,7 +100,7 @@ FINAL QUALITY CHECK (if any fail ⇒ adjust only that aspect and re-render)
 4) Both panels full-bleed, without borders, correct scale, eye-line within the specified bands.
 
 OUTPUT
-• Return ONE image only: landscape canvas with those two side-by-side full-bleed panels (no borders, no captions).
+• Return ONE image with TWO views' only: landscape canvas with those two side-by-side full-bleed panels (no borders, no captions).
 """
 
 # --- NEW: Visual Refinement Prompt ---
