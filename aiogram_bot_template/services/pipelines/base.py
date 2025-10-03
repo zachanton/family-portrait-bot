@@ -16,7 +16,6 @@ from aiogram_bot_template.data.constants import GenerationType
 class PipelineOutput(BaseModel):
     """Data structure that each pipeline's prepare_data must return."""
     request_payload: dict[str, Any]
-    # --- MODIFICATION: Allow caption to be None ---
     caption: str | None = None
     metadata: dict[str, Any] | None = None
 
@@ -56,6 +55,7 @@ class BasePipeline(ABC):
         """
         gen_type_enum = GenerationType(self.gen_data["type"])
         quality_level = self.gen_data["quality_level"]
+        user_id = self.gen_data.get("user_id")
 
         generation_ai_client, _ = ai_client_factory.get_ai_client_and_model(
             generation_type=gen_type_enum, quality=quality_level
@@ -75,6 +75,7 @@ class BasePipeline(ABC):
             payload,
             generation_ai_client,
             status_callback=self.update_status_func,
+            user_id=user_id,
         )
 
         return result, error_meta

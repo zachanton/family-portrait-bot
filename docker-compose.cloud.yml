@@ -54,6 +54,7 @@ services:
     env_file: .env.cloud
     volumes:
       - ./aiogram_bot_template:/app/aiogram_bot_template
+      - ./gen-logs:/app/gen-logs
 
 volumes:
   pg_data:

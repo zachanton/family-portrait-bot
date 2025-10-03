@@ -18,6 +18,7 @@ build/
 # Логи
 *.log
 logs/
+gen-logs/
 
 # Poetry
 .pypoetry.virtualenvs/

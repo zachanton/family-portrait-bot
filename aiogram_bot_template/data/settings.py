@@ -71,6 +71,11 @@ class GoogleConfig(BaseModel):
     location: str | None = None
     service_account_creds_json: SecretStr | None = None
 
+class LocalLoggingConfig(BaseModel):
+    """Configuration for local file-based generation logging."""
+    enabled: bool = False
+    base_dir: str = "gen-logs"
+
 class EnhancerConfig(BaseModel):
     """Configuration for the based prompt enhancement services."""
     enabled: bool = True
@@ -99,10 +104,9 @@ class Settings(BaseSettings):
     visual_enhancer: EnhancerConfig = Field(default_factory=EnhancerConfig)
 
     free_trial_whitelist: list[int] = Field(default_factory=list)
+    local_logging: LocalLoggingConfig = Field(default_factory=LocalLoggingConfig)
 
     logging_level: int = 20
     collect_feedback: bool = True
-    google: GoogleConfig | None = None
-
 
 settings = Settings()

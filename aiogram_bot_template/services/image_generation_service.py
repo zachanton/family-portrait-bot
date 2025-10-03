@@ -1,18 +1,20 @@
 # File: aiogram_bot_template/services/image_generation_service.py
+import asyncio
 import imghdr
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Optional
 
 import structlog
 from aiogram import Bot
 from aiogram.utils.i18n import gettext as _
 from pydantic import BaseModel
 
+from aiogram_bot_template.data.settings import settings
 from .clients.fal_async_client import FalAsyncClient
 from .clients.openrouter_client import OpenRouterClient, OpenRouterClientResponse
-# --- NEW: Import the new client and its response model ---
 from .clients.google_ai_client import GoogleGeminiClient, GoogleGeminiClientResponse
+from . import local_file_logger
 
 logger = structlog.get_logger(__name__)
 
@@ -45,10 +47,13 @@ async def generate_image_with_reference(
     request_payload: dict[str, Any],
     ai_client: Any,
     status_callback: Callable[[str], Awaitable[None]] | None = None,
+    *,
+    user_id: Optional[int] = None,
 ) -> tuple[GenerationResult, None] | tuple[None, dict]:
 
     log = logger.bind(
         model=request_payload.get("model"),
+        user_id=user_id,
     )
     metadata = {
         "request_payload": request_payload,
@@ -87,7 +92,6 @@ async def generate_image_with_reference(
             client_response = await ai_client.images.generate(**request_payload)
             metadata["response_payload"] = client_response.response_payload
         
-        # --- UPDATED: Generic check for clients that support status_callback ---
         elif "status_callback" in ai_client.images.generate.__code__.co_varnames:
             client_response = await ai_client.images.generate(**request_payload, status_callback=status_callback)
             metadata["response_payload"] = client_response.response_payload
@@ -108,25 +112,18 @@ async def generate_image_with_reference(
         content_type: str | None = None
 
         if isinstance(client_response, dict):
-            # FalAsyncClient logic
-            log.debug("Adapting response from FalAsyncClient.")
             image_bytes = client_response.get("image_bytes")
             content_type = client_response.get("content_type")
 
-        # --- NEW: Logic for GoogleGeminiClientResponse ---
         elif isinstance(client_response, GoogleGeminiClientResponse):
-            log.debug("Adapting response from GoogleGeminiClient.")
             image_bytes = client_response.image_bytes
             content_type = client_response.content_type
             
         elif isinstance(client_response, OpenRouterClientResponse):
-            log.debug("Adapting response from OpenRouterClient.")
             image_bytes = client_response.image_bytes
             content_type = client_response.content_type
 
         elif hasattr(client_response, "image_bytes"):
-            # Single-image logic for Mock/Local
-            log.debug("Adapting response from single-image client.")
             image_bytes = client_response.image_bytes
             content_type = client_response.content_type
 
@@ -135,6 +132,24 @@ async def generate_image_with_reference(
             if "response_payload" not in metadata or not metadata["response_payload"]:
                 metadata["response_payload"] = {"error": "Invalid or empty response from AI client."}
             return None, metadata
+
+        if settings.local_logging.enabled:
+            params_to_log = request_payload.copy()
+            prompt = params_to_log.pop("prompt", "")
+            image_urls = params_to_log.pop("image_urls", [])
+            model_name = params_to_log.pop("model", "unknown")
+            asyncio.create_task(
+                local_file_logger.log_generation_to_disk(
+                    prompt=prompt,
+                    model_name=model_name,
+                    user_id=user_id,
+                    image_urls=image_urls,
+                    params=params_to_log,
+                    output_image_bytes=image_bytes,
+                    output_content_type=content_type or "image/png",
+                    base_dir=settings.local_logging.base_dir,
+                )
+            )
 
         result = GenerationResult(
             image_bytes=image_bytes,
