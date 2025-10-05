@@ -2,7 +2,7 @@
 import asyncio
 import random
 from contextlib import suppress
-from typing import Type
+from typing import Type, Set
 
 import asyncpg
 import structlog
@@ -20,7 +20,7 @@ from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.db.db_api.storages import PostgresConnection
 from aiogram_bot_template.db.repo import generations as generations_repo
 from aiogram_bot_template.keyboards.inline import (
-    feedback, next_step, child_selection, family_selection, pair_selection
+    child_selection, family_selection, pair_selection, session_actions
 )
 from aiogram_bot_template.services import image_cache
 from aiogram_bot_template.services.pipelines.base import BasePipeline
@@ -46,7 +46,7 @@ async def _send_debug_if_enabled(
         return
     
     try:
-        image_bytes, _ = await image_cache.get_cached_image_bytes(uid, redis)
+        image_bytes, a = await image_cache.get_cached_image_bytes(uid, redis)
         if image_bytes:
             photo = BufferedInputFile(image_bytes, f"{uid}.jpg")
             await bot.send_photo(chat_id=chat_id, photo=photo, caption=caption)
@@ -102,57 +102,46 @@ async def run_generation_worker(
         pipeline = pipeline_class(bot, gen_data, log, status.update, cache_pool)
         pipeline_output = await pipeline.prepare_data()
 
-        if generation_type == GenerationType.CHILD_GENERATION.value:
-            parent_visual_uids = {
+        if "parent_composite_uid" not in user_data:
+            session_uids = {
                 "mom_profile_uid": pipeline_output.metadata.get("mom_profile_uid"),
                 "dad_profile_uid": pipeline_output.metadata.get("dad_profile_uid"),
+                "parent_composite_uid": pipeline_output.metadata.get("parent_composite_uid"),
             }
-            if all(parent_visual_uids.values()):
-                await state.update_data(**parent_visual_uids)
-                log.info("Saved parent visual UIDs to FSM state for potential family photo.", uids=parent_visual_uids)
-            else:
-                log.warning("Could not find parent visual UIDs in pipeline metadata to save to FSM.")
-
+            if all(session_uids.values()):
+                await state.update_data(**session_uids)
+                log.info("Saved parent visual UIDs to FSM state for session.", uids=session_uids)
+            elif generation_type != GenerationType.FAMILY_PHOTO.value:
+                 log.warning("Could not find all required session UIDs in pipeline metadata to save.")
 
         await _send_debug_if_enabled(
             bot=bot, chat_id=chat_id, redis=cache_pool,
             uid=pipeline_output.metadata.get("mom_collage_uid"),
             caption="[DEBUG] mom_collage_uid."
         )
-
         await _send_debug_if_enabled(
             bot=bot, chat_id=chat_id, redis=cache_pool,
             uid=pipeline_output.metadata.get("mom_profile_uid"),
             caption="[DEBUG] mom_profile_uid."
         )
-
         await _send_debug_if_enabled(
             bot=bot, chat_id=chat_id, redis=cache_pool,
             uid=pipeline_output.metadata.get("dad_collage_uid"),
             caption="[DEBUG] dad_collage_uid."
         )
-
-
         await _send_debug_if_enabled(
             bot=bot, chat_id=chat_id, redis=cache_pool,
             uid=pipeline_output.metadata.get("dad_profile_uid"),
             caption="[DEBUG] dad_profile_uid."
         )
-        
-        await _send_debug_if_enabled(
-            bot=bot, chat_id=chat_id, redis=cache_pool,
-            uid=pipeline_output.metadata.get("vertical_stack_uid"),
-            caption="[DEBUG] vertical_stack_uid."
-        )
-        
-        for uid in pipeline_output.metadata.get("processed_uids", []):
+
+        for i_uid, uid in enumerate(pipeline_output.metadata.get("processed_uids")):
             await _send_debug_if_enabled(
                 bot=bot, chat_id=chat_id, redis=cache_pool,
                 uid=uid,
-                caption=f"[DEBUG] This is a processed image sent to the AI (uid: {uid})."
+                caption=f"[DEBUG] {i_uid} processed uid (final input to AI)."
             )
         
-        # Get the list of pre-made prompts from the pipeline
         completed_prompts = pipeline_output.metadata.get("completed_prompts", [])
 
         for i in range(generation_count):
@@ -168,17 +157,11 @@ async def run_generation_worker(
             if completed_prompts and i < len(completed_prompts):
                 final_prompt = completed_prompts[i]
             else:
-                log_task.error("Completed prompt missing for this iteration. Cannot generate.",
-                               gen_type=generation_type)
+                log_task.error("Completed prompt missing for this iteration.", gen_type=generation_type)
                 continue
                 
             payload_override["prompt"] = final_prompt
             payload_override["seed"] = random.randint(1, 1_000_000)
-
-            log_task.info(
-                "Final prompt for image generation model",
-                prompt_text=payload_override.get("prompt", "Prompt not found")
-            )
 
             result, error_meta = await pipeline.run_generation(
                 pipeline_output, payload_override=payload_override
@@ -202,20 +185,11 @@ async def run_generation_worker(
 
             reply_markup = None
             if generation_type == GenerationType.CHILD_GENERATION.value:
-                reply_markup = child_selection.continue_with_image_kb(
-                    generation_id=generation_id,
-                    request_id=request_id
-                )
+                reply_markup = child_selection.continue_with_image_kb(generation_id=generation_id, request_id=request_id)
             elif generation_type == GenerationType.FAMILY_PHOTO.value:
-                reply_markup = family_selection.continue_with_family_photo_kb(
-                    generation_id=generation_id,
-                    request_id=request_id
-                )
+                reply_markup = family_selection.continue_with_family_photo_kb(generation_id=generation_id, request_id=request_id)
             elif generation_type == GenerationType.PAIR_PHOTO.value:
-                reply_markup = pair_selection.continue_with_pair_photo_kb(
-                    generation_id=generation_id,
-                    request_id=request_id
-                )
+                reply_markup = pair_selection.continue_with_pair_photo_kb(generation_id=generation_id, request_id=request_id)
 
             last_sent_message = await bot.send_photo(
                 chat_id=chat_id, photo=photo, caption=pipeline_output.caption, reply_markup=reply_markup
@@ -240,25 +214,28 @@ async def run_generation_worker(
         await generations_repo.update_generation_request_status(db, request_id, "completed")
         
         current_data = await state.get_data()
+        generated_in_session: Set[str] = set(current_data.get("generated_in_session", []))
+        generated_in_session.add(generation_type)
+        await state.update_data(generated_in_session=list(generated_in_session))
+        
         existing_photo_ids = current_data.get("photo_message_ids", [])
         new_photo_ids = [m["message_id"] for m in sent_photo_messages]
         all_photo_ids = existing_photo_ids + new_photo_ids
         
-        next_step_text = ""
-        if generation_type == GenerationType.CHILD_GENERATION.value:
-            next_step_text = _("✨ Here are the results!\n\nPlease select one of the AI portraits above to continue, or /start over.")
-        elif generation_type == GenerationType.FAMILY_PHOTO.value:
-            next_step_text = _("✨ Your family AI portraits are ready!\n\nSelect your favorite one above or /start over.")
-        elif generation_type == GenerationType.PAIR_PHOTO.value:
-            next_step_text = _("✨ Your couple portraits are ready!\n\nSelect your favorite one above or /start over.")
-
-        if next_step_text:
-            next_step_msg = await bot.send_message(chat_id, next_step_text)
-            await state.update_data(photo_message_ids=all_photo_ids, next_step_message_id=next_step_msg.message_id)
-            await state.set_state(Generation.waiting_for_next_action)
-        else:
-            await bot.send_message(chat_id, _("All done! Use /start to begin a new session."))
-            await state.clear()
+        # 1. Update state with message IDs
+        await state.update_data(photo_message_ids=all_photo_ids)
+        
+        # 2. Send the session actions message and store its ID
+        session_actions_msg = await bot.send_message(
+            chat_id, 
+            _("✨ Your portraits are ready!\n\n"
+              "Select your favorite one from the images above, or choose another action for this session below."),
+            reply_markup=session_actions.session_actions_kb(generated_in_session)
+        )
+        await state.update_data(next_step_message_id=session_actions_msg.message_id)
+        
+        # 3. Set the single, correct state for this phase
+        await state.set_state(Generation.waiting_for_next_action)
 
     except Exception:
         log.exception("An unhandled error occurred in the generation worker.")
@@ -269,6 +246,9 @@ async def run_generation_worker(
         if request_id:
             await generations_repo.update_generation_request_status(db, request_id, "failed_internal")
     finally:
+        # We need to ensure the state isn't cleared if we are in one of the final action states
         current_state = await state.get_state()
-        if current_state and current_state not in [Generation.waiting_for_next_action, Generation.waiting_for_feedback,]:
+        if current_state and current_state not in [
+            Generation.waiting_for_next_action, 
+        ]:
             await state.clear()

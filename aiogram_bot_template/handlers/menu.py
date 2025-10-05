@@ -19,12 +19,27 @@ from aiogram_bot_template.states.user import Generation
 router = Router(name="menu-handlers")
 
 
-async def _cleanup_selection_messages(bot: Bot, chat_id: int, state: FSMContext) -> None:
+async def _cleanup_session_menu(bot: Bot, chat_id: int, state: FSMContext) -> None:
     """
-    Performs a full cleanup of the interactive selection interface.
+    Cleans up only the session menu message (e.g., "What would you like to do next?").
+    It leaves the generated photos and their individual keyboards untouched.
+    """
+    if not state:
+        return
+        
+    user_data = await state.get_data()
+    next_step_message_id = user_data.get("next_step_message_id")
+
+    if next_step_message_id:
+        with suppress(TelegramBadRequest):
+            await bot.delete_message(chat_id=chat_id, message_id=next_step_message_id)
+
+
+async def _cleanup_full_session(bot: Bot, chat_id: int, state: FSMContext) -> None:
+    """
+    Performs a full cleanup of the entire session interface.
     It removes keyboards from all generated photos and deletes the separate
-    "action prompt" message (e.g., "You've selected this child...").
-    This is intended to be called when the user's session is terminated or moves to a new stage.
+    session menu message. This is intended for starting a new session.
     """
     if not state:
         return
@@ -47,7 +62,7 @@ async def _cleanup_selection_messages(bot: Bot, chat_id: int, state: FSMContext)
 
 async def send_welcome_message(msg: Message, state: FSMContext, is_restart: bool = False):
     """Sends the welcome/restart message and prompts for scenario selection."""
-    await _cleanup_selection_messages(msg.bot, msg.chat.id, state)
+    await _cleanup_full_session(msg.bot, msg.chat.id, state)
     
     await state.clear()
     await state.set_state(Generation.choosing_scenario)

@@ -26,7 +26,6 @@ from aiogram_bot_template.web_handlers.tg_updates import tg_webhook_handler
 
 from aiogram_bot_template.handlers import (
     error,
-    feedback_handler,
     menu,
     next_step_handler,
     payment_handler,
@@ -109,7 +108,6 @@ def setup_handlers(dp: Dispatcher) -> None:
     dp.include_router(quality_handler.router)
     dp.include_router(payment_handler.router)
     dp.include_router(next_step_handler.router)
-    dp.include_router(feedback_handler.router)
 
 
 def setup_middlewares(dp: Dispatcher) -> None:

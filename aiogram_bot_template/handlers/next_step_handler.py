@@ -8,6 +8,7 @@ from aiogram.filters import StateFilter
 from aiogram.utils.i18n import gettext as _
 from contextlib import suppress
 from aiogram.exceptions import TelegramBadRequest
+from typing import Set
 
 from . import menu
 from aiogram_bot_template.data.constants import GenerationType, ImageRole
@@ -15,20 +16,84 @@ from aiogram_bot_template.db.db_api.storages import PostgresConnection
 from aiogram_bot_template.db.repo import generations as generations_repo, users as users_repo
 from aiogram_bot_template.keyboards.inline.callbacks import (
     RetryGenerationCallback, ContinueWithImageCallback, CreateFamilyPhotoCallback,
-    ContinueWithFamilyPhotoCallback, ContinueWithPairPhotoCallback
+    ContinueWithFamilyPhotoCallback, ContinueWithPairPhotoCallback, SessionActionCallback
 )
 from aiogram_bot_template.keyboards.inline import (
     child_selection as child_selection_kb, 
     family_selection as family_selection_kb,
-    pair_selection as pair_selection_kb
+    pair_selection as pair_selection_kb,
+    session_actions as session_actions_kb,
 )
 from aiogram_bot_template.keyboards.inline.gender import gender_kb
 from aiogram_bot_template.keyboards.inline.quality import quality_kb
 from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.data.settings import settings
-from .menu import _cleanup_selection_messages
+# --- UPDATED IMPORTS from menu.py ---
+from .menu import _cleanup_session_menu, _cleanup_full_session
 
 router = Router(name="next-step-handler")
+
+
+@router.callback_query(SessionActionCallback.filter(), StateFilter(Generation.waiting_for_next_action))
+async def process_session_action(
+    cb: CallbackQuery,
+    callback_data: SessionActionCallback,
+    state: FSMContext,
+    db_pool: asyncpg.Pool,
+    business_logger: structlog.typing.FilteringBoundLogger,
+    bot: Bot,
+):
+    await cb.answer()
+    if not cb.message:
+        return
+
+    # Clean up only the session menu, leaving photos untouched
+    await _cleanup_session_menu(bot, cb.message.chat.id, state)
+    
+    status_msg = await cb.message.answer(_("Got it! Preparing the new generation..."))
+
+    user_data = await state.get_data()
+    db = PostgresConnection(db_pool, logger=business_logger)
+    user_id = cb.from_user.id
+    action_type = GenerationType(callback_data.action_type)
+
+    parent_composite_uid = user_data.get("parent_composite_uid")
+    if not parent_composite_uid:
+        await status_msg.edit_text(_("I couldn't find the parent data for this session. Please /start over."))
+        await state.clear()
+        return
+
+    draft = generations_repo.GenerationRequestDraft(
+        user_id=user_id, status="params_collected_session", source_images=[]
+    )
+    new_request_id = await generations_repo.create_generation_request(db, draft)
+    
+    await state.update_data(
+        request_id=new_request_id,
+        generation_type=action_type.value,
+        next_step_message_id=None
+    )
+    
+    await status_msg.delete()
+    if action_type == GenerationType.CHILD_GENERATION:
+        await state.set_state(Generation.choosing_child_gender)
+        await cb.message.answer(
+            _("Let's create another child portrait! Please choose the desired gender:"),
+            reply_markup=gender_kb()
+        )
+    elif action_type == GenerationType.PAIR_PHOTO:
+        is_in_whitelist = user_id in settings.free_trial_whitelist
+        has_used_trial = await users_repo.get_user_trial_status(db, user_id)
+        is_trial_available = is_in_whitelist or not has_used_trial
+
+        await state.set_state(Generation.waiting_for_quality)
+        await cb.message.answer(
+            _("Excellent! Please choose a generation package for your couple portrait:"),
+            reply_markup=quality_kb(
+                generation_type=GenerationType.PAIR_PHOTO,
+                is_trial_available=is_trial_available
+            )
+        )
 
 
 @router.callback_query(F.data == "start_new", StateFilter("*"))
@@ -36,14 +101,14 @@ async def start_new_generation(
     callback: CallbackQuery,
     state: FSMContext,
 ):
-    """Handles 'Start New' button, cleans up previous messages before restarting."""
     await callback.answer()
     
     if not callback.message:
         await menu.send_welcome_message(callback.message, state, is_restart=True)
         return
 
-    await _cleanup_selection_messages(callback.bot, callback.message.chat.id, state)
+    # Use the full cleanup for a new session
+    await _cleanup_full_session(callback.bot, callback.message.chat.id, state)
     
     with suppress(TelegramBadRequest):
         await callback.message.delete()
@@ -60,17 +125,14 @@ async def process_retry_generation(
     callback_data: RetryGenerationCallback,
     state: FSMContext,
     db_pool: asyncpg.Pool,
-    business_logger: structlog.typing.FilteringBoundLogger
+    business_logger: structlog.typing.FilteringBoundLogger,
+    bot: Bot,
 ):
-    """
-    Handles the "Try again" button. This action ends the current selection session,
-    so we perform a full cleanup before starting the new flow.
-    """
     await cb.answer()
     if not cb.message:
         return
 
-    await _cleanup_selection_messages(cb.bot, cb.message.chat.id, state)
+    await _cleanup_full_session(bot, cb.message.chat.id, state)
     with suppress(TelegramBadRequest):
         await cb.message.delete()
     
@@ -89,11 +151,8 @@ async def process_retry_generation(
         for img in original_request["source_images"] if img["role"] in [ImageRole.FATHER.value, ImageRole.MOTHER.value]
     ]
 
-
     draft = generations_repo.GenerationRequestDraft(
-        user_id=cb.from_user.id,
-        status="photos_collected",
-        source_images=parent_source_images_dto,
+        user_id=cb.from_user.id, status="photos_collected", source_images=parent_source_images_dto
     )
     new_request_id = await generations_repo.create_generation_request(db, draft)
 
@@ -105,8 +164,7 @@ async def process_retry_generation(
         ],
         is_retry=True,
         generation_type=GenerationType.CHILD_GENERATION.value,
-        photo_message_ids=[],
-        next_step_message_id=None,
+        photo_message_ids=[], next_step_message_id=None
     )
 
     await cb.message.answer(
@@ -124,22 +182,12 @@ async def process_continue_with_image(
     business_logger: structlog.typing.FilteringBoundLogger,
     bot: Bot,
 ):
-    """
-    Handles the selection of a child image.
-    """
     await cb.answer()
-    
     if not cb.message:
-        business_logger.warning("CallbackQuery without a message in process_continue_with_image")
         return
 
-    user_data = await state.get_data()
-    chat_id = cb.message.chat.id
-    
-    previous_selection_message_id = user_data.get("next_step_message_id")
-    if previous_selection_message_id:
-        with suppress(TelegramBadRequest):
-            await bot.delete_message(chat_id=chat_id, message_id=previous_selection_message_id)
+    # Clean up only the session menu message
+    await _cleanup_session_menu(bot, cb.message.chat.id, state)
 
     db = PostgresConnection(db_pool, logger=business_logger)
     sql = "SELECT result_file_id FROM generations WHERE id = $1"
@@ -153,7 +201,7 @@ async def process_continue_with_image(
     selected_file_id = result.data["result_file_id"]
 
     sent_message = await bot.send_photo(
-        chat_id=chat_id,
+        chat_id=cb.message.chat.id,
         photo=selected_file_id,
         caption=_("Great choice! What's next for this portrait?"),
         reply_markup=child_selection_kb.post_child_selection_kb(
@@ -177,44 +225,30 @@ async def process_continue_with_family_photo(
     business_logger: structlog.typing.FilteringBoundLogger,
     bot: Bot,
 ):
-    """
-    Handles the selection of a final family portrait.
-    """
     await cb.answer()
-
     if not cb.message:
-        business_logger.warning("CallbackQuery without a message in process_continue_with_family_photo")
         return
-
-    user_data = await state.get_data()
-    chat_id = cb.message.chat.id
-
-    previous_message_id = user_data.get("next_step_message_id")
-    if previous_message_id:
-        with suppress(TelegramBadRequest):
-            await bot.delete_message(chat_id=chat_id, message_id=previous_message_id)
-
+    
+    await _cleanup_session_menu(bot, cb.message.chat.id, state)
+    
     db = PostgresConnection(db_pool, logger=business_logger)
     sql = "SELECT result_file_id FROM generations WHERE id = $1"
     result = await db.fetchrow(sql, (callback_data.generation_id,))
-
+    
     if not result or not result.data or not result.data.get("result_file_id"):
         await cb.message.answer(_("I couldn't find the selected image. Please start over with /start."))
         await state.clear()
         return
 
     selected_file_id = result.data["result_file_id"]
-
+    
     sent_message = await bot.send_photo(
-        chat_id=chat_id,
+        chat_id=cb.message.chat.id,
         photo=selected_file_id,
-        caption=_("A wonderful choice!\n\nWhat would you like to do next?"),
+        caption=_("A wonderful choice! \n\nWhat would you like to do next?"),
         reply_markup=family_selection_kb.post_family_photo_selection_kb()
     )
-    
-    await state.update_data(
-        next_step_message_id=sent_message.message_id
-    )
+    await state.update_data(next_step_message_id=sent_message.message_id)
 
 
 @router.callback_query(ContinueWithPairPhotoCallback.filter(), StateFilter(Generation.waiting_for_next_action))
@@ -226,26 +260,16 @@ async def process_continue_with_pair_photo(
     business_logger: structlog.typing.FilteringBoundLogger,
     bot: Bot,
 ):
-    """
-    Handles the selection of a final pair portrait.
-    """
     await cb.answer()
     if not cb.message:
         return
 
-    user_data = await state.get_data()
-    chat_id = cb.message.chat.id
+    await _cleanup_session_menu(bot, cb.message.chat.id, state)
     
-    # Clean up any previous "next step" message
-    previous_message_id = user_data.get("next_step_message_id")
-    if previous_message_id:
-        with suppress(TelegramBadRequest):
-            await bot.delete_message(chat_id=chat_id, message_id=previous_message_id)
-
     db = PostgresConnection(db_pool, logger=business_logger)
     sql = "SELECT result_file_id FROM generations WHERE id = $1"
     result = await db.fetchrow(sql, (callback_data.generation_id,))
-
+    
     if not result or not result.data or not result.data.get("result_file_id"):
         await cb.message.answer(_("I couldn't find the selected image. Please start over with /start."))
         await state.clear()
@@ -254,12 +278,11 @@ async def process_continue_with_pair_photo(
     selected_file_id = result.data["result_file_id"]
 
     sent_message = await bot.send_photo(
-        chat_id=chat_id,
+        chat_id=cb.message.chat.id,
         photo=selected_file_id,
-        caption=_("An excellent choice!\n\nWhat would you like to do next?"),
+        caption=_("An excellent choice! Your couple portrait is saved.\n\nWhat would you like to do next?"),
         reply_markup=pair_selection_kb.post_pair_photo_selection_kb()
     )
-    
     await state.update_data(next_step_message_id=sent_message.message_id)
 
 
@@ -273,17 +296,19 @@ async def process_create_family_photo(
     state: FSMContext,
     db_pool: asyncpg.Pool,
     business_logger: structlog.typing.FilteringBoundLogger,
+    bot: Bot,
 ):
-    """
-    Initiates the family photo generation flow.
-    """
     await cb.answer()
     if not cb.message:
         return
-        
-    await cb.message.edit_caption(
-        caption=_("Got it! Preparing the family photoshoot..."),
-        reply_markup=None
+    
+    # This message is the duplicated photo with "Great Choice!" caption, clean it up
+    await _cleanup_session_menu(bot, cb.message.chat.id, state)
+    with suppress(TelegramBadRequest):
+        await bot.delete_message(chat_id=cb.message.chat.id, message_id=cb.message.message_id)
+
+    status_msg = await cb.message.answer(
+        _("Got it! Preparing the family photoshoot...")
     )
 
     db = PostgresConnection(db_pool, logger=business_logger)
@@ -291,16 +316,14 @@ async def process_create_family_photo(
     user_data = await state.get_data()
     
     try:
-        mom_visual_front_uid = user_data.get("mom_visual_front_uid")
-        dad_visual_front_uid = user_data.get("dad_visual_front_uid")
-        mom_visual_horizontal_uid = user_data.get("mom_visual_horizontal_uid")
-        dad_visual_horizontal_uid = user_data.get("dad_visual_horizontal_uid")
+        mom_profile_uid = user_data.get("mom_profile_uid")
+        dad_profile_uid = user_data.get("dad_profile_uid")
+        if not mom_profile_uid or not dad_profile_uid:
+            raise ValueError("Could not find parent visual UIDs in session state.")
 
         parent_sources = [
-            {"file_unique_id": mom_visual_front_uid, "file_id": mom_visual_front_uid, "role": ImageRole.MOTHER_FRONT.value},
-            {"file_unique_id": dad_visual_front_uid, "file_id": dad_visual_front_uid, "role": ImageRole.FATHER_FRONT.value},
-            {"file_unique_id": mom_visual_horizontal_uid, "file_id": mom_visual_horizontal_uid, "role": ImageRole.MOTHER_HORIZONTAL.value},
-            {"file_unique_id": dad_visual_horizontal_uid, "file_id": dad_visual_horizontal_uid, "role": ImageRole.FATHER_HORIZONTAL.value},
+            {"file_unique_id": mom_profile_uid, "file_id": f"vr_mom_{mom_profile_uid}", "role": ImageRole.MOTHER_HORIZONTAL.value},
+            {"file_unique_id": dad_profile_uid, "file_id": f"vr_dad_{dad_profile_uid}", "role": ImageRole.FATHER_HORIZONTAL.value},
         ]
         
         sql_child = "SELECT result_image_unique_id, result_file_id FROM generations WHERE id = $1"
@@ -325,15 +348,16 @@ async def process_create_family_photo(
         await state.update_data(
             request_id=new_request_id,
             generation_type=GenerationType.FAMILY_PHOTO.value,
-            photos_collected=all_sources
+            photos_collected=all_sources,
+            next_step_message_id=None
         )
 
         is_in_whitelist = user_id in settings.free_trial_whitelist
         has_used_trial = await users_repo.get_user_trial_status(db, user_id)
         is_trial_available = is_in_whitelist or not has_used_trial
 
-        await cb.message.edit_caption(
-            caption=_("Ready for the family portrait! Please choose your generation package:"),
+        await status_msg.edit_text(
+            _("Ready for the family portrait! Please choose your generation package:"),
             reply_markup=quality_kb(
                 generation_type=GenerationType.FAMILY_PHOTO,
                 is_trial_available=is_trial_available
@@ -343,5 +367,5 @@ async def process_create_family_photo(
 
     except Exception as e:
         business_logger.exception("Failed to start family photo flow", error=e)
-        await cb.message.edit_caption(caption=_("Sorry, something went wrong. Please /start over."), reply_markup=None)
+        await status_msg.edit_text(_("Sorry, something went wrong. Please /start over."))
         await state.clear()

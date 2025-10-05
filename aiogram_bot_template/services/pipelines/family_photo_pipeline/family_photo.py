@@ -19,16 +19,14 @@ class FamilyPhotoPipeline(BasePipeline):
         await self.update_status_func("Preparing your family portrait... 👨‍👩‍👧")
         
         photos_collected = self.gen_data.get("photos_collected", [])
-        if len(photos_collected) < 5: # Expecting mom front/side, dad front/side, child
-            raise ValueError(f"Missing one or more source images for the family photo. Expected 5, got {len(photos_collected)}")
-
-        father_front_photo = next((p for p in photos_collected if p.get("role") == ImageRole.FATHER_FRONT.value), None)
-        mother_front_photo = next((p for p in photos_collected if p.get("role") == ImageRole.MOTHER_FRONT.value), None)
+        if len(photos_collected) < 3:
+            raise ValueError(f"Missing source images for the family photo. Expected 3, got {len(photos_collected)}")
+        
         father_horizontal_photo = next((p for p in photos_collected if p.get("role") == ImageRole.FATHER_HORIZONTAL.value), None)
         mother_horizontal_photo = next((p for p in photos_collected if p.get("role") == ImageRole.MOTHER_HORIZONTAL.value), None)
         child_photo = next((p for p in photos_collected if p.get("role") == ImageRole.CHILD.value), None)
 
-        if not all([father_front_photo, mother_front_photo, father_horizontal_photo, mother_horizontal_photo, child_photo]):
+        if not all([father_horizontal_photo, mother_horizontal_photo, child_photo]):
             raise ValueError("Could not identify all roles (father/mother front/side, child) in source images.")
 
         async def get_bytes(photo_info):
@@ -37,15 +35,13 @@ class FamilyPhotoPipeline(BasePipeline):
             bytes_tuple = await image_cache.get_cached_image_bytes(photo_info['file_unique_id'], self.cache_pool)
             return bytes_tuple[0]
 
-        mother_front_bytes, mother_horizontal_bytes, father_front_bytes, father_horizontal_bytes, child_bytes = await asyncio.gather(
-            get_bytes(mother_front_photo),
+        mother_horizontal_bytes, father_horizontal_bytes, child_bytes = await asyncio.gather(
             get_bytes(mother_horizontal_photo),
-            get_bytes(father_front_photo),
             get_bytes(father_horizontal_photo),
             get_bytes(child_photo)
         )
 
-        if not all([mother_front_bytes, mother_horizontal_bytes, father_front_bytes, father_horizontal_bytes, child_bytes]):
+        if not all([mother_horizontal_bytes, father_horizontal_bytes, child_bytes]):
             raise ValueError("Could not retrieve all necessary image bytes from cache.")
 
         await self.update_status_func("Creating family composite for the AI... 🖼️")

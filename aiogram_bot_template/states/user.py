@@ -22,5 +22,4 @@ class Generation(StatesGroup):
     # --- Common states for all pipelines ---
     waiting_for_quality = State()
     waiting_for_payment = State()
-    waiting_for_feedback = State()
     waiting_for_next_action = State()

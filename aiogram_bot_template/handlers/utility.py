@@ -53,7 +53,6 @@ async def terms(msg: Message, locale: str) -> None:
     StateFilter(
         Generation.waiting_for_quality,
         Generation.waiting_for_next_action,
-        Generation.waiting_for_feedback,
     ),
     F.text | F.photo | F.sticker | F.video | F.document | F.animation,
 )

@@ -25,7 +25,6 @@ class User(Base):
 
     requests = relationship("GenerationRequest", back_populates="user")
     payments = relationship("Payment", back_populates="user")
-    feedback = relationship("Feedback", back_populates="user")
 
 
 class GenerationRequest(Base):
@@ -70,7 +69,6 @@ class Generation(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     request = relationship("GenerationRequest", back_populates="generations", foreign_keys=[request_id])
-    feedback = relationship("Feedback", back_populates="generation", uselist=False, cascade="all, delete-orphan")
     source_generation = relationship("Generation", remote_side=[id], backref="derived_generations", uselist=False)
 
 
@@ -101,15 +99,3 @@ class Payment(Base):
 
     user = relationship("User", back_populates="payments")
     request = relationship("GenerationRequest", back_populates="payment")
-
-
-class Feedback(Base):
-    __tablename__ = "feedback"
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(BigInteger, ForeignKey("users.user_id"), nullable=False, index=True)
-    generation_id = Column(Integer, ForeignKey("generations.id"), unique=True, nullable=False, index=True)
-    rating = Column(String(10), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    user = relationship("User", back_populates="feedback")
-    generation = relationship("Generation", back_populates="feedback")

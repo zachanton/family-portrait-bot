@@ -9,12 +9,6 @@ class LanguageCallback(CallbackData, prefix="lang"):
     action: str
     code: str
 
-class FeedbackCallback(CallbackData, prefix="feedback"):
-    action: str
-    generation_id: int
-    request_id: int
-    continue_key: str
-
 class RetryGenerationCallback(CallbackData, prefix="retry_gen"):
     """Callback to retry a request with a new seed."""
     request_id: int
@@ -51,3 +45,7 @@ class ChildAgeCallback(CallbackData, prefix="child_age"):
 
 class ChildResemblanceCallback(CallbackData, prefix="child_resemblance"):
     resemblance: str
+
+class SessionActionCallback(CallbackData, prefix="session_action"):
+    """Callback for actions within an active generation session (e.g., generate another)."""
+    action_type: str
