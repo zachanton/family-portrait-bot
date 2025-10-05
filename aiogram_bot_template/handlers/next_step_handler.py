@@ -15,9 +15,13 @@ from aiogram_bot_template.db.db_api.storages import PostgresConnection
 from aiogram_bot_template.db.repo import generations as generations_repo, users as users_repo
 from aiogram_bot_template.keyboards.inline.callbacks import (
     RetryGenerationCallback, ContinueWithImageCallback, CreateFamilyPhotoCallback,
-    ContinueWithFamilyPhotoCallback
+    ContinueWithFamilyPhotoCallback, ContinueWithPairPhotoCallback
 )
-from aiogram_bot_template.keyboards.inline import child_selection as child_selection_kb, family_selection as family_selection_kb
+from aiogram_bot_template.keyboards.inline import (
+    child_selection as child_selection_kb, 
+    family_selection as family_selection_kb,
+    pair_selection as pair_selection_kb
+)
 from aiogram_bot_template.keyboards.inline.gender import gender_kb
 from aiogram_bot_template.keyboards.inline.quality import quality_kb
 from aiogram_bot_template.states.user import Generation
@@ -80,30 +84,22 @@ async def process_retry_generation(
         )
         return
 
-    # --- MODIFICATION: Ensure we get all original parent photos (3 for each) ---
-    # original_request["source_images"] should contain all 6 parent photos now
-    source_images_dto = [
-        (img["file_unique_id"], img["file_id"], img["role"])
-        for img in original_request["source_images"]
-    ]
-    
-    # Filter to ensure only parent roles are included here
     parent_source_images_dto = [
-        s for s in source_images_dto if s[2] in [ImageRole.FATHER.value, ImageRole.MOTHER.value]
+        (img["file_unique_id"], img["file_id"], img["role"])
+        for img in original_request["source_images"] if img["role"] in [ImageRole.FATHER.value, ImageRole.MOTHER.value]
     ]
 
 
     draft = generations_repo.GenerationRequestDraft(
         user_id=cb.from_user.id,
         status="photos_collected",
-        source_images=parent_source_images_dto, # Only parents for this draft
+        source_images=parent_source_images_dto,
     )
     new_request_id = await generations_repo.create_generation_request(db, draft)
 
     await state.set_state(Generation.choosing_child_gender)
     await state.update_data(
         request_id=new_request_id,
-        # Store all parent photos in FSM for later use
         photos_collected=[
             {"file_id": img[1], "file_unique_id": img[0], "role": img[2]} for img in parent_source_images_dto
         ],
@@ -130,8 +126,6 @@ async def process_continue_with_image(
 ):
     """
     Handles the selection of a child image.
-    This handler can be called multiple times, allowing the user to change their mind.
-    It keeps the state in 'waiting_for_next_action'.
     """
     await cb.answer()
     
@@ -168,7 +162,6 @@ async def process_continue_with_image(
         )
     )
     
-    # --- Store the selected child generation ID for family photo creation later ---
     await state.update_data(
         selected_child_generation_id=callback_data.generation_id,
         next_step_message_id=sent_message.message_id
@@ -186,7 +179,6 @@ async def process_continue_with_family_photo(
 ):
     """
     Handles the selection of a final family portrait.
-    This handler can be called multiple times.
     """
     await cb.answer()
 
@@ -225,6 +217,52 @@ async def process_continue_with_family_photo(
     )
 
 
+@router.callback_query(ContinueWithPairPhotoCallback.filter(), StateFilter(Generation.waiting_for_next_action))
+async def process_continue_with_pair_photo(
+    cb: CallbackQuery,
+    callback_data: ContinueWithPairPhotoCallback,
+    state: FSMContext,
+    db_pool: asyncpg.Pool,
+    business_logger: structlog.typing.FilteringBoundLogger,
+    bot: Bot,
+):
+    """
+    Handles the selection of a final pair portrait.
+    """
+    await cb.answer()
+    if not cb.message:
+        return
+
+    user_data = await state.get_data()
+    chat_id = cb.message.chat.id
+    
+    # Clean up any previous "next step" message
+    previous_message_id = user_data.get("next_step_message_id")
+    if previous_message_id:
+        with suppress(TelegramBadRequest):
+            await bot.delete_message(chat_id=chat_id, message_id=previous_message_id)
+
+    db = PostgresConnection(db_pool, logger=business_logger)
+    sql = "SELECT result_file_id FROM generations WHERE id = $1"
+    result = await db.fetchrow(sql, (callback_data.generation_id,))
+
+    if not result or not result.data or not result.data.get("result_file_id"):
+        await cb.message.answer(_("I couldn't find the selected image. Please start over with /start."))
+        await state.clear()
+        return
+
+    selected_file_id = result.data["result_file_id"]
+
+    sent_message = await bot.send_photo(
+        chat_id=chat_id,
+        photo=selected_file_id,
+        caption=_("An excellent choice!\n\nWhat would you like to do next?"),
+        reply_markup=pair_selection_kb.post_pair_photo_selection_kb()
+    )
+    
+    await state.update_data(next_step_message_id=sent_message.message_id)
+
+
 @router.callback_query(
     CreateFamilyPhotoCallback.filter(), 
     StateFilter(Generation.waiting_for_next_action)
@@ -237,9 +275,7 @@ async def process_create_family_photo(
     business_logger: structlog.typing.FilteringBoundLogger,
 ):
     """
-    Initiates the family photo generation flow. It gathers the necessary visual
-    representations of the parents from the FSM state and the selected child's
-    photo to create a new generation request.
+    Initiates the family photo generation flow.
     """
     await cb.answer()
     if not cb.message:
@@ -267,7 +303,6 @@ async def process_create_family_photo(
             {"file_unique_id": dad_visual_horizontal_uid, "file_id": dad_visual_horizontal_uid, "role": ImageRole.FATHER_HORIZONTAL.value},
         ]
         
-        # Get the selected child's generated photo
         sql_child = "SELECT result_image_unique_id, result_file_id FROM generations WHERE id = $1"
         child_res = await db.fetchrow(sql_child, (callback_data.child_generation_id,))
         if not child_res.data:

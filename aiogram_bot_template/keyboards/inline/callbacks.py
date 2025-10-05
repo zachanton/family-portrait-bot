@@ -1,6 +1,10 @@
 # aiogram_bot_template/keyboards/inline/callbacks.py
 from aiogram.filters.callback_data import CallbackData
 
+class StartScenarioCallback(CallbackData, prefix="start_scenario"):
+    """Callback for selecting the initial generation scenario."""
+    type: str
+
 class LanguageCallback(CallbackData, prefix="lang"):
     action: str
     code: str
@@ -20,9 +24,13 @@ class ContinueWithImageCallback(CallbackData, prefix="continue_with_img"):
     generation_id: int
     request_id: int
 
-# --- NEW ---
 class ContinueWithFamilyPhotoCallback(CallbackData, prefix="continue_with_family"):
     """Callback to proceed with a specific generated family photo."""
+    generation_id: int
+    request_id: int
+
+class ContinueWithPairPhotoCallback(CallbackData, prefix="continue_with_pair"):
+    """Callback to select a specific generated pair photo."""
     generation_id: int
     request_id: int
 

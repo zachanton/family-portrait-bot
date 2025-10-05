@@ -254,15 +254,11 @@ def stack_three_images(
     img_bottom_bytes: bytes,
 ) -> bytes:
     """
-    Интеллектуально объединяет изображения матери, отца и ребенка в один
-    вертикальный портрет 9:16 с динамическим распределением высоты.
+    Stacks three images vertically after resizing them to a common width.
     """
     img_mom = load_image_bgr_from_bytes(img_top_bytes)
     img_dad = load_image_bgr_from_bytes(img_bottom_bytes)
     img_child = load_image_bgr_from_bytes(img_middle_bytes)
-
-    if img_mom is None or img_dad is None or img_child is None:
-        raise ValueError("Одно или несколько изображений не удалось загрузить.")
 
     target_width = min(img_mom.shape[1], img_dad.shape[1])
     
@@ -329,14 +325,10 @@ def stack_two_images(
     img_bottom_bytes: bytes,
 ) -> bytes:
     """
-    Интеллектуально объединяет изображения матери, отца и ребенка в один
-    вертикальный портрет 9:16 с динамическим распределением высоты.
+    Stacks two images vertically after resizing them to a common width.
     """
     img_mom = load_image_bgr_from_bytes(img_top_bytes)
     img_dad = load_image_bgr_from_bytes(img_bottom_bytes)
-
-    if img_mom is None or img_dad is None:
-        raise ValueError("Одно или несколько изображений не удалось загрузить.")
 
     target_width = min(img_mom.shape[1], img_dad.shape[1])
     

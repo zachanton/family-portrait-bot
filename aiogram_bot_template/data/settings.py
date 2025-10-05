@@ -96,9 +96,9 @@ class Settings(BaseSettings):
     proxy: ProxyConfig
     api_urls: ApiUrls = Field(default_factory=ApiUrls)
 
-    group_photo: GenerationConfig
     child_generation: GenerationConfig
     family_photo: GenerationConfig
+    pair_photo: GenerationConfig
 
     text_enhancer: EnhancerConfig = Field(default_factory=EnhancerConfig)
     visual_enhancer: EnhancerConfig = Field(default_factory=EnhancerConfig)

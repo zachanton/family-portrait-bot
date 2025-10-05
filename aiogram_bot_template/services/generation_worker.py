@@ -19,17 +19,21 @@ from aiogram_bot_template.data.constants import (
 from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.db.db_api.storages import PostgresConnection
 from aiogram_bot_template.db.repo import generations as generations_repo
-from aiogram_bot_template.keyboards.inline import feedback, next_step, child_selection, family_selection
+from aiogram_bot_template.keyboards.inline import (
+    feedback, next_step, child_selection, family_selection, pair_selection
+)
 from aiogram_bot_template.services import image_cache
 from aiogram_bot_template.services.pipelines.base import BasePipeline
 from aiogram_bot_template.services.pipelines.child_generation_pipeline.child_generation import ChildGenerationPipeline
 from aiogram_bot_template.services.pipelines.family_photo_pipeline.family_photo import FamilyPhotoPipeline
+from aiogram_bot_template.services.pipelines.pair_photo_pipeline.pair_photo import PairPhotoPipeline
 from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.utils.status_manager import StatusMessageManager
 
 PIPELINE_MAP: dict[str, Type[BasePipeline]] = {
     GenerationType.CHILD_GENERATION.value: ChildGenerationPipeline,
     GenerationType.FAMILY_PHOTO.value: FamilyPhotoPipeline,
+    GenerationType.PAIR_PHOTO.value: PairPhotoPipeline,
 }
 
 SEND_DEBUG = True
@@ -161,7 +165,6 @@ async def run_generation_worker(
 
             payload_override = pipeline_output.request_payload.copy()
 
-            # Get the correct, fully-formed prompt for this iteration
             if completed_prompts and i < len(completed_prompts):
                 final_prompt = completed_prompts[i]
             else:
@@ -193,7 +196,7 @@ async def run_generation_worker(
                 generation_time_ms=result.generation_time_ms,
                 api_request_payload=result.request_payload, api_response_payload=result.response_payload,
                 caption=pipeline_output.caption,
-                enhanced_prompt=final_prompt # Log the final prompt used
+                enhanced_prompt=final_prompt
             )
             generation_id = await generations_repo.create_generation_log(db, log_entry_draft)
 
@@ -205,6 +208,11 @@ async def run_generation_worker(
                 )
             elif generation_type == GenerationType.FAMILY_PHOTO.value:
                 reply_markup = family_selection.continue_with_family_photo_kb(
+                    generation_id=generation_id,
+                    request_id=request_id
+                )
+            elif generation_type == GenerationType.PAIR_PHOTO.value:
+                reply_markup = pair_selection.continue_with_pair_photo_kb(
                     generation_id=generation_id,
                     request_id=request_id
                 )
@@ -235,13 +243,17 @@ async def run_generation_worker(
         existing_photo_ids = current_data.get("photo_message_ids", [])
         new_photo_ids = [m["message_id"] for m in sent_photo_messages]
         all_photo_ids = existing_photo_ids + new_photo_ids
-
+        
+        next_step_text = ""
         if generation_type == GenerationType.CHILD_GENERATION.value:
-            next_step_msg = await bot.send_message(chat_id, _("✨ Here are the results!\n\nPlease select one of the AI portraits above to continue, or /start over."),)
-            await state.update_data(photo_message_ids=all_photo_ids, next_step_message_id=next_step_msg.message_id)
-            await state.set_state(Generation.waiting_for_next_action)
+            next_step_text = _("✨ Here are the results!\n\nPlease select one of the AI portraits above to continue, or /start over.")
         elif generation_type == GenerationType.FAMILY_PHOTO.value:
-            next_step_msg = await bot.send_message(chat_id, _("✨ Your family AI portraits are ready!\n\nSelect your favorite one above or /start over."))
+            next_step_text = _("✨ Your family AI portraits are ready!\n\nSelect your favorite one above or /start over.")
+        elif generation_type == GenerationType.PAIR_PHOTO.value:
+            next_step_text = _("✨ Your couple portraits are ready!\n\nSelect your favorite one above or /start over.")
+
+        if next_step_text:
+            next_step_msg = await bot.send_message(chat_id, next_step_text)
             await state.update_data(photo_message_ids=all_photo_ids, next_step_message_id=next_step_msg.message_id)
             await state.set_state(Generation.waiting_for_next_action)
         else:

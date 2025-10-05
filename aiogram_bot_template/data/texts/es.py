@@ -9,10 +9,10 @@ texts = LocaleTexts(
         BotCommandInfo(command="help", description="❓ Soporte"),
     ],
     bot_info=BotInfo(
-        short_description="¡Retratos de grupo con IA! ✨ ¡Envía dos fotos!",
+        short_description="¡Retratos con IA! ✨ ¡Niños y Parejas!",
         description=(
-            "¡Crea un hermoso retrato de grupo a partir de dos fotos! ✨\n\n"
-            "Simplemente envía dos fotos [ 📸 + 📸 ] y mi IA las combinará en una única imagen cohesiva.\n\n"
+            "¡Bienvenido! Puedo crear un hermoso retrato de tu futuro hijo o un elegante retrato de pareja. ✨\n\n"
+            "Elige una opción a continuación para comenzar.\n\n"
             "Al comenzar, aceptas nuestros /terms y /privacy."
         )
     ),

@@ -68,22 +68,18 @@ class ChildGenerationPipeline(BasePipeline):
         mom_collage_bytes, dad_collage_bytes = await asyncio.gather(*collage_tasks)
 
         request_id_str = self.gen_data.get("request_id", uuid.uuid4().hex)
-        mom_collage_uid, dad_collage_uid = None, None
-        mom_collage_url, dad_collage_url = None, None
 
-        if mom_collage_bytes:
-            mom_collage_uid = f"collage_mom_processed_{request_id_str}"
-            await image_cache.cache_image_bytes(
-                mom_collage_uid, mom_collage_bytes, "image/jpeg", self.cache_pool
-            )
-            mom_collage_url = image_cache.get_cached_image_proxy_url(mom_collage_uid)
+        mom_collage_uid = f"collage_mom_processed_{request_id_str}"
+        await image_cache.cache_image_bytes(
+            mom_collage_uid, mom_collage_bytes, "image/jpeg", self.cache_pool
+        )
+        mom_collage_url = image_cache.get_cached_image_proxy_url(mom_collage_uid)
 
-        if dad_collage_bytes:
-            dad_collage_uid = f"collage_dad_processed_{request_id_str}"
-            await image_cache.cache_image_bytes(
-                dad_collage_uid, dad_collage_bytes, "image/jpeg", self.cache_pool
-            )
-            dad_collage_url = image_cache.get_cached_image_proxy_url(dad_collage_uid)
+        dad_collage_uid = f"collage_dad_processed_{request_id_str}"
+        await image_cache.cache_image_bytes(
+            dad_collage_uid, dad_collage_bytes, "image/jpeg", self.cache_pool
+        )
+        dad_collage_url = image_cache.get_cached_image_proxy_url(dad_collage_uid)
 
         if not mom_collage_url or not dad_collage_url:
             raise RuntimeError("Failed to create and cache parent collages.")

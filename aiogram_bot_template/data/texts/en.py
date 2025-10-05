@@ -9,10 +9,10 @@ texts = LocaleTexts(
         BotCommandInfo(command="help", description="❓ Get help"),
     ],
     bot_info=BotInfo(
-        short_description="AI Family Portraits ✨ See your future child!",
+        short_description="AI Portraits ✨ Child & Couple Photos!",
         description=(
-            "Welcome! I can create a beautiful portrait of your future child or a family photo. ✨\n\n"
-            "Just send me photos of two parents [ 📸 + 📸 ], and my AI will work its magic.\n\n"
+            "Welcome! I can create a beautiful portrait of your future child or a stylish couple portrait. ✨\n\n"
+            "Choose an option below to begin.\n\n"
             "By starting, you agree to our /terms and /privacy policy."
         )
     ),

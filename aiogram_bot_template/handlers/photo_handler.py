@@ -1,5 +1,6 @@
 # aiogram_bot_template/handlers/photo_handler.py
 import asyncio
+import asyncpg
 import structlog
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
@@ -7,27 +8,28 @@ from aiogram.types import Message, PhotoSize
 from aiogram.utils.i18n import gettext as _
 from redis.asyncio import Redis
 from typing import Dict, List, Tuple, Optional
+from contextlib import suppress
+from aiogram.exceptions import TelegramBadRequest
 
-from aiogram_bot_template.data.constants import ImageRole
+from aiogram_bot_template.data.constants import GenerationType, ImageRole
+from aiogram_bot_template.db.db_api.storages import PostgresConnection
+from aiogram_bot_template.db.repo import generations as generations_repo, users as users_repo
 from aiogram_bot_template.services import image_cache, similarity_scorer
 from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.keyboards.inline.gender import gender_kb
+from aiogram_bot_template.keyboards.inline.quality import quality_kb
+from aiogram_bot_template.data.settings import settings
 
 router = Router(name="photo-handler")
 
-# --- NEW: Debounce mechanism to handle bursts of photos ---
-# Stores the asyncio.Task for a user's delayed photo processing
 user_batch_tasks: Dict[int, asyncio.Task] = {}
-# Caches incoming photo messages for a user before processing
 user_batch_cache: Dict[int, List[Message]] = {}
 DEBOUNCE_DELAY_SECONDS = 2.5
-
 MIN_PHOTOS_PER_PARENT = 4
 
-# --- Helper functions (proceed_to_child_params, _download_one_photo) remain unchanged ---
 async def proceed_to_child_params(message: Message, state: FSMContext) -> None:
     """
-    After collecting enough photos for both parents, starts the child parameter
+    After collecting photos for child generation, starts the parameter
     selection flow by asking for the gender.
     """
     await state.set_state(Generation.choosing_child_gender)
@@ -38,38 +40,66 @@ async def proceed_to_child_params(message: Message, state: FSMContext) -> None:
         reply_markup=gender_kb()
     )
 
+async def proceed_to_quality_selection(
+    message: Message, state: FSMContext, db_pool: asyncpg.Pool, business_logger: structlog.typing.FilteringBoundLogger
+) -> None:
+    """
+    After collecting photos for non-child flows, proceeds directly to quality selection.
+    """
+    user_data = await state.get_data()
+    db = PostgresConnection(db_pool, logger=business_logger)
+    user_id = message.from_user.id
+    generation_type = GenerationType(user_data["generation_type"])
+    
+    photos = user_data.get("photos_collected", [])
+    source_images_dto = [(p["file_unique_id"], p["file_id"], p["role"]) for p in photos]
+    
+    draft = generations_repo.GenerationRequestDraft(
+        user_id=user_id, status="params_collected", source_images=source_images_dto
+    )
+    request_id = await generations_repo.create_generation_request(db, draft)
+    await state.update_data(request_id=request_id)
+    
+    is_in_whitelist = user_id in settings.free_trial_whitelist
+    has_used_trial = await users_repo.get_user_trial_status(db, user_id)
+    is_trial_available = is_in_whitelist or not has_used_trial
+
+    text = _("Perfect, all photos are collected! Please choose a generation package:")
+    
+    await message.answer(
+        text,
+        reply_markup=quality_kb(
+            generation_type=generation_type,
+            is_trial_available=is_trial_available
+        ),
+    )
+    await state.set_state(Generation.waiting_for_quality)
+
+
 async def _download_one_photo(
     photo: PhotoSize, bot: Bot
 ) -> Optional[Tuple[bytes, str, str]]:
     """
     Correctly downloads a single photo using the get_file -> download_file sequence.
-    
-    Returns:
-        A tuple of (image_bytes, file_unique_id, file_id) or None on failure.
     """
     try:
         file_info = await bot.get_file(photo.file_id)
-        if not file_info.file_path:
-            return None
-        
+        if not file_info.file_path: return None
         file_io = await bot.download_file(file_info.file_path)
-        if not file_io:
-            return None
-            
+        if not file_io: return None
         return (file_io.read(), photo.file_unique_id, photo.file_id)
     except Exception:
         structlog.get_logger(__name__).warning("Failed to download one photo", file_id=photo.file_id)
         return None
 
 async def process_photo_batch(
-    messages: List[Message], state: FSMContext, bot: Bot, cache_pool: Redis
+    messages: List[Message], state: FSMContext, bot: Bot, db_pool: asyncpg.Pool, cache_pool: Redis
 ):
     """
-    Handles processing a batch of photos, including validation, preprocessing,
-    and a final identity-based sorting and filtering step.
+    Handles processing a batch of photos, validation, and routing to the next step.
     """
     message = messages[0]
-    log = structlog.get_logger(__name__)
+    log = structlog.get_logger(__name__).bind(user_id=message.from_user.id)
     status_msg = await message.answer(_("Analyzing your photos... ⏳"))
 
     try:
@@ -131,21 +161,12 @@ async def process_photo_batch(
         
         if parent_to_sort:
             photos_list, role_str, state_flag = parent_to_sort
-            
             bytes_tasks = [image_cache.get_cached_image_bytes(p['file_unique_id'], cache_pool) for p in photos_list]
             cached_results = await asyncio.gather(*bytes_tasks)
-
-            photos_with_bytes = [
-                {**photos_list[i], 'bytes': b} for i, (b, _) in enumerate(cached_results) if b
-            ]
+            photos_with_bytes = [{**photos_list[i], 'bytes': b} for i, (b, _) in enumerate(cached_results) if b]
             
-            # --- UPDATED CALL: target_count is now our required number (4) ---
-            best_photos = await similarity_scorer.sort_and_filter_by_identity(
-                photos_with_bytes, target_count=MIN_PHOTOS_PER_PARENT
-            )
-
+            best_photos = await similarity_scorer.sort_and_filter_by_identity(photos_with_bytes, target_count=MIN_PHOTOS_PER_PARENT)
             for p in best_photos: p.pop('bytes', None)
-
             other_parent_photos = [p for p in photos_collected if p['role'] != role_str]
             updated_photos_collected = other_parent_photos + best_photos
             
@@ -159,87 +180,66 @@ async def process_photo_batch(
         final_mom_count = sum(1 for p in final_photos if p['role'] == ImageRole.MOTHER.value)
         final_dad_count = sum(1 for p in final_photos if p['role'] == ImageRole.FATHER.value)
 
+        # --- ROUTING LOGIC ---
         if final_mom_count >= MIN_PHOTOS_PER_PARENT and final_dad_count >= MIN_PHOTOS_PER_PARENT:
-            await proceed_to_child_params(message, state)
+            generation_type = GenerationType(final_data["generation_type"])
+            if generation_type == GenerationType.CHILD_GENERATION:
+                await proceed_to_child_params(message, state)
+            elif generation_type == GenerationType.PAIR_PHOTO:
+                await proceed_to_quality_selection(message, state, db_pool, log)
+            else:
+                log.error("Unhandled generation type after photo collection", type=generation_type)
+                await message.answer(_("An unexpected error occurred. Please /start over."))
         elif final_mom_count < MIN_PHOTOS_PER_PARENT:
-            # --- UPDATED TEXT ---
-            next_prompt = _(
-                "Got it! I now have <b>{count}/{min_count}</b> good photos of the Mom. "
-                "Please send a few more photos of her."
-            ).format(count=final_mom_count, min_count=MIN_PHOTOS_PER_PARENT)
+            person_name = _("the Mother") if final_data["generation_type"] == GenerationType.CHILD_GENERATION.value else _("the first person")
+            next_prompt = _("Got it! I now have <b>{count}/{min_count}</b> good photos of {person}. Please send a few more photos of them.").format(count=final_mom_count, min_count=MIN_PHOTOS_PER_PARENT, person=person_name)
             await message.answer(next_prompt)
         else:
-            is_first_dad_request = (final_dad_count == 0)
-            if is_first_dad_request:
-                next_prompt = _(
-                    "Perfect, that's enough for the Mom! Now I need photos of the Dad. "
-                    "Please send at least {min_count} high-quality photos of him."
-                ).format(min_count=MIN_PHOTOS_PER_PARENT)
+            person_name = _("the Dad") if final_data["generation_type"] == GenerationType.CHILD_GENERATION.value else _("the second person")
+            is_first_request = (final_dad_count == 0)
+            if is_first_request:
+                next_prompt = _("Perfect, that's enough for the first person! Now I need photos of the second person. Please send at least {min_count} high-quality photos of them.").format(min_count=MIN_PHOTOS_PER_PARENT)
             else:
-                next_prompt = _(
-                    "Thanks! I now have <b>{count}/{min_count}</b> good photos of the Dad. "
-                    "Please send a few more of him."
-                ).format(count=final_dad_count, min_count=MIN_PHOTOS_PER_PARENT)
+                next_prompt = _("Thanks! I now have <b>{count}/{min_count}</b> good photos of {person}. Please send a few more of them.").format(count=final_dad_count, min_count=MIN_PHOTOS_PER_PARENT, person=person_name)
             await message.answer(next_prompt)
 
     except Exception as e:
         log.error("Error processing photo batch", exc_info=e)
         await status_msg.edit_text(_("I ran into an issue. Please try sending another photo or use /cancel to start over."))
 
-
 async def delayed_batch_processor(
-    user_id: int, state: FSMContext, bot: Bot, cache_pool: Redis
+    user_id: int, state: FSMContext, bot: Bot, db_pool: asyncpg.Pool, cache_pool: Redis
 ):
     """
     Waits for the debounce delay, then processes all cached photos for the user.
-    This function runs as a separate, non-blocking asyncio task.
     """
     await asyncio.sleep(DEBOUNCE_DELAY_SECONDS)
-
-    # Retrieve all messages for this user's burst from the cache
     messages = user_batch_cache.pop(user_id, [])
-    # Clean up the task entry
     user_batch_tasks.pop(user_id, None)
     
     if messages:
-        # Sort messages by ID to process them in the order they were sent
         messages.sort(key=lambda m: m.message_id)
-        await process_photo_batch(messages, state, bot, cache_pool)
+        await process_photo_batch(messages, state, bot, db_pool, cache_pool)
 
-
-# --- REWRITTEN: The main handler is now much simpler ---
 @router.message(Generation.collecting_photos, F.photo)
 async def process_photo_input(
-    message: Message, state: FSMContext, bot: Bot, cache_pool: Redis
+    message: Message, state: FSMContext, bot: Bot, db_pool: asyncpg.Pool, cache_pool: Redis
 ) -> None:
     """
-    Catches all incoming photos (single or album) and uses a debounce
-    mechanism to group them into a single processing batch.
+    Catches all incoming photos and uses a debounce mechanism to group them.
     """
-    if not message.from_user:
-        return
-        
+    if not message.from_user: return
     user_id = message.from_user.id
 
-    # If a processing task is already scheduled for this user, cancel it.
-    # This is the "reset the timer" part of debouncing.
     if user_id in user_batch_tasks:
         user_batch_tasks[user_id].cancel()
 
-    # Add the new message to the user's batch cache.
     if user_id not in user_batch_cache:
         user_batch_cache[user_id] = []
     
-    # We must handle albums correctly by finding all related messages.
-    # The debounce handler will receive messages one by one. If they have a
-    # media_group_id, we add them to the cache. We need to avoid duplicates.
-    # A simple check on message_id is sufficient.
-    
-    # Check if this message is already in the cache (can happen with albums)
     if not any(m.message_id == message.message_id for m in user_batch_cache[user_id]):
         user_batch_cache[user_id].append(message)
     
-    # Schedule a new delayed processor task.
     user_batch_tasks[user_id] = asyncio.create_task(
-        delayed_batch_processor(user_id, state, bot, cache_pool)
+        delayed_batch_processor(user_id, state, bot, db_pool, cache_pool)
     )

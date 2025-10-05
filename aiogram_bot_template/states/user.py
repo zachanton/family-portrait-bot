@@ -8,9 +8,10 @@ class Language(StatesGroup):
 
 class Generation(StatesGroup):
     """
-    A full generation flow, starting with photo collection and
+    A full generation flow, starting with scenario selection and
     branching into specific generation types.
     """
+    choosing_scenario = State()
     collecting_photos = State()
 
     # --- States for child generation parameter selection ---

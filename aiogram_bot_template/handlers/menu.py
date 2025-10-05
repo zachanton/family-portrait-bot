@@ -4,13 +4,16 @@ import structlog
 from aiogram import Bot, Router
 from aiogram.filters import Command, StateFilter, CommandObject
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
 from aiogram.utils.i18n import gettext as _
 from contextlib import suppress
 from aiogram.exceptions import TelegramBadRequest
 
+from aiogram_bot_template.data.constants import GenerationType
 from aiogram_bot_template.db.db_api.storages import PostgresConnection
 from aiogram_bot_template.db.repo.users import add_or_update_user
+from aiogram_bot_template.keyboards.inline.callbacks import StartScenarioCallback
+from aiogram_bot_template.keyboards.inline.start_selection import start_scenario_kb
 from aiogram_bot_template.states.user import Generation
 
 router = Router(name="menu-handlers")
@@ -43,26 +46,22 @@ async def _cleanup_selection_messages(bot: Bot, chat_id: int, state: FSMContext)
 
 
 async def send_welcome_message(msg: Message, state: FSMContext, is_restart: bool = False):
-    """Sends the welcome/restart message and sets the initial state."""
-    # This is the key change: clean up messages from the previous session
-    # using the old state data BEFORE that data is wiped by state.clear().
+    """Sends the welcome/restart message and prompts for scenario selection."""
     await _cleanup_selection_messages(msg.bot, msg.chat.id, state)
     
     await state.clear()
-    await state.set_state(Generation.collecting_photos)
-    await state.update_data(photos_collected=[], album_cache={})
+    await state.set_state(Generation.choosing_scenario)
 
     if is_restart:
         text = _(
-            "Let's start over!\n\n"
-            "Please send one or more photos of the Mother to begin."
+            "Let's start over! What would you like to create?"
         )
     else:
         text = _(
-            "<b>Welcome! I can imagine what your future child might look like.</b>\n\n"
-            "To begin, please send one or more photos of the Mother."
+            "<b>Welcome! I can create a beautiful AI-powered portrait.</b>\n\n"
+            "What would you like to do?"
         )
-    await msg.answer(text)
+    await msg.answer(text, reply_markup=start_scenario_kb())
 
 
 @router.message(Command("start", "menu"), StateFilter("*"))
@@ -73,7 +72,7 @@ async def start_flow(
     db_pool: asyncpg.Pool,
     command: CommandObject | None = None,
 ) -> None:
-    """Handles /start and /menu, initiating the flow."""
+    """Handles /start and /menu, initiating the scenario selection flow."""
     db = PostgresConnection(db_pool, logger=business_logger)
     if msg.from_user:
         referral_source = command.args if command and command.args else None
@@ -86,12 +85,42 @@ async def start_flow(
             language_code=msg.from_user.language_code,
             referral_source=referral_source,
         )
-    # The call to send_welcome_message now handles all cleanup
     await send_welcome_message(msg, state)
 
 
 @router.message(Command("cancel"), StateFilter("*"))
 async def cancel_flow(msg: Message, state: FSMContext) -> None:
     """Handles /cancel command."""
-    # The call to send_welcome_message now handles all cleanup
     await send_welcome_message(msg, state, is_restart=True)
+
+
+@router.callback_query(StartScenarioCallback.filter(), StateFilter(Generation.choosing_scenario))
+async def process_scenario_selection(
+    cb: CallbackQuery,
+    callback_data: StartScenarioCallback,
+    state: FSMContext,
+) -> None:
+    """
+    Handles the user's choice of generation type and transitions to the next step.
+    """
+    await cb.answer()
+    
+    await state.set_state(Generation.collecting_photos)
+    # Store the selected generation type to guide the rest of the flow
+    await state.update_data(
+        generation_type=callback_data.type,
+        photos_collected=[],
+        album_cache={}
+    )
+    
+    if callback_data.type == GenerationType.CHILD_GENERATION.value:
+        text = _("Great! Let's imagine your future child.\n\n"
+                 "To begin, please send one or more photos of the Mother.")
+    elif callback_data.type == GenerationType.PAIR_PHOTO.value:
+        text = _("Excellent! Let's create a stunning couple portrait.\n\n"
+                 "Please start by sending one or more photos of the first person.")
+    else:
+        text = _("Sorry, something went wrong. Please /start again.")
+        await state.clear()
+
+    await cb.message.edit_text(text, reply_markup=None)
