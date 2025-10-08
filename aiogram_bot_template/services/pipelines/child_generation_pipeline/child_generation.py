@@ -76,6 +76,9 @@ class ChildGenerationPipeline(BasePipeline):
             random.seed(i)
             selected_eye_color = random.choice([parental_analysis.mother_eye_color, parental_analysis.father_eye_color])
 
+            selected_hair_color = parental_analysis.father_hair_color
+            selected_eye_color = parental_analysis.father_eye_color
+
             if selected_hair_color == parental_analysis.mother_hair_color:
                 selected_hair_color = f"mothers' {selected_hair_color}, a few shades lighter than the mothers' hair."
             else:
@@ -130,7 +133,7 @@ class ChildGenerationPipeline(BasePipeline):
             output = await self._prepare_child_prompts(parent_front_url, mom_front_url, dad_front_url)
             # Add the reused UID to metadata so the worker can find it for debug logs
             output.metadata["parent_composite_uid"] = parent_composite_uid
-            output.metadata["mom_front_uid"] = mom_front_uid
+            output.metadata["parent_front_uid"] = parent_front_uid
             output.metadata["mom_front_uid"] = mom_front_uid
             output.metadata["dad_front_uid"] = dad_front_uid
             output.metadata["processed_uids"] = [ parent_front_uid ]

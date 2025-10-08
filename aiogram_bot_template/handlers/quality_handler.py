@@ -116,7 +116,7 @@ async def _proceed_to_payment_or_worker(
 @router.callback_query(
     StyleCallback.filter(), StateFilter(Generation.choosing_pair_photo_style)
 )
-async def process_style_selection(
+async def process_pair_style_selection(
     cb: CallbackQuery,
     callback_data: StyleCallback,
     state: FSMContext,
@@ -150,6 +150,50 @@ async def process_style_selection(
     await state.set_state(Generation.waiting_for_quality)
     await cb.message.answer(
         _("Excellent choice! Now, please choose a generation package:"),
+        reply_markup=quality_kb(
+            generation_type=generation_type,
+            is_trial_available=is_trial_available
+        ),
+    )
+
+
+@router.callback_query(
+    StyleCallback.filter(), StateFilter(Generation.choosing_family_photo_style)
+)
+async def process_family_style_selection(
+    cb: CallbackQuery,
+    callback_data: StyleCallback,
+    state: FSMContext,
+    db_pool: asyncpg.Pool,
+    business_logger: structlog.typing.FilteringBoundLogger,
+    bot: Bot,
+):
+    """
+    Handles the selection of a family photo style and then proceeds to quality selection.
+    """
+    await cb.answer()
+    await state.update_data(family_photo_style=callback_data.style_id)
+
+    # Cleanup the preview messages
+    user_data = await state.get_data()
+    message_ids_to_delete = user_data.get("style_preview_message_ids", [])
+    if message_ids_to_delete:
+        for msg_id in message_ids_to_delete:
+            with suppress(TelegramBadRequest):
+                await bot.delete_message(chat_id=cb.message.chat.id, message_id=msg_id)
+
+    # Now, ask for the quality tier
+    db = PostgresConnection(db_pool, logger=business_logger)
+    user_id = cb.from_user.id
+    generation_type = GenerationType(user_data["generation_type"])
+
+    is_in_whitelist = user_id in settings.free_trial_whitelist
+    has_used_trial = await users_repo.get_user_trial_status(db, user_id)
+    is_trial_available = is_in_whitelist or not has_used_trial
+
+    await state.set_state(Generation.waiting_for_quality)
+    await cb.message.answer(
+        _("Style selected! Finally, please choose a generation package:"),
         reply_markup=quality_kb(
             generation_type=generation_type,
             is_trial_available=is_trial_available

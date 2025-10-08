@@ -26,13 +26,13 @@ from aiogram_bot_template.keyboards.inline import (
     session_actions as session_actions_kb,
 )
 from aiogram_bot_template.keyboards.inline.gender import gender_kb
-from aiogram_bot_template.keyboards.inline.quality import quality_kb
 from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.data.settings import settings
 from .menu import _cleanup_session_menu, _cleanup_full_session
-# --- NEW IMPORT ---
+# --- UPDATED IMPORTS ---
 from .photo_handler import send_style_previews
-
+from aiogram_bot_template.services.pipelines.family_photo_pipeline import styles as family_styles
+from aiogram_bot_template.services.pipelines.pair_photo_pipeline import styles as pair_styles
 
 router = Router(name="next-step-handler")
 
@@ -80,7 +80,6 @@ async def _process_session_action_async(
             reply_markup=gender_kb()
         )
     elif action_type == GenerationType.PAIR_PHOTO:
-        # --- FIX: Instead of quality, go to style selection ---
         await state.set_state(Generation.choosing_pair_photo_style)
         sent_msg = await cb.message.answer(
             _("Great! Let's create another couple portrait.")
@@ -90,9 +89,9 @@ async def _process_session_action_async(
             bot=bot,
             chat_id=cb.message.chat.id,
             state=state,
-            logger=business_logger
+            logger=business_logger,
+            styles_registry=pair_styles.STYLES
         )
-        # --- END FIX ---
 
 
 @router.callback_query(SessionActionCallback.filter(), StateFilter(Generation.waiting_for_next_action))
@@ -403,8 +402,8 @@ async def _process_create_family_photo_async(
             raise ValueError("Could not find parent visual UIDs in session state.")
 
         parent_sources = [
-            {"file_unique_id": mom_profile_uid, "file_id": f"vr_mom_{mom_profile_uid}", "role": ImageRole.MOTHER_HORIZONTAL.value},
-            {"file_unique_id": dad_profile_uid, "file_id": f"vr_dad_{dad_profile_uid}", "role": ImageRole.FATHER_HORIZONTAL.value},
+            {"file_unique_id": mom_profile_uid, "file_id": f"vr_mom_{mom_profile_uid}", "role": ImageRole.MOTHER.value},
+            {"file_unique_id": dad_profile_uid, "file_id": f"vr_dad_{dad_profile_uid}", "role": ImageRole.FATHER.value},
         ]
         
         sql_child = "SELECT result_image_unique_id, result_file_id FROM generations WHERE id = $1"
@@ -433,18 +432,23 @@ async def _process_create_family_photo_async(
             next_step_message_id=None
         )
 
-        is_in_whitelist = user_id in settings.free_trial_whitelist
-        has_used_trial = await users_repo.get_user_trial_status(db, user_id)
-        is_trial_available = is_in_whitelist or not has_used_trial
-
-        await status_msg.edit_text(
-            _("Ready for the family portrait! Please choose your generation package:"),
-            reply_markup=quality_kb(
-                generation_type=GenerationType.FAMILY_PHOTO,
-                is_trial_available=is_trial_available
-            ),
+        # --- TRANSITION TO STYLE SELECTION ---
+        await status_msg.delete()
+        await state.set_state(Generation.choosing_family_photo_style)
+        sent_msg = await bot.send_message(
+            chat_id=cb.message.chat.id,
+            text=_("The family is all here! Now, let's pick a style for your family portrait.")
         )
-        await state.set_state(Generation.waiting_for_quality)
+        # Store message ID for future cleanup
+        await state.update_data(style_preview_message_ids=[sent_msg.message_id])
+        
+        await send_style_previews(
+            bot=bot,
+            chat_id=cb.message.chat.id,
+            state=state,
+            logger=business_logger,
+            styles_registry=family_styles.STYLES
+        )
 
     except Exception as e:
         business_logger.exception("Failed to start family photo flow", error=e)

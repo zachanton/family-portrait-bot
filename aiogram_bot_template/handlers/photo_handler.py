@@ -8,7 +8,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, PhotoSize, FSInputFile
 from aiogram.utils.i18n import gettext as _
 from redis.asyncio import Redis
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any
 from contextlib import suppress
 from aiogram.exceptions import TelegramBadRequest
 
@@ -19,7 +19,7 @@ from aiogram_bot_template.services import image_cache, similarity_scorer
 from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.keyboards.inline.gender import gender_kb
 # --- UPDATED IMPORTS ---
-from aiogram_bot_template.services.pipelines.pair_photo_pipeline import styles
+from aiogram_bot_template.services.pipelines.pair_photo_pipeline import styles as pair_styles
 from aiogram_bot_template.keyboards.inline.style_selection import get_style_selection_button_kb
 
 
@@ -35,16 +35,24 @@ async def send_style_previews(
     bot: Bot,
     chat_id: int,
     state: FSMContext,
-    logger: structlog.typing.FilteringBoundLogger
+    logger: structlog.typing.FilteringBoundLogger,
+    styles_registry: Dict[str, Any]
 ) -> None:
     """
     Sends a series of messages, each with a style preview image and a selection button.
     Stores the message IDs in FSM context for later cleanup.
+
+    Args:
+        bot: The Bot instance.
+        chat_id: The chat ID to send messages to.
+        state: The FSM context.
+        logger: The bound logger.
+        styles_registry: The dictionary of styles to display (e.g., pair_styles.STYLES).
     """
     assets_path = Path(__file__).parent.parent / "assets" / "style_previews"
     sent_message_ids = []
 
-    for style_id, style_info in styles.STYLES.items():
+    for style_id, style_info in styles_registry.items():
         image_path = assets_path / style_info["preview_image"]
         if not image_path.exists():
             logger.warning("Style preview image not found", path=str(image_path))
@@ -117,18 +125,17 @@ async def proceed_to_style_selection(
     
     await state.set_state(Generation.choosing_pair_photo_style)
     
-    # --- FIX: Save the message ID ---
     sent_msg = await message.answer(
         _("Perfect, all photos are collected! Now for the fun part.")
     )
     await state.update_data(style_preview_message_ids=[sent_msg.message_id])
-    # --- END FIX ---
     
     await send_style_previews(
         bot=bot,
         chat_id=message.chat.id,
         state=state,
-        logger=business_logger
+        logger=business_logger,
+        styles_registry=pair_styles.STYLES  # Pass the correct style registry
     )
 
 

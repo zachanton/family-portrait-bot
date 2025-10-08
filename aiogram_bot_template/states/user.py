@@ -19,7 +19,9 @@ class Generation(StatesGroup):
     choosing_child_age = State()
     choosing_child_resemblance = State()
 
+    # --- States for styled photos ---
     choosing_pair_photo_style = State()
+    choosing_family_photo_style = State()
 
     # --- Common states for all pipelines ---
     waiting_for_quality = State()
