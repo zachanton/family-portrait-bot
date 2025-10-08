@@ -2,9 +2,10 @@
 import asyncio
 import asyncpg
 import structlog
+from pathlib import Path
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, PhotoSize
+from aiogram.types import Message, PhotoSize, FSInputFile
 from aiogram.utils.i18n import gettext as _
 from redis.asyncio import Redis
 from typing import Dict, List, Tuple, Optional
@@ -13,12 +14,14 @@ from aiogram.exceptions import TelegramBadRequest
 
 from aiogram_bot_template.data.constants import GenerationType, ImageRole
 from aiogram_bot_template.db.db_api.storages import PostgresConnection
-from aiogram_bot_template.db.repo import generations as generations_repo, users as users_repo
+from aiogram_bot_template.db.repo import generations as generations_repo
 from aiogram_bot_template.services import image_cache, similarity_scorer
 from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.keyboards.inline.gender import gender_kb
-from aiogram_bot_template.keyboards.inline.quality import quality_kb
-from aiogram_bot_template.data.settings import settings
+# --- UPDATED IMPORTS ---
+from aiogram_bot_template.services.pipelines.pair_photo_pipeline import styles
+from aiogram_bot_template.keyboards.inline.style_selection import get_style_selection_button_kb
+
 
 router = Router(name="photo-handler")
 
@@ -26,6 +29,54 @@ user_batch_tasks: Dict[int, asyncio.Task] = {}
 user_batch_cache: Dict[int, List[Message]] = {}
 DEBOUNCE_DELAY_SECONDS = 2.5
 MIN_PHOTOS_PER_PARENT = 4
+
+
+async def send_style_previews(
+    bot: Bot,
+    chat_id: int,
+    state: FSMContext,
+    logger: structlog.typing.FilteringBoundLogger
+) -> None:
+    """
+    Sends a series of messages, each with a style preview image and a selection button.
+    Stores the message IDs in FSM context for later cleanup.
+    """
+    assets_path = Path(__file__).parent.parent / "assets" / "style_previews"
+    sent_message_ids = []
+
+    for style_id, style_info in styles.STYLES.items():
+        image_path = assets_path / style_info["preview_image"]
+        if not image_path.exists():
+            logger.warning("Style preview image not found", path=str(image_path))
+            continue
+
+        photo = FSInputFile(image_path)
+        caption = _("Style Preview: <b>{style_name}</b>").format(style_name=_(style_info["name"]))
+        
+        try:
+            msg = await bot.send_photo(
+                chat_id=chat_id,
+                photo=photo,
+                caption=caption,
+                reply_markup=get_style_selection_button_kb(style_id=style_id)
+            )
+            sent_message_ids.append(msg.message_id)
+        except TelegramBadRequest as e:
+            logger.error("Failed to send style preview photo", style_id=style_id, error=e)
+
+    # Send the final call-to-action message
+    if sent_message_ids:
+        cta_msg = await bot.send_message(
+            chat_id=chat_id,
+            text=_("⬆️ Please select a style by clicking a button below one of the images.")
+        )
+        sent_message_ids.append(cta_msg.message_id)
+
+    # Get existing IDs and merge them to avoid overwriting
+    data = await state.get_data()
+    existing_ids = data.get("style_preview_message_ids", [])
+    await state.update_data(style_preview_message_ids=existing_ids + sent_message_ids)
+
 
 async def proceed_to_child_params(message: Message, state: FSMContext) -> None:
     """
@@ -40,40 +91,45 @@ async def proceed_to_child_params(message: Message, state: FSMContext) -> None:
         reply_markup=gender_kb()
     )
 
-async def proceed_to_quality_selection(
-    message: Message, state: FSMContext, db_pool: asyncpg.Pool, business_logger: structlog.typing.FilteringBoundLogger
+
+async def proceed_to_style_selection(
+    message: Message,
+    state: FSMContext,
+    bot: Bot,
+    db_pool: asyncpg.Pool,
+    business_logger: structlog.typing.FilteringBoundLogger
 ) -> None:
     """
-    After collecting photos for non-child flows, proceeds directly to quality selection.
+    After collecting photos for a pair portrait, proceeds to style selection.
     """
     user_data = await state.get_data()
-    db = PostgresConnection(db_pool, logger=business_logger)
     user_id = message.from_user.id
-    generation_type = GenerationType(user_data["generation_type"])
     
     photos = user_data.get("photos_collected", [])
     source_images_dto = [(p["file_unique_id"], p["file_id"], p["role"]) for p in photos]
     
+    db = PostgresConnection(db_pool, logger=business_logger)
     draft = generations_repo.GenerationRequestDraft(
         user_id=user_id, status="params_collected", source_images=source_images_dto
     )
     request_id = await generations_repo.create_generation_request(db, draft)
     await state.update_data(request_id=request_id)
     
-    is_in_whitelist = user_id in settings.free_trial_whitelist
-    has_used_trial = await users_repo.get_user_trial_status(db, user_id)
-    is_trial_available = is_in_whitelist or not has_used_trial
-
-    text = _("Perfect, all photos are collected! Please choose a generation package:")
+    await state.set_state(Generation.choosing_pair_photo_style)
     
-    await message.answer(
-        text,
-        reply_markup=quality_kb(
-            generation_type=generation_type,
-            is_trial_available=is_trial_available
-        ),
+    # --- FIX: Save the message ID ---
+    sent_msg = await message.answer(
+        _("Perfect, all photos are collected! Now for the fun part.")
     )
-    await state.set_state(Generation.waiting_for_quality)
+    await state.update_data(style_preview_message_ids=[sent_msg.message_id])
+    # --- END FIX ---
+    
+    await send_style_previews(
+        bot=bot,
+        chat_id=message.chat.id,
+        state=state,
+        logger=business_logger
+    )
 
 
 async def _download_one_photo(
@@ -186,7 +242,7 @@ async def process_photo_batch(
             if generation_type == GenerationType.CHILD_GENERATION:
                 await proceed_to_child_params(message, state)
             elif generation_type == GenerationType.PAIR_PHOTO:
-                await proceed_to_quality_selection(message, state, db_pool, log)
+                await proceed_to_style_selection(message, state, bot, db_pool, log)
             else:
                 log.error("Unhandled generation type after photo collection", type=generation_type)
                 await message.answer(_("An unexpected error occurred. Please /start over."))
@@ -205,7 +261,8 @@ async def process_photo_batch(
 
     except Exception as e:
         log.error("Error processing photo batch", exc_info=e)
-        await status_msg.edit_text(_("I ran into an issue. Please try sending another photo or use /cancel to start over."))
+        with suppress(TelegramBadRequest):
+            await status_msg.edit_text(_("I ran into an issue. Please try sending another photo or use /cancel to start over."))
 
 async def delayed_batch_processor(
     user_id: int, state: FSMContext, bot: Bot, db_pool: asyncpg.Pool, cache_pool: Redis

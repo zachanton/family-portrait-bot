@@ -178,7 +178,7 @@ class PairPhotoPipeline(BasePipeline):
             "mom_profile_uid": mom_profile_uid,
             "dad_profile_uid": dad_profile_uid,
             "parent_composite_uid": parent_composite_uid,
-            "processed_uids": [parent_composite_uid]
+            "processed_uids": [ parent_composite_uid ]
         })
         
         return output

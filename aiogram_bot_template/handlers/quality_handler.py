@@ -19,8 +19,6 @@ from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.services import generation_worker
 from aiogram_bot_template.keyboards.inline.quality import quality_kb
-# --- NEW IMPORTS ---
-from aiogram_bot_template.keyboards.inline.style_selection import style_selection_kb
 from aiogram_bot_template.keyboards.inline.callbacks import StyleCallback
 
 
@@ -52,6 +50,7 @@ async def _proceed_to_payment_or_worker(
     generation_config = getattr(settings, generation_type.value)
     tier_config = generation_config.tiers.get(quality_val)
 
+    # Delete the quality selection message
     with suppress(TelegramBadRequest):
         await cb.message.delete()
 
@@ -115,6 +114,50 @@ async def _proceed_to_payment_or_worker(
 
 
 @router.callback_query(
+    StyleCallback.filter(), StateFilter(Generation.choosing_pair_photo_style)
+)
+async def process_style_selection(
+    cb: CallbackQuery,
+    callback_data: StyleCallback,
+    state: FSMContext,
+    db_pool: asyncpg.Pool,
+    business_logger: structlog.typing.FilteringBoundLogger,
+    bot: Bot,
+):
+    """
+    Handles the selection of a pair photo style and then proceeds to quality selection.
+    """
+    await cb.answer()
+    await state.update_data(pair_photo_style=callback_data.style_id)
+
+    # Cleanup the preview messages
+    user_data = await state.get_data()
+    message_ids_to_delete = user_data.get("style_preview_message_ids", [])
+    if message_ids_to_delete:
+        for msg_id in message_ids_to_delete:
+            with suppress(TelegramBadRequest):
+                await bot.delete_message(chat_id=cb.message.chat.id, message_id=msg_id)
+
+    # Now, ask for the quality tier
+    db = PostgresConnection(db_pool, logger=business_logger)
+    user_id = cb.from_user.id
+    generation_type = GenerationType(user_data["generation_type"])
+
+    is_in_whitelist = user_id in settings.free_trial_whitelist
+    has_used_trial = await users_repo.get_user_trial_status(db, user_id)
+    is_trial_available = is_in_whitelist or not has_used_trial
+
+    await state.set_state(Generation.waiting_for_quality)
+    await cb.message.answer(
+        _("Excellent choice! Now, please choose a generation package:"),
+        reply_markup=quality_kb(
+            generation_type=generation_type,
+            is_trial_available=is_trial_available
+        ),
+    )
+
+
+@router.callback_query(
     StateFilter(Generation.waiting_for_quality), F.data.startswith("quality:")
 )
 async def process_quality_selection(
@@ -126,8 +169,10 @@ async def process_quality_selection(
     bot: Bot,
     scheduler: aiojobs.Scheduler,
 ) -> None:
+    """
+    Handles the final quality selection for ANY generation type.
+    """
     await cb.answer()
-    user_data = await state.get_data()
 
     try:
         quality_val = int(cb.data.split(":", 1)[1])
@@ -135,45 +180,9 @@ async def process_quality_selection(
     except (ValueError, IndexError):
         await cb.message.answer(_("An error occurred. Please start over with /cancel."))
         return
-
-    generation_type_str = user_data.get("generation_type")
-    if not generation_type_str:
-        await cb.message.answer(_("A critical error occurred (type missing). Please start over with /cancel."))
-        return
-    generation_type = GenerationType(generation_type_str)
-
-    if generation_type == GenerationType.PAIR_PHOTO:
-        await state.set_state(Generation.choosing_pair_photo_style)
-        with suppress(TelegramBadRequest):
-            await cb.message.edit_text(
-                _("Great! Now, select a style for your couple portrait:"),
-                reply_markup=style_selection_kb()
-            )
-    else:
-        # For all other generation types, proceed as before
-        await _proceed_to_payment_or_worker(
-            cb, state, db_pool, cache_pool, business_logger, bot, scheduler
-        )
-
-
-@router.callback_query(
-    StyleCallback.filter(), StateFilter(Generation.choosing_pair_photo_style)
-)
-async def process_style_selection(
-    cb: CallbackQuery,
-    callback_data: StyleCallback,
-    state: FSMContext,
-    db_pool: asyncpg.Pool,
-    cache_pool: Redis,
-    business_logger: structlog.typing.FilteringBoundLogger,
-    bot: Bot,
-    scheduler: aiojobs.Scheduler,
-):
-    """Handles the selection of a pair photo style and then proceeds to payment/worker."""
-    await cb.answer()
-    await state.update_data(pair_photo_style=callback_data.style_id)
-
-    # Now that the style is selected, we can proceed with the standard flow
+    
+    # This handler is now universal. After quality is selected, we always proceed
+    # to the payment/worker step.
     await _proceed_to_payment_or_worker(
         cb, state, db_pool, cache_pool, business_logger, bot, scheduler
     )

@@ -17,13 +17,13 @@ logger = structlog.get_logger(__name__)
 
 _ASSETS_DIR = Path(__file__).parent.parent.parent / "assets"
 _MOCK_FAMILY_IMAGE_PATH = _ASSETS_DIR / "mock_family.jpg"
-_MOCK_PAIR_IMAGE_PATH = _ASSETS_DIR / "mock_pair.png"
-_MOCK_CHILD_IMAGE_PATH = _ASSETS_DIR / "mock_child_11.jpg"
-# _MOCK_MOM_VISUAL_IMAGE_PATH = _ASSETS_DIR / "mock_mom_front_side5.png"
-# _MOCK_DAD_VISUAL_IMAGE_PATH = _ASSETS_DIR / "mock_dad_front_side5.png"
+_MOCK_PAIR_IMAGE_PATH = _ASSETS_DIR / "pair1" / "mock_pair.png"
+_MOCK_CHILD_IMAGE_PATH = _ASSETS_DIR / "mock_child.jpg"
+# _MOCK_MOM_VISUAL_IMAGE_PATH = _ASSETS_DIR / "pair0" / "mock_mom_front_side.png"
+# _MOCK_DAD_VISUAL_IMAGE_PATH = _ASSETS_DIR / "pair0" / "mock_dad_front_side.png"
 
-_MOCK_MOM_VISUAL_IMAGE_PATH = _ASSETS_DIR / "pair1" / "mock_mom_front_side.png"
-_MOCK_DAD_VISUAL_IMAGE_PATH = _ASSETS_DIR / "pair1" / "mock_dad_front_side.png"
+_MOCK_MOM_VISUAL_IMAGE_PATH = _ASSETS_DIR / "pair0" / "mock_mom_front_side.png"
+_MOCK_DAD_VISUAL_IMAGE_PATH = _ASSETS_DIR / "pair0" / "mock_dad_front_side.png"
 
 
 class MockAIClientResponse(BaseModel):

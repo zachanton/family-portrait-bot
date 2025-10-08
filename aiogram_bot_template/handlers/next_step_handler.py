@@ -30,6 +30,9 @@ from aiogram_bot_template.keyboards.inline.quality import quality_kb
 from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.data.settings import settings
 from .menu import _cleanup_session_menu, _cleanup_full_session
+# --- NEW IMPORT ---
+from .photo_handler import send_style_previews
+
 
 router = Router(name="next-step-handler")
 
@@ -77,18 +80,20 @@ async def _process_session_action_async(
             reply_markup=gender_kb()
         )
     elif action_type == GenerationType.PAIR_PHOTO:
-        is_in_whitelist = user_id in settings.free_trial_whitelist
-        has_used_trial = await users_repo.get_user_trial_status(db, user_id)
-        is_trial_available = is_in_whitelist or not has_used_trial
-
-        await state.set_state(Generation.waiting_for_quality)
-        await cb.message.answer(
-            _("Excellent! Please choose a generation package for your couple portrait:"),
-            reply_markup=quality_kb(
-                generation_type=GenerationType.PAIR_PHOTO,
-                is_trial_available=is_trial_available
-            )
+        # --- FIX: Instead of quality, go to style selection ---
+        await state.set_state(Generation.choosing_pair_photo_style)
+        sent_msg = await cb.message.answer(
+            _("Great! Let's create another couple portrait.")
         )
+        await state.update_data(style_preview_message_ids=[sent_msg.message_id])
+        await send_style_previews(
+            bot=bot,
+            chat_id=cb.message.chat.id,
+            state=state,
+            logger=business_logger
+        )
+        # --- END FIX ---
+
 
 @router.callback_query(SessionActionCallback.filter(), StateFilter(Generation.waiting_for_next_action))
 async def process_session_action(

@@ -1,5 +1,5 @@
 # aiogram_bot_template/services/pipelines/pair_photo_pipeline/styles/retro_motel_1950s_pastel.py
-STYLE_NAME = "RETRO MOTEL 1950s PASTEL"
+STYLE_NAME = "RETRO MOTEL 1950s"
 STYLE_DEFINITION = "Mid-century American roadside motel aesthetic in soft pastel colors"
 
 FRAMING_OPTIONS = {

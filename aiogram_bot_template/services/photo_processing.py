@@ -350,3 +350,35 @@ def stack_two_images(
     canvas[current_y : current_y + dad_resized.shape[0], :] = dad_resized
 
     return convert_bgr_to_jpeg_bytes(canvas)
+
+
+def stack_two_images_hor(
+    img_top_bytes: bytes,
+    img_bottom_bytes: bytes,
+) -> bytes:
+    """
+    Stacks two images horizontally after resizing them to a common width.
+    """
+    img_mom = load_image_bgr_from_bytes(img_top_bytes)
+    img_dad = load_image_bgr_from_bytes(img_bottom_bytes)
+
+    target_height = min(img_mom.shape[0], img_dad.shape[0])
+    
+    def resize_to_height(img, new_height):
+        h, w, _ = img.shape
+        scale = new_height / h
+        return cv2.resize(img, (int(w * scale), new_height), interpolation=cv2.INTER_AREA)
+
+    mom_resized = resize_to_height(img_mom, target_height)
+    dad_resized = resize_to_height(img_dad, target_height)
+    
+    final_width = mom_resized.shape[1] + dad_resized.shape[1]
+
+    canvas = np.full((target_height, final_width, 3), 128, dtype=np.uint8)
+    
+    current_x = 0
+    canvas[:, current_x : current_x + mom_resized.shape[1]] = mom_resized
+    current_x += mom_resized.shape[1]
+    canvas[:, current_x : current_x + dad_resized.shape[1]] = dad_resized
+
+    return convert_bgr_to_jpeg_bytes(canvas)
