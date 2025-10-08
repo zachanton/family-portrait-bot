@@ -18,14 +18,16 @@ from aiogram_bot_template.handlers import payment_handler
 from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.services import generation_worker
-from aiogram_bot_template.keyboards.inline.quality import quality_kb 
+from aiogram_bot_template.keyboards.inline.quality import quality_kb
+# --- NEW IMPORTS ---
+from aiogram_bot_template.keyboards.inline.style_selection import style_selection_kb
+from aiogram_bot_template.keyboards.inline.callbacks import StyleCallback
+
 
 router = Router(name="quality-handler")
 
-@router.callback_query(
-    StateFilter(Generation.waiting_for_quality), F.data.startswith("quality:")
-)
-async def process_quality_selection(
+
+async def _proceed_to_payment_or_worker(
     cb: CallbackQuery,
     state: FSMContext,
     db_pool: asyncpg.Pool,
@@ -34,33 +36,21 @@ async def process_quality_selection(
     bot: Bot,
     scheduler: aiojobs.Scheduler,
 ) -> None:
-    await cb.answer()
+    """
+    Shared logic to either start the generation worker (for free tiers)
+    or initiate the payment flow (for paid tiers).
+    This is called after all parameters, including style, have been selected.
+    """
     user_data = await state.get_data()
     db = PostgresConnection(db_pool, logger=business_logger)
     request_id = user_data.get("request_id")
     user_id = cb.from_user.id
-
-    try:
-        quality_val = int(cb.data.split(":", 1)[1])
-        await state.update_data(quality_level=quality_val)
-    except (ValueError, IndexError):
-        await cb.message.answer(_("An error occurred. Please start over with /cancel."))
-        return
-    
-
+    quality_val = user_data.get("quality_level")
     generation_type_str = user_data.get("generation_type")
-    if not generation_type_str:
-        await cb.message.answer(_("A critical error occurred (type missing). Please start over with /cancel."))
-        return
     generation_type = GenerationType(generation_type_str)
     
-    # Find the correct config based on type
     generation_config = getattr(settings, generation_type.value)
     tier_config = generation_config.tiers.get(quality_val)
-
-    if not tier_config:
-        await cb.message.answer(_("A configuration error occurred. Please start over with /cancel."))
-        return
 
     with suppress(TelegramBadRequest):
         await cb.message.delete()
@@ -116,9 +106,74 @@ async def process_quality_selection(
 
     await generations_repo.update_generation_request_status(db, request_id, "awaiting_payment")
     invoice_message = await payment_handler.send_stars_invoice(
-        msg=cb.message, request_id=request_id, generation_type=GenerationType.GROUP_PHOTO, 
+        msg=cb.message, request_id=request_id, generation_type=generation_type, 
         quality=quality_val, description=description
     )
     if invoice_message:
         await state.update_data(invoice_message_id=invoice_message.message_id, status_message_id=status_msg.message_id)
     await state.set_state(Generation.waiting_for_payment)
+
+
+@router.callback_query(
+    StateFilter(Generation.waiting_for_quality), F.data.startswith("quality:")
+)
+async def process_quality_selection(
+    cb: CallbackQuery,
+    state: FSMContext,
+    db_pool: asyncpg.Pool,
+    cache_pool: Redis,
+    business_logger: structlog.typing.FilteringBoundLogger,
+    bot: Bot,
+    scheduler: aiojobs.Scheduler,
+) -> None:
+    await cb.answer()
+    user_data = await state.get_data()
+
+    try:
+        quality_val = int(cb.data.split(":", 1)[1])
+        await state.update_data(quality_level=quality_val)
+    except (ValueError, IndexError):
+        await cb.message.answer(_("An error occurred. Please start over with /cancel."))
+        return
+
+    generation_type_str = user_data.get("generation_type")
+    if not generation_type_str:
+        await cb.message.answer(_("A critical error occurred (type missing). Please start over with /cancel."))
+        return
+    generation_type = GenerationType(generation_type_str)
+
+    if generation_type == GenerationType.PAIR_PHOTO:
+        await state.set_state(Generation.choosing_pair_photo_style)
+        with suppress(TelegramBadRequest):
+            await cb.message.edit_text(
+                _("Great! Now, select a style for your couple portrait:"),
+                reply_markup=style_selection_kb()
+            )
+    else:
+        # For all other generation types, proceed as before
+        await _proceed_to_payment_or_worker(
+            cb, state, db_pool, cache_pool, business_logger, bot, scheduler
+        )
+
+
+@router.callback_query(
+    StyleCallback.filter(), StateFilter(Generation.choosing_pair_photo_style)
+)
+async def process_style_selection(
+    cb: CallbackQuery,
+    callback_data: StyleCallback,
+    state: FSMContext,
+    db_pool: asyncpg.Pool,
+    cache_pool: Redis,
+    business_logger: structlog.typing.FilteringBoundLogger,
+    bot: Bot,
+    scheduler: aiojobs.Scheduler,
+):
+    """Handles the selection of a pair photo style and then proceeds to payment/worker."""
+    await cb.answer()
+    await state.update_data(pair_photo_style=callback_data.style_id)
+
+    # Now that the style is selected, we can proceed with the standard flow
+    await _proceed_to_payment_or_worker(
+        cb, state, db_pool, cache_pool, business_logger, bot, scheduler
+    )

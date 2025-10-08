@@ -73,6 +73,22 @@ HARD IDENTITY LOCK — copy EXACTLY and keep natural asymmetries:
 • Chin projection, jaw angle; ear helix/antihelix/lobe notches — do NOT simplify.
 • Skin micro-texture (pores, freckles, tiny scars, mild redness): NO beauty smoothing, NO makeup.
 
+FUSE & CONSENSUS
+• Fuse identity features from ALL four tiles. Resolve disagreements by majority/consensus; do NOT average toward a generic face.
+• Keep age, weight, cheek fullness and mid-face volume unchanged (NO slimming/“beautification”).
+
+AESTHETIC TIE-BREAKERS (NON-INVENTIVE — CHOOSE ONLY FROM WHAT EXISTS IN THE FOUR TILES)
+• When the four tiles disagree on a feature, prefer the variant that is most conventionally attractive WHILE remaining fully consistent with the HARD IDENTITY LOCK and observed evidence. Never invent or alter geometry beyond what is clearly present in at least one tile. Never beauty-smooth or retouch; only select.
+• Skin: if at least one tile shows fewer transient blemishes (e.g., less acne, reduced under-eye puffiness), prefer that as the identity evidence; do NOT remove or blur texture. Preserve pores/freckles/scars exactly as seen in the chosen evidence.
+• Eyes: keep true size asymmetry and inter-ocular distance; if some tiles show less redness or puffiness, prefer those states if present. No whitening beyond what is seen.
+• Jaw/face width (gender-aware, evidence-bound):
+  – If the subject presents as female in the majority of tiles: when tiles differ, select the naturally narrower jawline/face-width variant that is present in at least one tile; do NOT slim beyond observed geometry.
+  – If the subject presents as male in the majority of tiles: when tiles differ, avoid unintended slimming; prefer the naturally more robust/broader jaw variant that is present in at least one tile.
+• Nose/lips/philtrum: do not reshape. If lighting/pose produces slimmer vs fuller appearances across tiles, choose the variant that is conventionally pleasing ONLY if it exactly matches one of the tiles.
+• Eye bags: if some tiles show smaller eye bags naturally, prefer those; do not retouch or smooth them away.
+• Hair: never restyle. If flyaway volume varies, prefer the tidier state if it appears in any tile, without adding volume or smoothing that does not exist.
+• Global: if a choice improves conventional attractiveness but is NOT explicitly present in any tile, do NOT apply it.
+
 WARDROBE / ACCESSORIES
 • White T-shirt.
 • Glasses: keep prescription glasses if they appear in the majority of input tiles; preserve exact frame shape/bridge and lens spacing. No sunglasses.
@@ -88,10 +104,6 @@ LAYOUT / SCALE / BACKGROUND (STRICT)
 RENDERING
 • Photorealistic, studio-neutral lighting; natural contrast and color. No HDR look, no over-sharpening.
 • Portrait perspective ~85–95 mm equivalent; no fisheye.
-
-FUSE & CONSENSUS
-• Fuse identity features from ALL four tiles. Resolve disagreements by majority/consensus; do NOT average toward a generic face.
-• Keep age, weight, cheek fullness and mid-face volume unchanged (NO slimming/“beautification”).
 
 FINAL QUALITY CHECK (if any fail ⇒ adjust only that aspect and re-render)
 1) Identity is a 1:1 match (all micro-features and asymmetries consistent across both panels).
@@ -256,6 +268,7 @@ async def get_parent_visual_representation(
                 "prompt": "",
                 "image_urls": [],
                 "temperature": 0.1,
+                "aspect_ratio":'9:16',
                 "role": role 
             }
 

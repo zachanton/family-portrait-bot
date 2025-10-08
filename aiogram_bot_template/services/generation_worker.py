@@ -163,6 +163,8 @@ async def run_generation_worker(
             payload_override["prompt"] = final_prompt
             payload_override["seed"] = random.randint(1, 1_000_000)
 
+            log.info("Final prompt: ", final_prompt=payload_override["prompt"])
+
             result, error_meta = await pipeline.run_generation(
                 pipeline_output, payload_override=payload_override
             )
@@ -229,7 +231,7 @@ async def run_generation_worker(
         session_actions_msg = await bot.send_message(
             chat_id, 
             _("✨ Your portraits are ready!\n\n"
-              "Select your favorite one from the images above, or choose another action for this session below."),
+              "Select your favorite one from the images above, or choose another action below."),
             reply_markup=session_actions.session_actions_kb(generated_in_session)
         )
         await state.update_data(next_step_message_id=session_actions_msg.message_id)

@@ -20,7 +20,7 @@ def continue_with_pair_photo_kb(
     buttons = [
         [
             InlineKeyboardButton(
-                text=_("❤️ I choose this one!"),
+                text=_("💞 I choose this one!"),
                 callback_data=ContinueWithPairPhotoCallback(
                     generation_id=generation_id,
                     request_id=request_id,
@@ -34,7 +34,7 @@ def continue_with_pair_photo_kb(
 def post_pair_photo_selection_kb() -> InlineKeyboardMarkup:
     """
     Creates a keyboard for the final action after selecting a pair portrait.
-    It only contains a button to start a new generation.
+    The 'Start a New Generation' button is replaced with 'Return to Menu'.
 
     Returns:
         An inline keyboard with the next action step.
@@ -42,7 +42,7 @@ def post_pair_photo_selection_kb() -> InlineKeyboardMarkup:
     buttons = [
         [
             InlineKeyboardButton(
-                text=_("🔄 Start a New Generation"), callback_data="start_new"
+                text=_("↩️ Return to Menu"), callback_data="return_to_session_menu"
             )
         ],
     ]

@@ -34,7 +34,7 @@ def continue_with_family_photo_kb(
 def post_family_photo_selection_kb() -> InlineKeyboardMarkup:
     """
     Creates a keyboard for the final action after selecting a family portrait.
-    It only contains a button to start a new generation.
+    The 'Start a New Generation' button is replaced with 'Return to Menu'.
 
     Returns:
         An inline keyboard with the next action step.
@@ -42,7 +42,7 @@ def post_family_photo_selection_kb() -> InlineKeyboardMarkup:
     buttons = [
         [
             InlineKeyboardButton(
-                text=_("🔄 Start a New Generation"), callback_data="start_new"
+                text=_("↩️ Return to Menu"), callback_data="return_to_session_menu"
             )
         ],
     ]

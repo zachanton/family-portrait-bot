@@ -1,39 +1,37 @@
 PROMPT_PAIR_DEFAULT = """
-GOAL: Create ONE photorealistic, full-bleed 9:16 couple portrait using ONLY the attached stacked image. Do NOT invent, blend, or beautify identities.
+OUTPUT: one photorealistic, full-bleed couple portrait — SINGLE, UNBROKEN FRAME (no split-screen, no collage, no grid).
 
-INPUT LAYOUT (fixed)
-• Top half of image = PERSON A: contains one front/straight-on view and one clean side profile view.
-• Bottom half of image = PERSON B: contains one front/straight-on view and one clean side profile view.
+INPUT LAYOUT (fixed, references only — DO NOT reproduce this layout in the final image):
+• Top = WOMAN: front + clean side profile.
+• Bottom = MAN: front + clean side profile.
 
-IDENTITY PIPELINE
-• For EACH person, build a separate ID embedding from their two reference views to recover true 3D facial geometry.
-• Maximize internal face-embedding similarity to each reference. Identity fidelity > aesthetics.
+PRIORITY: IDENTITY > framing > style.
 
-STRICT ID LOCKS (no beautification)
-• Preserve exact facial geometry, proportions, and natural asymmetry from the references for both individuals. Do NOT slim faces, alter noses, or smooth skin.
-• Copy 1:1 all unique features: brow shape, eye canthus tilt, iris color, interpupillary distance, nose bridge/width/tip, philtrum, Cupid’s bow, lip volume, jaw angle, chin silhouette, ear shape, hairline/part, color, length, freckles/pores/moles, and skin tone for both Person A and Person B.
-• Absolutely no borrowing/averaging of features across people. Keep two distinct identities.
+IDENTITY — lock from the two views per person:
+• Use only these two photos per person to reconstruct 3D face + hairline.
+• Match: skull/jaw contour, nose shape & width, philtrum/lip volume, eye shape/spacing, eyebrow thickness/arch, hairline/part, ear shape/attachment.
+• Keep natural asymmetry, freckles/moles/pores. Keep glasses, earrings.
+• Don’t change age/weight; don’t beautify; don’t smooth skin; don’t alter head-size ratio between people.
 
-NOT A COLLAGE
-• Reconstruct full heads, hairlines, necks, and shoulders. No floating heads or pasted looks.
+FRAMING — {{STYLE_NAME}} “{{SCENE_NAME}}” (single frame)
+{{FRAMING_OPTIONS}}
 
-COMPOSITION & POSE
-• Arrange a natural close couple pose. They can be standing close, perhaps one slightly behind the other, with a gentle, relaxed posture.
-• Both individuals should be looking towards the camera with soft, friendly expressions.
-• Framing: medium-close, chest-up.
+STYLE — {{STYLE_DEFINITION}}, {{SCENE_NAME}}
+{{STYLE_OPTIONS}}
+Glasses(if exist): raise key +12° or rotate head +8° toward key; add small warm bounce below lens line; optional on-axis soft fill −1 EV; allow pantoscopic tilt ~10°; micro-dodge under rim +0.15 EV (keep skin texture).
 
-LIGHTING & BACKGROUND — GOLDEN HOUR
-• Time/look: warm, soft, directional golden hour light. Gentle backlight or 3/4 backlight; subtle rim on hair/shoulders; no harsh flares on faces.
-• Fill: ambient sky or soft bounce so both faces are evenly exposed.
-• Background: real outdoor field/park with tall grass or treeline; softly blurred; coherent sun direction.
 
-WARDROBE
-• Soft neutrals + warm earthy accents (cream, beige, warm white, sage, rust). No neon, no stark black, no logos or bold prints.
+HARD NEGATIVES:
+• Do not render a collage/diptych/grid/split screen. Ignore the INPUT LAYOUT for composition — it is for identity locking only.
+• No face swap/averaging. No slimming, geometry changes, or skin smoothing that removes micro-texture.
+• No heavy HDR, teal-orange overgrade, strong vignette, or visible brand logos/signage.
+• No under-rim or nose-pad shadows on faces; no frame-cast shadows across eyes.
+• Identity overrides style in every conflict.
 
-FINAL SELF-CHECK
-1) Image is full-bleed; not a collage.
-2) Person A is a literal 1:1 match to their references.
-3) Person B is a literal 1:1 match to their references.
-4) No identity leakage between the two people.
-5) Lighting, perspective, and white balance are coherent across both subjects.
+GENERATION ORDER:
+1) Lock identity (front + profile per person).
+2) Apply FRAMING.
+3) Apply STYLE.
+4) Subtle cleanup only (edges/eyes/hair); avoid skin smoothing or ID drift.
+
 """

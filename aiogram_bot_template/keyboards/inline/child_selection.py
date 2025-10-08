@@ -40,7 +40,7 @@ def post_child_selection_kb(
 ) -> InlineKeyboardMarkup:
     """
     Creates a keyboard for actions after selecting a child image.
-    The 'Try again' button has been removed from this view.
+    The 'Start a New Generation' button is replaced with 'Return to Menu'.
 
     Args:
         generation_id: The ID of the selected generation.
@@ -60,7 +60,7 @@ def post_child_selection_kb(
         ],
         [
             InlineKeyboardButton(
-                text=_("🔄 Start a New Generation"), callback_data="start_new"
+                text=_("↩️ Return to Menu"), callback_data="return_to_session_menu"
             )
         ],
     ]

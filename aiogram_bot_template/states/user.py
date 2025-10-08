@@ -19,6 +19,8 @@ class Generation(StatesGroup):
     choosing_child_age = State()
     choosing_child_resemblance = State()
 
+    choosing_pair_photo_style = State()
+
     # --- Common states for all pipelines ---
     waiting_for_quality = State()
     waiting_for_payment = State()

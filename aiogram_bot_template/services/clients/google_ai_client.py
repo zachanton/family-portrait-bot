@@ -20,6 +20,8 @@ from vertexai.generative_models import (
     GenerationConfig,
     Image,  # vertexai.generative_models.Image
 )
+from google.genai import types
+
 
 # Service account credentials
 from google.oauth2.service_account import Credentials
@@ -151,6 +153,7 @@ class _ImagesNamespace:
         prompt = kwargs.pop("prompt", "")
         image_urls = kwargs.pop("image_urls", [])
         temperature = kwargs.pop("temperature", 0.6)
+        aspect_ratio = kwargs.pop("aspect_ratio", "9:16")
         top_p = kwargs.pop("top_p", 0.95)
         top_k = kwargs.pop("top_k", 32)
         max_output_tokens = kwargs.pop("max_output_tokens", 8192)
@@ -180,6 +183,9 @@ class _ImagesNamespace:
                 GenerationConfig.Modality.TEXT,
                 GenerationConfig.Modality.IMAGE,
             ],
+            image_config=types.ImageConfig(
+                aspect_ratio=aspect_ratio,
+            )
         )
 
         log.info("Calling Vertex AI Gemini for image generation.")

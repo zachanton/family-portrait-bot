@@ -16,10 +16,14 @@ from aiogram_bot_template.data.constants import GenerationType
 logger = structlog.get_logger(__name__)
 
 _ASSETS_DIR = Path(__file__).parent.parent.parent / "assets"
-_MOCK_FAMILY_IMAGE_PATH = _ASSETS_DIR / "family.jpg"
+_MOCK_FAMILY_IMAGE_PATH = _ASSETS_DIR / "mock_family.jpg"
+_MOCK_PAIR_IMAGE_PATH = _ASSETS_DIR / "mock_pair.png"
 _MOCK_CHILD_IMAGE_PATH = _ASSETS_DIR / "mock_child_11.jpg"
-_MOCK_MOM_VISUAL_IMAGE_PATH = _ASSETS_DIR / "mock_mom_front_side3.png"
-_MOCK_DAD_VISUAL_IMAGE_PATH = _ASSETS_DIR / "mock_dad_front_side3.png"
+# _MOCK_MOM_VISUAL_IMAGE_PATH = _ASSETS_DIR / "mock_mom_front_side5.png"
+# _MOCK_DAD_VISUAL_IMAGE_PATH = _ASSETS_DIR / "mock_dad_front_side5.png"
+
+_MOCK_MOM_VISUAL_IMAGE_PATH = _ASSETS_DIR / "pair1" / "mock_mom_front_side.png"
+_MOCK_DAD_VISUAL_IMAGE_PATH = _ASSETS_DIR / "pair1" / "mock_dad_front_side.png"
 
 
 class MockAIClientResponse(BaseModel):
@@ -37,47 +41,53 @@ class _MockImagesNamespace:
         await asyncio.sleep(1)
 
         generation_type = kwargs.get("generation_type")
-        prompt = kwargs.get("prompt", "")
-        # --- NEW: Explicitly get the role ---
         role = kwargs.get("role")
         
         image_path = None
         fallback_color = "red" # Default fallback color
 
-        # 1. Check for the specific prompt of the parent visual enhancer first.
-        if "ID-consolidation" in prompt or "ID-refinement" in prompt:
-            # --- REVISED LOGIC: Use the 'role' parameter directly ---
-            if role == "mother":
-                image_path = _MOCK_MOM_VISUAL_IMAGE_PATH
-                fallback_color = "purple"
-                logger.info("MOCK Images: Using mock mother visual representation image.")
-            elif role == "father":
-                image_path = _MOCK_DAD_VISUAL_IMAGE_PATH
-                fallback_color = "orange"
-                logger.info("MOCK Images: Using mock father visual representation image.")
-            else:
-                # --- NEW: Safety fallback to prevent UnboundLocalError ---
-                image_path = _MOCK_FAMILY_IMAGE_PATH
-                fallback_color = "gray"
-                logger.warning("MOCK: ID-consolidation prompt detected but role was not specified. Using default family image.")
+        # 1. Prioritize the 'role' parameter to identify parent visual generation,
+        # as this call doesn't use a standard GenerationType. This is more robust
+        # than checking for substrings in the prompt.
+        if role == "mother":
+            image_path = _MOCK_MOM_VISUAL_IMAGE_PATH
+            fallback_color = "purple"
+            logger.info("MOCK Images: Using mock mother visual representation (detected via role).")
+        elif role == "father":
+            image_path = _MOCK_DAD_VISUAL_IMAGE_PATH
+            fallback_color = "orange"
+            logger.info("MOCK Images: Using mock father visual representation (detected via role).")
         
-        # 2. Check for the child generation type.
+        # 2. If it's not a parent visual, use the explicit generation_type.
         elif generation_type == GenerationType.CHILD_GENERATION.value:
             image_path = _MOCK_CHILD_IMAGE_PATH
             fallback_color = "lightblue"
             logger.info("MOCK Images: Using mock child image.")
         
-        # 3. Default to the family/group photo.
-        else:
+        elif generation_type in [GenerationType.FAMILY_PHOTO.value]:
             image_path = _MOCK_FAMILY_IMAGE_PATH
             fallback_color = "darkgreen"
-            logger.info("MOCK Images: Using standard mock family image.")
+            logger.info("MOCK Images: Using mock family image for this generation type.", type=generation_type)
+        
+        elif generation_type in [GenerationType.PAIR_PHOTO.value]:
+            image_path = _MOCK_PAIR_IMAGE_PATH
+            fallback_color = "darkblue"
+            logger.info("MOCK Images: Using mock pair image for this generation type.", type=generation_type)
+
+        # 3. Default to the family/group photo as a safe fallback.
+        else:
+            image_path = _MOCK_FAMILY_IMAGE_PATH
+            fallback_color = "gray"
+            logger.warning(
+                "MOCK Images: Could not determine specific image. Using default family image.",
+                gen_type=generation_type,
+                role=role
+            )
 
         try:
-            # This line will now always have a valid image_path
             image_bytes = image_path.read_bytes()
         except FileNotFoundError:
-            logger.error("Mock image asset not found!", path=image_path)
+            logger.error("Mock image asset not found!", path=str(image_path))
             # Create a fallback image if the asset is missing
             img = Image.new("RGB", (1024, 1024), fallback_color)
             buffer = io.BytesIO()

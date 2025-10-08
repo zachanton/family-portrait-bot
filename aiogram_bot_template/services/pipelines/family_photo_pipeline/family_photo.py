@@ -78,7 +78,8 @@ class FamilyPhotoPipeline(BasePipeline):
             "image_urls": [vertical_stack_url],
             "generation_type": GenerationType.FAMILY_PHOTO.value,
             "prompt": completed_prompts[0], # Use the first prompt as a representative base
-            "temperature": 0.5
+            "temperature": 0.5,
+            "aspect_ratio": '9:16',
         }
         
         caption = None

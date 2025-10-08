@@ -1,4 +1,5 @@
 # aiogram_bot_template/handlers/next_step_handler.py
+import asyncio
 import asyncpg
 import structlog
 from aiogram import F, Router, Bot
@@ -28,14 +29,12 @@ from aiogram_bot_template.keyboards.inline.gender import gender_kb
 from aiogram_bot_template.keyboards.inline.quality import quality_kb
 from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.data.settings import settings
-# --- UPDATED IMPORTS from menu.py ---
 from .menu import _cleanup_session_menu, _cleanup_full_session
 
 router = Router(name="next-step-handler")
 
 
-@router.callback_query(SessionActionCallback.filter(), StateFilter(Generation.waiting_for_next_action))
-async def process_session_action(
+async def _process_session_action_async(
     cb: CallbackQuery,
     callback_data: SessionActionCallback,
     state: FSMContext,
@@ -43,11 +42,7 @@ async def process_session_action(
     business_logger: structlog.typing.FilteringBoundLogger,
     bot: Bot,
 ):
-    await cb.answer()
-    if not cb.message:
-        return
-
-    # Clean up only the session menu, leaving photos untouched
+    # This background task handles the slow logic for session actions.
     await _cleanup_session_menu(bot, cb.message.chat.id, state)
     
     status_msg = await cb.message.answer(_("Got it! Preparing the new generation..."))
@@ -95,6 +90,50 @@ async def process_session_action(
             )
         )
 
+@router.callback_query(SessionActionCallback.filter(), StateFilter(Generation.waiting_for_next_action))
+async def process_session_action(
+    cb: CallbackQuery,
+    callback_data: SessionActionCallback,
+    state: FSMContext,
+    db_pool: asyncpg.Pool,
+    business_logger: structlog.typing.FilteringBoundLogger,
+    bot: Bot,
+):
+    # Immediately answer the callback
+    await cb.answer()
+    if not cb.message:
+        return
+
+    # Offload the rest of the logic to a background task
+    asyncio.create_task(_process_session_action_async(
+        cb, callback_data, state, db_pool, business_logger, bot
+    ))
+
+
+@router.callback_query(F.data == "return_to_session_menu", StateFilter(Generation.waiting_for_next_action))
+async def return_to_session_menu(
+    cb: CallbackQuery,
+    state: FSMContext,
+    bot: Bot,
+) -> None:
+    await cb.answer()
+    if not cb.message:
+        return
+
+    with suppress(TelegramBadRequest):
+        await cb.message.delete()
+    
+    user_data = await state.get_data()
+    generated_in_session: Set[str] = set(user_data.get("generated_in_session", []))
+
+    session_actions_msg = await bot.send_message(
+        chat_id=cb.message.chat.id,
+        text=_("✨ Your portraits are ready!\n\n"
+             "Select your favorite one from the images above, or choose another action below."),
+        reply_markup=session_actions_kb.session_actions_kb(generated_in_session)
+    )
+    await state.update_data(next_step_message_id=session_actions_msg.message_id)
+
 
 @router.callback_query(F.data == "start_new", StateFilter("*"))
 async def start_new_generation(
@@ -107,7 +146,6 @@ async def start_new_generation(
         await menu.send_welcome_message(callback.message, state, is_restart=True)
         return
 
-    # Use the full cleanup for a new session
     await _cleanup_full_session(callback.bot, callback.message.chat.id, state)
     
     with suppress(TelegramBadRequest):
@@ -116,11 +154,7 @@ async def start_new_generation(
     await menu.send_welcome_message(callback.message, state, is_restart=True)
 
 
-@router.callback_query(
-    RetryGenerationCallback.filter(),
-    StateFilter(Generation.waiting_for_next_action),
-)
-async def process_retry_generation(
+async def _process_retry_generation_async(
     cb: CallbackQuery,
     callback_data: RetryGenerationCallback,
     state: FSMContext,
@@ -128,10 +162,7 @@ async def process_retry_generation(
     business_logger: structlog.typing.FilteringBoundLogger,
     bot: Bot,
 ):
-    await cb.answer()
-    if not cb.message:
-        return
-
+    # This background task handles the slow logic for retrying a generation.
     await _cleanup_full_session(bot, cb.message.chat.id, state)
     with suppress(TelegramBadRequest):
         await cb.message.delete()
@@ -172,11 +203,10 @@ async def process_retry_generation(
         reply_markup=gender_kb(),
     )
 
-
-@router.callback_query(ContinueWithImageCallback.filter(), StateFilter(Generation.waiting_for_next_action))
-async def process_continue_with_image(
+@router.callback_query(RetryGenerationCallback.filter(), StateFilter(Generation.waiting_for_next_action))
+async def process_retry_generation(
     cb: CallbackQuery,
-    callback_data: ContinueWithImageCallback,
+    callback_data: RetryGenerationCallback,
     state: FSMContext,
     db_pool: asyncpg.Pool,
     business_logger: structlog.typing.FilteringBoundLogger,
@@ -185,8 +215,21 @@ async def process_continue_with_image(
     await cb.answer()
     if not cb.message:
         return
+    
+    asyncio.create_task(_process_retry_generation_async(
+        cb, callback_data, state, db_pool, business_logger, bot
+    ))
 
-    # Clean up only the session menu message
+
+async def _process_continue_with_image_async(
+    cb: CallbackQuery,
+    callback_data: ContinueWithImageCallback,
+    state: FSMContext,
+    db_pool: asyncpg.Pool,
+    business_logger: structlog.typing.FilteringBoundLogger,
+    bot: Bot,
+):
+    # This background task handles the slow logic for selecting a child image.
     await _cleanup_session_menu(bot, cb.message.chat.id, state)
 
     db = PostgresConnection(db_pool, logger=business_logger)
@@ -215,6 +258,52 @@ async def process_continue_with_image(
         next_step_message_id=sent_message.message_id
     )
 
+@router.callback_query(ContinueWithImageCallback.filter(), StateFilter(Generation.waiting_for_next_action))
+async def process_continue_with_image(
+    cb: CallbackQuery,
+    callback_data: ContinueWithImageCallback,
+    state: FSMContext,
+    db_pool: asyncpg.Pool,
+    business_logger: structlog.typing.FilteringBoundLogger,
+    bot: Bot,
+):
+    await cb.answer()
+    if not cb.message:
+        return
+    
+    asyncio.create_task(_process_continue_with_image_async(
+        cb, callback_data, state, db_pool, business_logger, bot
+    ))
+
+
+async def _process_continue_with_family_photo_async(
+    cb: CallbackQuery,
+    callback_data: ContinueWithFamilyPhotoCallback,
+    state: FSMContext,
+    db_pool: asyncpg.Pool,
+    business_logger: structlog.typing.FilteringBoundLogger,
+    bot: Bot,
+):
+    # This background task handles the slow logic for selecting a family photo.
+    await _cleanup_session_menu(bot, cb.message.chat.id, state)
+    
+    db = PostgresConnection(db_pool, logger=business_logger)
+    sql = "SELECT result_file_id FROM generations WHERE id = $1"
+    result = await db.fetchrow(sql, (callback_data.generation_id,))
+    if not result or not result.data or not result.data.get("result_file_id"):
+        await cb.message.answer(_("I couldn't find the selected image. Please start over with /start."))
+        await state.clear()
+        return
+
+    selected_file_id = result.data["result_file_id"]
+
+    sent_message = await bot.send_photo(
+        chat_id=cb.message.chat.id,
+        photo=selected_file_id,
+        caption=_("A wonderful choice! \n\nWhat would you like to do next?"),
+        reply_markup=family_selection_kb.post_family_photo_selection_kb()
+    )
+    await state.update_data(next_step_message_id=sent_message.message_id)
 
 @router.callback_query(ContinueWithFamilyPhotoCallback.filter(), StateFilter(Generation.waiting_for_next_action))
 async def process_continue_with_family_photo(
@@ -229,12 +318,25 @@ async def process_continue_with_family_photo(
     if not cb.message:
         return
     
+    asyncio.create_task(_process_continue_with_family_photo_async(
+        cb, callback_data, state, db_pool, business_logger, bot
+    ))
+
+
+async def _process_continue_with_pair_photo_async(
+    cb: CallbackQuery,
+    callback_data: ContinueWithPairPhotoCallback,
+    state: FSMContext,
+    db_pool: asyncpg.Pool,
+    business_logger: structlog.typing.FilteringBoundLogger,
+    bot: Bot,
+):
+    # This background task handles the slow logic for selecting a pair photo.
     await _cleanup_session_menu(bot, cb.message.chat.id, state)
-    
+
     db = PostgresConnection(db_pool, logger=business_logger)
     sql = "SELECT result_file_id FROM generations WHERE id = $1"
     result = await db.fetchrow(sql, (callback_data.generation_id,))
-    
     if not result or not result.data or not result.data.get("result_file_id"):
         await cb.message.answer(_("I couldn't find the selected image. Please start over with /start."))
         await state.clear()
@@ -245,11 +347,10 @@ async def process_continue_with_family_photo(
     sent_message = await bot.send_photo(
         chat_id=cb.message.chat.id,
         photo=selected_file_id,
-        caption=_("A wonderful choice! \n\nWhat would you like to do next?"),
-        reply_markup=family_selection_kb.post_family_photo_selection_kb()
+        caption=_("An excellent choice! \n\nWhat would you like to do next?"),
+        reply_markup=pair_selection_kb.post_pair_photo_selection_kb()
     )
     await state.update_data(next_step_message_id=sent_message.message_id)
-
 
 @router.callback_query(ContinueWithPairPhotoCallback.filter(), StateFilter(Generation.waiting_for_next_action))
 async def process_continue_with_pair_photo(
@@ -263,34 +364,13 @@ async def process_continue_with_pair_photo(
     await cb.answer()
     if not cb.message:
         return
-
-    await _cleanup_session_menu(bot, cb.message.chat.id, state)
     
-    db = PostgresConnection(db_pool, logger=business_logger)
-    sql = "SELECT result_file_id FROM generations WHERE id = $1"
-    result = await db.fetchrow(sql, (callback_data.generation_id,))
-    
-    if not result or not result.data or not result.data.get("result_file_id"):
-        await cb.message.answer(_("I couldn't find the selected image. Please start over with /start."))
-        await state.clear()
-        return
-
-    selected_file_id = result.data["result_file_id"]
-
-    sent_message = await bot.send_photo(
-        chat_id=cb.message.chat.id,
-        photo=selected_file_id,
-        caption=_("An excellent choice! Your couple portrait is saved.\n\nWhat would you like to do next?"),
-        reply_markup=pair_selection_kb.post_pair_photo_selection_kb()
-    )
-    await state.update_data(next_step_message_id=sent_message.message_id)
+    asyncio.create_task(_process_continue_with_pair_photo_async(
+        cb, callback_data, state, db_pool, business_logger, bot
+    ))
 
 
-@router.callback_query(
-    CreateFamilyPhotoCallback.filter(), 
-    StateFilter(Generation.waiting_for_next_action)
-)
-async def process_create_family_photo(
+async def _process_create_family_photo_async(
     cb: CallbackQuery,
     callback_data: CreateFamilyPhotoCallback,
     state: FSMContext,
@@ -298,17 +378,13 @@ async def process_create_family_photo(
     business_logger: structlog.typing.FilteringBoundLogger,
     bot: Bot,
 ):
-    await cb.answer()
-    if not cb.message:
-        return
-    
-    # This message is the duplicated photo with "Great Choice!" caption, clean it up
-    await _cleanup_session_menu(bot, cb.message.chat.id, state)
+    # This background task handles the slow logic for creating a family photo.
     with suppress(TelegramBadRequest):
-        await bot.delete_message(chat_id=cb.message.chat.id, message_id=cb.message.message_id)
-
-    status_msg = await cb.message.answer(
-        _("Got it! Preparing the family photoshoot...")
+        await cb.message.delete()
+        
+    status_msg = await bot.send_message(
+        chat_id=cb.message.chat.id,
+        text=_("Got it! Preparing the family photoshoot...")
     )
 
     db = PostgresConnection(db_pool, logger=business_logger)
@@ -369,3 +445,20 @@ async def process_create_family_photo(
         business_logger.exception("Failed to start family photo flow", error=e)
         await status_msg.edit_text(_("Sorry, something went wrong. Please /start over."))
         await state.clear()
+
+@router.callback_query(CreateFamilyPhotoCallback.filter(), StateFilter(Generation.waiting_for_next_action))
+async def process_create_family_photo(
+    cb: CallbackQuery,
+    callback_data: CreateFamilyPhotoCallback,
+    state: FSMContext,
+    db_pool: asyncpg.Pool,
+    business_logger: structlog.typing.FilteringBoundLogger,
+    bot: Bot,
+):
+    await cb.answer()
+    if not cb.message:
+        return
+    
+    asyncio.create_task(_process_create_family_photo_async(
+        cb, callback_data, state, db_pool, business_logger, bot
+    ))
