@@ -26,7 +26,7 @@ class ChildGenerationPipeline(BasePipeline):
     Supports session reuse by checking for a pre-existing parent composite image.
     """
 
-    async def _prepare_child_prompts(self, parent_composite_url: str, mom_front_url: str, dad_front_url: str) -> PipelineOutput:
+    async def _prepare_child_prompts(self, parent_front_url: str) -> PipelineOutput:
         """
         Private helper to generate child prompts using the provided parent composite image.
         This is the part of the logic that runs regardless of session state.
@@ -50,7 +50,7 @@ class ChildGenerationPipeline(BasePipeline):
             resemblance_list = [random.choice([ChildResemblance.MOM.value, ChildResemblance.DAD.value]) for a in range(generation_count)]
         
         feature_details = await child_prompt_enhancer.get_enhanced_child_features(
-            parent_composite_url=parent_composite_url,
+            parent_composite_url=parent_front_url,
             num_variations=generation_count,
             child_age=self.gen_data["child_age"],
             child_gender=self.gen_data["child_gender"],
@@ -102,7 +102,7 @@ class ChildGenerationPipeline(BasePipeline):
         
         request_payload = {
             "model": tier_config.model,
-            "image_urls": [parent_composite_url],
+            "image_urls": [ parent_front_url ],
             "generation_type": GenerationType.CHILD_GENERATION.value,
             "prompt": completed_prompts[0], # Base prompt for logging
             "temperature": 0.3,
@@ -115,27 +115,17 @@ class ChildGenerationPipeline(BasePipeline):
         """
         Prepares data for child generation. Checks for existing session data first.
         """
-        if "parent_composite_uid" in self.gen_data:
+        if "parent_front_uid" in self.gen_data:
             self.log.info("Reusing existing parent composite for session action.")
-            parent_composite_uid = self.gen_data["parent_composite_uid"]
-            parent_composite_url = image_cache.get_cached_image_proxy_url(parent_composite_uid)
-
             parent_front_uid = self.gen_data["parent_front_uid"]
+            parent_front_side_uid = self.gen_data["parent_front_side_uid"]
             parent_front_url = image_cache.get_cached_image_proxy_url(parent_front_uid)
-
-            mom_front_uid = self.gen_data["mom_front_uid"]
-            mom_front_url = image_cache.get_cached_image_proxy_url(mom_front_uid)
-
-            dad_front_uid = self.gen_data["dad_front_uid"]
-            dad_front_url = image_cache.get_cached_image_proxy_url(dad_front_uid)
             
             # Jump directly to the child-specific prompt generation
-            output = await self._prepare_child_prompts(parent_front_url, mom_front_url, dad_front_url)
+            output = await self._prepare_child_prompts(parent_front_url)
             # Add the reused UID to metadata so the worker can find it for debug logs
-            output.metadata["parent_composite_uid"] = parent_composite_uid
             output.metadata["parent_front_uid"] = parent_front_uid
-            output.metadata["mom_front_uid"] = mom_front_uid
-            output.metadata["dad_front_uid"] = dad_front_uid
+            output.metadata["parent_front_side_uid"] = parent_front_side_uid
             output.metadata["processed_uids"] = [ parent_front_uid ]
             return output
 
@@ -200,36 +190,25 @@ class ChildGenerationPipeline(BasePipeline):
         mom_front_bytes, mom_side_bytes = photo_processing.split_and_stack_image_bytes(mom_profile_bytes)
         dad_front_bytes, dad_side_bytes = photo_processing.split_and_stack_image_bytes(dad_profile_bytes)
 
-        mom_front_uid = f"mom_front_{request_id_str}"
-        await image_cache.cache_image_bytes(mom_front_uid, mom_front_bytes, "image/jpeg", self.cache_pool)
-        mom_front_url = image_cache.get_cached_image_proxy_url(mom_front_uid)
-
-        dad_front_uid = f"dad_front_{request_id_str}"
-        await image_cache.cache_image_bytes(dad_front_uid, dad_front_bytes, "image/jpeg", self.cache_pool)
-        dad_front_url = image_cache.get_cached_image_proxy_url(dad_front_uid)
-
-        parent_composite_bytes = photo_processing.stack_two_images(mom_profile_bytes, dad_profile_bytes)
-        parent_composite_uid = f"parent_composite_{request_id_str}"
-        await image_cache.cache_image_bytes(parent_composite_uid, parent_composite_bytes, "image/jpeg", self.cache_pool)
-        parent_composite_url = image_cache.get_cached_image_proxy_url(parent_composite_uid)
-
-        parent_front_bytes = photo_processing.stack_two_images_hor(mom_front_bytes, dad_front_bytes)
+        parent_front_bytes = photo_processing.stack_images_horizontally(mom_front_bytes, dad_front_bytes)
         parent_front_uid = f"parent_front_{request_id_str}"
         await image_cache.cache_image_bytes(parent_front_uid, parent_front_bytes, "image/jpeg", self.cache_pool)
         parent_front_url = image_cache.get_cached_image_proxy_url(parent_front_uid)
 
-        output = await self._prepare_child_prompts(parent_front_url, mom_front_url, dad_front_url)
+        parent_front_side_bytes = photo_processing.stack_two_images(mom_profile_bytes, dad_profile_bytes)
+        parent_front_side_uid = f"parent_front_side_{request_id_str}"
+        await image_cache.cache_image_bytes(parent_front_side_uid, parent_front_side_bytes, "image/jpeg", self.cache_pool)
+
+        output = await self._prepare_child_prompts(parent_front_url)
         
         # Add all intermediate UIDs to metadata for debugging and session saving
         output.metadata.update({
             "mom_collage_uid": mom_collage_uid,
-            "dad_collage_uid": dad_collage_uid,
             "mom_profile_uid": mom_profile_uid,
+            "dad_collage_uid": dad_collage_uid,
             "dad_profile_uid": dad_profile_uid,
-            "mom_front_uid": mom_front_uid,
-            "dad_front_uid": dad_front_uid,
-            "parent_composite_uid": parent_composite_uid,
             "parent_front_uid": parent_front_uid,
+            "parent_front_side_uid": parent_front_side_uid,
             "processed_uids": [ parent_front_uid ]
         })
         

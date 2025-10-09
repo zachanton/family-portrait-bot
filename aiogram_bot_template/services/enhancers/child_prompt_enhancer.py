@@ -37,7 +37,7 @@ _CHILD_FEATURE_SYSTEM_PROMPT = """
 You are an expert AI geneticist and character artist. Your mission is to analyze a 4-panel reference image of two parents and generate a structured JSON object containing a detailed analysis of the parents and creative variations for their child.
 
 **INPUTS YOU WILL RECEIVE:**
-- A 4-panel image: top-left and top-right are the Mother, bottom-left and bottom-right are the Father.
+- A 2-panel image: left is the Mother, right is the Father.
 - Parameters: child's age, gender, and the number of child variations needed.
 
 **GOAL:**
@@ -93,7 +93,7 @@ async def get_enhanced_child_features(
     variations for their child.
 
     Args:
-        parent_composite_url: URL to the 4-panel image of both parents.
+        parent_composite_url: URL to the 2-panel image of both parents.
         num_variations: The number of unique child variations to generate.
         child_age: The age category of the child.
         child_gender: The gender of the child.
@@ -122,7 +122,7 @@ async def get_enhanced_child_features(
 
         user_prompt_text = (
             f"Please perform a parental analysis and generate {num_variations} unique creative variations for a {age_str} {gender_str}. "
-            "Analyze the parents in the provided 4-panel photo. "
+            "Analyze the parents in the provided 2-panel photo. "
             "Return your analysis as a JSON object that strictly follows this schema:"
             f"\n\n```json\n{json.dumps(schema_definition, indent=2)}\n```"
         )

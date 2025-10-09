@@ -14,10 +14,6 @@ Child settings:
 • Eyes must be comfortably and naturally wide open.
 • No earrings/piercing/makeup.
 
-IDENTITY & AGE LOCK — DISTINCT CHILD
-• Follow {{PARENT_A}}’s unique markers: identical eyebrow arch, nose bridge slope, tip rotation, alar width, eyelid-crease pattern, mole/freckle map, tooth alignment/spacing, hairline contour, ear details.
-• Require 2–3 visible {{PARENT_B}} anchor traits as differentiators (while {{PARENT_A}} stays dominant): eye canthus tilt/geometry, nose bridge/tip nuance, cheekbone/zygoma width, ear helix form, chin width/cleft, philtrum depth.
-
 AGE ENFORCEMENT (exactly {{CHILD_AGE}})
 • Child proportions: larger eye-to-face ratio; baby-fat cheeks; soft jawline; short chin; small rounded nose tip; higher smooth forehead; short neck.
 • Dentition: early mixed dentition — small upper incisors, slight spacing allowed; no full adult teeth.

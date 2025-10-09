@@ -53,7 +53,7 @@ class FamilyPhotoPipeline(BasePipeline):
         
         request_id_str = self.gen_data.get('request_id', uuid.uuid4().hex)
         
-        composite_bytes = photo_processing.stack_three_images(mother_bytes, child_bytes, father_bytes)
+        composite_bytes = photo_processing.stack_three_images(mother_bytes, father_bytes, child_bytes)
         composite_uid = f"family_composite_{request_id_str}"
         await image_cache.cache_image_bytes(composite_uid, composite_bytes, "image/jpeg", self.cache_pool)
         composite_url = image_cache.get_cached_image_proxy_url(composite_uid)
@@ -103,7 +103,7 @@ class FamilyPhotoPipeline(BasePipeline):
         }
         
         metadata = { 
-            "processed_uids": [composite_uid],
+            "processed_uids": [ composite_uid ],
             "completed_prompts": completed_prompts
         }
 

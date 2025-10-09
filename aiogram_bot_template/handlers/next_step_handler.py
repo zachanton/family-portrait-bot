@@ -55,12 +55,6 @@ async def _process_session_action_async(
     user_id = cb.from_user.id
     action_type = GenerationType(callback_data.action_type)
 
-    parent_composite_uid = user_data.get("parent_composite_uid")
-    if not parent_composite_uid:
-        await status_msg.edit_text(_("I couldn't find the parent data for this session. Please /start over."))
-        await state.clear()
-        return
-
     draft = generations_repo.GenerationRequestDraft(
         user_id=user_id, status="params_collected_session", source_images=[]
     )

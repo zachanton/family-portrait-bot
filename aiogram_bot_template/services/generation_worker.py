@@ -102,14 +102,12 @@ async def run_generation_worker(
         pipeline = pipeline_class(bot, gen_data, log, status.update, cache_pool)
         pipeline_output = await pipeline.prepare_data()
 
-        if "parent_composite_uid" not in user_data:
+        if "mom_profile_uid" not in user_data:
             session_uids = {
                 "mom_profile_uid": pipeline_output.metadata.get("mom_profile_uid"),
                 "dad_profile_uid": pipeline_output.metadata.get("dad_profile_uid"),
                 "parent_front_uid": pipeline_output.metadata.get("parent_front_uid"),
-                "mom_front_uid": pipeline_output.metadata.get("mom_front_uid"),
-                "dad_front_uid": pipeline_output.metadata.get("dad_front_uid"),
-                "parent_composite_uid": pipeline_output.metadata.get("parent_composite_uid"),
+                "parent_front_side_uid": pipeline_output.metadata.get("parent_front_side_uid"),
             }
             if all(session_uids.values()):
                 await state.update_data(**session_uids)
@@ -135,12 +133,6 @@ async def run_generation_worker(
         await _send_debug_if_enabled(
             bot=bot, chat_id=chat_id, redis=cache_pool,
             uid=pipeline_output.metadata.get("dad_profile_uid"),
-            caption="[DEBUG] dad_profile_uid."
-        )
-
-        await _send_debug_if_enabled(
-            bot=bot, chat_id=chat_id, redis=cache_pool,
-            uid=pipeline_output.metadata.get("parent_composite_uid"),
             caption="[DEBUG] dad_profile_uid."
         )
 

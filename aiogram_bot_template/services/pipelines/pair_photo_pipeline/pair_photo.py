@@ -21,7 +21,7 @@ class PairPhotoPipeline(BasePipeline):
     """
 
     async def _prepare_styled_pair_prompts(
-        self, parent_composite_url: str, style_id: str
+        self, parent_front_side_url: str, style_id: str
     ) -> PipelineOutput:
         """
         Private helper to generate styled pair photo prompts using the provided
@@ -78,7 +78,7 @@ class PairPhotoPipeline(BasePipeline):
 
         request_payload = {
             "model": tier_config.model,
-            "image_urls": [parent_composite_url],
+            "image_urls": [ parent_front_side_url ],
             "generation_type": GenerationType.PAIR_PHOTO.value,
             "prompt": completed_prompts[0],  # Use the first as a representative prompt
             "temperature": 0.5,
@@ -97,14 +97,16 @@ class PairPhotoPipeline(BasePipeline):
             raise ValueError("Pair photo style ID is missing from FSM data.")
 
         # --- Session Reuse Logic ---
-        if "parent_composite_uid" in self.gen_data:
+        if "parent_front_side_uid" in self.gen_data:
             self.log.info("Reusing existing parent composite for session action.")
-            parent_composite_uid = self.gen_data["parent_composite_uid"]
-            parent_composite_url = image_cache.get_cached_image_proxy_url(parent_composite_uid)
+            parent_front_uid = self.gen_data["parent_front_uid"]
+            parent_front_side_uid = self.gen_data["parent_front_side_uid"]
+            parent_front_side_url = image_cache.get_cached_image_proxy_url(parent_front_side_uid)
             
-            output = await self._prepare_styled_pair_prompts(parent_composite_url, selected_style_id)
-            output.metadata["parent_composite_uid"] = parent_composite_uid
-            output.metadata["processed_uids"] = [parent_composite_uid]
+            output = await self._prepare_styled_pair_prompts(parent_front_side_url, selected_style_id)
+            output.metadata["parent_front_uid"] = parent_front_uid
+            output.metadata["parent_front_side_uid"] = parent_front_side_uid
+            output.metadata["processed_uids"] = [ parent_front_side_uid ]
             return output
         
         # --- This block runs only on the first generation in a session ---
@@ -160,25 +162,34 @@ class PairPhotoPipeline(BasePipeline):
         ]
         mom_profile_bytes, dad_profile_bytes = await asyncio.gather(*visual_tasks)
 
+        mom_front_bytes, mom_side_bytes = photo_processing.split_and_stack_image_bytes(mom_profile_bytes)
+        dad_front_bytes, dad_side_bytes = photo_processing.split_and_stack_image_bytes(dad_profile_bytes)
+
         mom_profile_uid = f"mom_profile_{request_id_str}"
         await image_cache.cache_image_bytes(mom_profile_uid, mom_profile_bytes, "image/jpeg", self.cache_pool)
         dad_profile_uid = f"dad_profile_{request_id_str}"
         await image_cache.cache_image_bytes(dad_profile_uid, dad_profile_bytes, "image/jpeg", self.cache_pool)
 
-        parent_composite_bytes = photo_processing.stack_two_images(mom_profile_bytes, dad_profile_bytes)
-        parent_composite_uid = f"parent_composite_{request_id_str}"
-        await image_cache.cache_image_bytes(parent_composite_uid, parent_composite_bytes, "image/jpeg", self.cache_pool)
-        parent_composite_url = image_cache.get_cached_image_proxy_url(parent_composite_uid)
+        parent_front_bytes = photo_processing.stack_two_images_hor(mom_front_bytes, dad_front_bytes)
+        parent_front_uid = f"parent_front_{request_id_str}"
+        await image_cache.cache_image_bytes(parent_front_uid, parent_front_bytes, "image/jpeg", self.cache_pool)
+        parent_front_url = image_cache.get_cached_image_proxy_url(parent_front_uid)
 
-        output = await self._prepare_styled_pair_prompts(parent_composite_url, selected_style_id)
+        parent_front_side_bytes = photo_processing.stack_two_images(mom_profile_bytes, dad_profile_bytes)
+        parent_front_side_uid = f"parent_front_side_{request_id_str}"
+        await image_cache.cache_image_bytes(parent_front_side_uid, parent_front_side_bytes, "image/jpeg", self.cache_pool)
+        parent_front_side_url = image_cache.get_cached_image_proxy_url(parent_front_side_uid)
+
+        output = await self._prepare_styled_pair_prompts(parent_front_side_url, selected_style_id)
         
         output.metadata.update({
             "mom_collage_uid": mom_collage_uid,
-            "dad_collage_uid": dad_collage_uid,
             "mom_profile_uid": mom_profile_uid,
+            "dad_collage_uid": dad_collage_uid,
             "dad_profile_uid": dad_profile_uid,
-            "parent_composite_uid": parent_composite_uid,
-            "processed_uids": [ parent_composite_uid ]
+            "parent_front_uid": parent_front_uid,
+            "parent_front_side_uid": parent_front_side_uid,
+            "processed_uids": [ parent_front_side_uid ]
         })
         
         return output
