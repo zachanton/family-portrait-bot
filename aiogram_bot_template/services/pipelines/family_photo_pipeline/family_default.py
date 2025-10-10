@@ -26,6 +26,7 @@ STYLE — {{STYLE_DEFINITION}}, {{SCENE_NAME}}
 HARD NEGATIVES:
 • Do not render a collage/diptych/grid. The INPUT LAYOUT is for identity reference ONLY.
 • No face swap/averaging. No slimming, geometry changes, or skin smoothing that removes micro-texture.
+• Render hands naturally; strictly forbid finger interlacing/interlocking between individuals.
 • No heavy HDR, teal-orange overgrade, strong vignette, or visible brand logos/signage.
 • Identity overrides style in every conflict.
 

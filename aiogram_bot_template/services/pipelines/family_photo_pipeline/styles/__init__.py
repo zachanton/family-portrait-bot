@@ -18,7 +18,7 @@ def _register_styles():
         # Check for required attributes in the module
         style_id = getattr(module, "STYLE_NAME", "").upper().replace(" ", "_")
         style_name_display = getattr(module, "STYLE_NAME", None)
-        preview_image_filename = f"{style_id.lower()}.png"
+        preview_image_filename = f"{module_name}.png"
 
         if style_id and style_name_display:
             STYLES[style_id] = {

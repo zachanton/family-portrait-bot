@@ -26,7 +26,7 @@ class ChildGenerationPipeline(BasePipeline):
     Supports session reuse by checking for a pre-existing parent composite image.
     """
 
-    async def _prepare_child_prompts(self, parent_front_url: str) -> PipelineOutput:
+    async def _prepare_child_prompts(self, mom_front_dad_front_url: str, mom_front_dad_side_url: str, dad_front_mom_side_url: str) -> PipelineOutput:
         """
         Private helper to generate child prompts using the provided parent composite image.
         This is the part of the logic that runs regardless of session state.
@@ -48,9 +48,10 @@ class ChildGenerationPipeline(BasePipeline):
             resemblance_list = [ChildResemblance.DAD.value] * generation_count
         else: # ChildResemblance.BOTH
             resemblance_list = [random.choice([ChildResemblance.MOM.value, ChildResemblance.DAD.value]) for a in range(generation_count)]
-        
+
+
         feature_details = await child_prompt_enhancer.get_enhanced_child_features(
-            parent_composite_url=parent_front_url,
+            parent_composite_url=mom_front_dad_front_url,
             num_variations=generation_count,
             child_age=self.gen_data["child_age"],
             child_gender=self.gen_data["child_gender"],
@@ -60,7 +61,8 @@ class ChildGenerationPipeline(BasePipeline):
             self.log.error("Child prompt enhancer failed. Cannot proceed with generation.")
             raise RuntimeError("Failed to generate child prompts.")
 
-        completed_prompts = []
+        completed_prompts: List[str] = []
+        image_reference_list: List[str] = []
         child_role = "daughter" if self.gen_data["child_gender"].lower() == "girl" else "son"
         parental_analysis = feature_details.parental_analysis
         
@@ -71,23 +73,25 @@ class ChildGenerationPipeline(BasePipeline):
                 ChildResemblance.DAD.value if resemblance_parent == ChildResemblance.MOM.value else ChildResemblance.MOM.value
             )
             
+            if resemblance_parent == ChildResemblance.MOM.value:
+                resemblance_block = parental_analysis.mother_resemblance_features
+            else:
+                resemblance_block = parental_analysis.father_resemblance_features
+
             random.seed(i)
             selected_hair_color = random.choice([parental_analysis.mother_hair_color, parental_analysis.father_hair_color])
             random.seed(i)
             selected_eye_color = random.choice([parental_analysis.mother_eye_color, parental_analysis.father_eye_color])
 
-            selected_hair_color = parental_analysis.father_hair_color
-            selected_eye_color = parental_analysis.father_eye_color
-
             if selected_hair_color == parental_analysis.mother_hair_color:
-                selected_hair_color = f"mothers' {selected_hair_color}, a few shades lighter than the mothers' hair."
+                selected_hair_color = f"5-10 shades lighter than the mothers' {selected_hair_color.lower()}"
             else:
-                selected_hair_color = f"fathers' {selected_hair_color}, a few shades lighter than the fathers' hair."
+                selected_hair_color = f"5-10 shades lighter than the fathers' {selected_hair_color.lower()}"
 
             if selected_eye_color == parental_analysis.mother_eye_color:
-                selected_eye_color = f"mothers' {selected_eye_color}."
+                selected_eye_color = f"mothers' {selected_eye_color.lower()}"
             else:
-                selected_eye_color = f"fathers' {selected_eye_color}."
+                selected_eye_color = f"fathers' {selected_eye_color.lower()}"
 
             final_prompt = PROMPT_CHILD_DEFAULT
             final_prompt = final_prompt.replace("{{CHILD_AGE}}", self.gen_data["child_age"])
@@ -95,38 +99,51 @@ class ChildGenerationPipeline(BasePipeline):
             final_prompt = final_prompt.replace("{{CHILD_ROLE}}", child_role)
             final_prompt = final_prompt.replace("{{PARENT_A}}", resemblance_parent)
             final_prompt = final_prompt.replace("{{PARENT_B}}", non_resemblance_parent)
+            final_prompt = final_prompt.replace("{{SKIN_TONE_ETHNICITY_DESCRIPTION}}", parental_analysis.child_skin_tone_and_ethnicity_description)
             final_prompt = final_prompt.replace("{{HAIRSTYLE_DESCRIPTION}}", creative_variation.hairstyle_description)
             final_prompt = final_prompt.replace("{{HAIR_COLOR_DESCRIPTION}}", selected_hair_color)
             final_prompt = final_prompt.replace("{{EYE_COLOR_DESCRIPTION}}", selected_eye_color)
+            final_prompt = final_prompt.replace("{{RESEMBLANCE_FEATURES_BLOCK}}", resemblance_block)
+            
             completed_prompts.append(final_prompt)
+
+            image_reference = mom_front_dad_side_url if resemblance_parent == ChildResemblance.MOM.value else dad_front_mom_side_url
+            image_reference_list.append(image_reference)
         
         request_payload = {
             "model": tier_config.model,
-            "image_urls": [ parent_front_url ],
+            "image_urls": image_reference_list[0],
             "generation_type": GenerationType.CHILD_GENERATION.value,
             "prompt": completed_prompts[0], # Base prompt for logging
             "temperature": 0.3,
         }
         
-        metadata = { "completed_prompts": completed_prompts }
+        metadata = { "completed_prompts": completed_prompts, 'image_reference_list': image_reference_list }
         return PipelineOutput(request_payload=request_payload, caption=None, metadata=metadata)
 
     async def prepare_data(self) -> PipelineOutput:
         """
         Prepares data for child generation. Checks for existing session data first.
         """
-        if "parent_front_uid" in self.gen_data:
+        if "parent_front_side_uid" in self.gen_data:
             self.log.info("Reusing existing parent composite for session action.")
-            parent_front_uid = self.gen_data["parent_front_uid"]
             parent_front_side_uid = self.gen_data["parent_front_side_uid"]
-            parent_front_url = image_cache.get_cached_image_proxy_url(parent_front_uid)
+            mom_front_dad_front_uid = self.gen_data["mom_front_dad_front_uid"]
+            mom_front_dad_side_uid = self.gen_data["mom_front_dad_side_uid"]
+            dad_front_mom_side_uid = self.gen_data["dad_front_mom_side_uid"]
+
+            mom_front_dad_front_url = image_cache.get_cached_image_proxy_url(mom_front_dad_front_uid)
+            mom_front_dad_side_url = image_cache.get_cached_image_proxy_url(mom_front_dad_side_uid)
+            dad_front_mom_side_url = image_cache.get_cached_image_proxy_url(dad_front_mom_side_uid)
             
             # Jump directly to the child-specific prompt generation
-            output = await self._prepare_child_prompts(parent_front_url)
+            output = await self._prepare_child_prompts(mom_front_dad_front_url, mom_front_dad_side_url, dad_front_mom_side_url)
             # Add the reused UID to metadata so the worker can find it for debug logs
-            output.metadata["parent_front_uid"] = parent_front_uid
+            output.metadata["mom_front_dad_front_uid"] = mom_front_dad_front_uid
+            output.metadata["mom_front_dad_side_uid"] = mom_front_dad_side_uid
+            output.metadata["dad_front_mom_side_uid"] = dad_front_mom_side_uid
             output.metadata["parent_front_side_uid"] = parent_front_side_uid
-            output.metadata["processed_uids"] = [ parent_front_uid ]
+            output.metadata["processed_uids"] = [ mom_front_dad_front_uid, mom_front_dad_side_uid, dad_front_mom_side_uid ]
             return output
 
         # --- This block runs only on the first generation in a session ---
@@ -190,16 +207,26 @@ class ChildGenerationPipeline(BasePipeline):
         mom_front_bytes, mom_side_bytes = photo_processing.split_and_stack_image_bytes(mom_profile_bytes)
         dad_front_bytes, dad_side_bytes = photo_processing.split_and_stack_image_bytes(dad_profile_bytes)
 
-        parent_front_bytes = photo_processing.stack_images_horizontally(mom_front_bytes, dad_front_bytes)
-        parent_front_uid = f"parent_front_{request_id_str}"
-        await image_cache.cache_image_bytes(parent_front_uid, parent_front_bytes, "image/jpeg", self.cache_pool)
-        parent_front_url = image_cache.get_cached_image_proxy_url(parent_front_uid)
+        mom_front_dad_front_bytes = photo_processing.stack_images_horizontally(mom_front_bytes, dad_front_bytes)
+        mom_front_dad_front_uid = f"mom_front_dad_front_{request_id_str}"
+        await image_cache.cache_image_bytes(mom_front_dad_front_uid, mom_front_dad_front_bytes, "image/jpeg", self.cache_pool)
+        mom_front_dad_front_url = image_cache.get_cached_image_proxy_url(mom_front_dad_front_uid)
+
+        mom_front_dad_side_bytes = photo_processing.stack_images_horizontally(mom_front_bytes, dad_side_bytes)
+        mom_front_dad_side_uid = f"mom_front_dad_side_{request_id_str}"
+        await image_cache.cache_image_bytes(mom_front_dad_side_uid, mom_front_dad_side_bytes, "image/jpeg", self.cache_pool)
+        mom_front_dad_side_url = image_cache.get_cached_image_proxy_url(mom_front_dad_side_uid)
+
+        dad_front_mom_side_bytes = photo_processing.stack_images_horizontally(dad_front_bytes, mom_side_bytes)
+        dad_front_mom_side_uid = f"dad_front_mom_side_{request_id_str}"
+        await image_cache.cache_image_bytes(dad_front_mom_side_uid, dad_front_mom_side_bytes, "image/jpeg", self.cache_pool)
+        dad_front_mom_side_url = image_cache.get_cached_image_proxy_url(dad_front_mom_side_uid)
 
         parent_front_side_bytes = photo_processing.stack_two_images(mom_profile_bytes, dad_profile_bytes)
         parent_front_side_uid = f"parent_front_side_{request_id_str}"
         await image_cache.cache_image_bytes(parent_front_side_uid, parent_front_side_bytes, "image/jpeg", self.cache_pool)
 
-        output = await self._prepare_child_prompts(parent_front_url)
+        output = await self._prepare_child_prompts(mom_front_dad_front_url, mom_front_dad_side_url, dad_front_mom_side_url)
         
         # Add all intermediate UIDs to metadata for debugging and session saving
         output.metadata.update({
@@ -207,9 +234,11 @@ class ChildGenerationPipeline(BasePipeline):
             "mom_profile_uid": mom_profile_uid,
             "dad_collage_uid": dad_collage_uid,
             "dad_profile_uid": dad_profile_uid,
-            "parent_front_uid": parent_front_uid,
+            "mom_front_dad_front_uid": mom_front_dad_front_uid,
+            "mom_front_dad_side_uid": mom_front_dad_side_uid,
+            "dad_front_mom_side_uid": dad_front_mom_side_uid,
             "parent_front_side_uid": parent_front_side_uid,
-            "processed_uids": [ parent_front_uid ]
+            "processed_uids": [ mom_front_dad_front_uid, mom_front_dad_side_uid, dad_front_mom_side_uid ]
         })
         
         return output

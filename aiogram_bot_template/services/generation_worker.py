@@ -106,7 +106,9 @@ async def run_generation_worker(
             session_uids = {
                 "mom_profile_uid": pipeline_output.metadata.get("mom_profile_uid"),
                 "dad_profile_uid": pipeline_output.metadata.get("dad_profile_uid"),
-                "parent_front_uid": pipeline_output.metadata.get("parent_front_uid"),
+                "mom_front_dad_front_uid": pipeline_output.metadata.get("mom_front_dad_front_uid"),
+                "mom_front_dad_side_uid": pipeline_output.metadata.get("mom_front_dad_side_uid"),
+                "dad_front_mom_side_uid": pipeline_output.metadata.get("dad_front_mom_side_uid"),
                 "parent_front_side_uid": pipeline_output.metadata.get("parent_front_side_uid"),
             }
             if all(session_uids.values()):
@@ -144,6 +146,7 @@ async def run_generation_worker(
             )
         
         completed_prompts = pipeline_output.metadata.get("completed_prompts", [])
+        image_reference_list = pipeline_output.metadata.get("image_reference_list", [])
 
         for i in range(generation_count):
             current_iteration = i + 1
@@ -160,8 +163,15 @@ async def run_generation_worker(
             else:
                 log_task.error("Completed prompt missing for this iteration.", gen_type=generation_type)
                 continue
+
+            if image_reference_list and i < len(image_reference_list):
+                image_reference = image_reference_list[i]
+            else:
+                log_task.error("Image reference missing for this iteration.", gen_type=generation_type)
+                continue
                 
             payload_override["prompt"] = final_prompt
+            payload_override["image_urls"] = [ image_reference ]
             payload_override["seed"] = random.randint(1, 1_000_000)
 
             log.info("Final prompt: ", final_prompt=payload_override["prompt"])

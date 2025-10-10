@@ -24,6 +24,7 @@ Glasses(if exist): raise key +12° or rotate head +8° toward key; add small war
 HARD NEGATIVES:
 • Do not render a collage/diptych/grid/split screen. Ignore the INPUT LAYOUT for composition — it is for identity locking only.
 • No face swap/averaging. No slimming, geometry changes, or skin smoothing that removes micro-texture.
+• Render hands naturally; strictly forbid finger interlacing/interlocking between individuals.
 • No heavy HDR, teal-orange overgrade, strong vignette, or visible brand logos/signage.
 • No under-rim or nose-pad shadows on faces; no frame-cast shadows across eyes.
 • Identity overrides style in every conflict.

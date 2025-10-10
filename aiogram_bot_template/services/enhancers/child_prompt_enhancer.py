@@ -15,11 +15,23 @@ logger = structlog.get_logger(__name__)
 # --- Pydantic Models for Structured LLM Output ---
 
 class ParentalFeatureAnalysis(BaseModel):
-    """Stores the analyzed hair and eye color for both parents."""
+    """Stores the analyzed hair, eye color, skin tone, and ethnicity for both parents and the derived child."""
     mother_hair_color: str = Field(..., description="A detailed, descriptive string of the mother's hair color.")
-    mother_eye_color: str = Field(..., description="A detailed, descriptive string of the mother's eye color.")
+    mother_eye_color: str = Field(..., description="A detailed, descriptive string of the mother's biological eye color. Must not mention glasses.")
     father_hair_color: str = Field(..., description="A detailed, descriptive string of the father's hair color.")
-    father_eye_color: str = Field(..., description="A detailed, descriptive string of the father's eye color.")
+    father_eye_color: str = Field(..., description="A detailed, descriptive string of the father's biological eye color. Must not mention glasses.")
+    child_skin_tone_and_ethnicity_description: str = Field(
+        ...,
+        description="A detailed, descriptive string describing a plausible genetic blend of the parents' skin tones and undertones. This field must NOT mention hair or eye color or facial traits."
+    )
+    mother_resemblance_features: str = Field(
+        ...,
+        description="A detailed, prescriptive paragraph on how to clone the mother's key facial features for the child, while applying age-appropriate scaling. Should be 70-100 words. Ignore glasses, reconstruct true facial geometry."
+    )
+    father_resemblance_features: str = Field(
+        ...,
+        description="A detailed, prescriptive paragraph on how to clone the father's key facial features for the child, while applying age-appropriate scaling. Should be 70-100 words. Ignore glasses, reconstruct true facial geometry."
+    )
 
 class ChildCreativeVariation(BaseModel):
     """Stores the creative, non-pigmentation features for one child variation."""
@@ -33,34 +45,37 @@ class ChildFeatureDetails(BaseModel):
 
 # --- System Prompt for the LLM ---
 
+# --- UPDATED: Enhanced system prompt with PART 3 for generating universal resemblance blocks ---
 _CHILD_FEATURE_SYSTEM_PROMPT = """
-You are an expert AI geneticist and character artist. Your mission is to analyze a 4-panel reference image of two parents and generate a structured JSON object containing a detailed analysis of the parents and creative variations for their child.
+You are an expert AI geneticist and character artist. Your mission is to analyze a 2-panel reference image of two parents and generate a structured JSON object containing a detailed analysis of the parents and creative variations for their child.
 
 **INPUTS YOU WILL RECEIVE:**
 - A 2-panel image: left is the Mother, right is the Father.
 - Parameters: child's age, gender, and the number of child variations needed.
 
 **GOAL:**
-Produce a single, valid JSON object that strictly adheres to the schema. The object has two main parts: `parental_analysis` and `child_variations`.
+Produce a single, valid JSON object that strictly adheres to the schema. The object has three main parts you must generate.
 
-**PART 1: `parental_analysis` (Strict Observation)**
+**PART 1: `parental_analysis` (Strict Observation & Genetic Blending)**
 - Meticulously analyze the Mother's and Father's photos.
 - For `mother_hair_color`, `mother_eye_color`, `father_hair_color`, and `father_eye_color`, provide a precise and descriptive string.
-- Do NOT invent or infer. If eyes are closed, make a best-guess based on other images or ethnicity cues.
-- **Good description:** "deep chocolate brown," "vibrant auburn red," "icy blue with a gray limbal ring."
-- **Bad description:** "brown," "red," "blue."
+    - **For eye color:** Focus ONLY on the biological color of the iris (e.g., 'deep chocolate brown', 'icy blue'). **Strictly forbid** any mention of glasses, reflections, or contact lenses.
+    - If eyes are closed, make a best-guess based on other images or ethnicity cues.
+- For `child_skin_tone_and_ethnicity_description`, write a single, descriptive paragraph of 30-60 words focusing ONLY on a plausible genetic blend of skin and ancestry.
+    - **STRICTLY FORBIDDEN:** Do NOT mention hair color or eye color in this description.
 
 **PART 2: `child_variations` (Creative Generation)**
 - Generate a list containing the requested number of unique creative variations for the child.
 - **`hairstyle_description`:**
     - Do **NOT** mention hair color. Focus only on style, texture, and cut.
     - Ensure the style is unique for each variation and is appropriate for the child's age and gender.
-- **`inherited_features_highlight`:**
-    - This is a crucial creative task. For each variation, write a single, concise paragraph.
-    - Analyze **both parents** and select **3-5 specific, visually distinct, heritable traits.**
-    - Explicitly state which parent each trait comes from. Focus on what makes them unique.
-    - **Good examples:** nose bridge shape, specific eye shape (e.g., almond, deep-set), chin definition (e.g., pointed, square), eyebrow arch, unique freckle patterns, distinctive lip shape (e.g., sharp Cupid's bow).
-    - **Example Output for this field:** "The child should clearly inherit the Mother's deep-set, almond-shaped eyes and her pattern of light freckles across the nose. From the Father, the child should take the distinctively straight bridge of his nose and his more defined, slightly squared jawline."
+
+**PART 3: Resemblance Feature Blocks (High-Fidelity Cloning Instructions)**
+- For `mother_resemblance_features` and `father_resemblance_features`, write a dense, prescriptive paragraph (70-100 words each) detailing exactly which features to clone from that parent onto the child's face.
+- **Crucially**, you must instruct the model to apply **age-appropriate scaling** to these features (e.g., slightly shorter lower facial third, softer jaw angle, rounder chin for a 6-year-old).
+- Analyze the specific parent and write instructions to clone their **periorbital complex (eye shape, color, brows), nose structure (bridge, tip, width), mouth (philtrum, lip shape), and jawline/chin structure**.
+- Explicitly mention preserving natural asymmetries.
+- The goal is to create a universal set of instructions based on the provided image, not to use generic examples.
 
 **OUTPUT FORMAT:**
 - Respond with **JSON ONLY**. No extra text, explanations, or markdown.

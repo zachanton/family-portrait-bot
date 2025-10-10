@@ -99,12 +99,15 @@ class PairPhotoPipeline(BasePipeline):
         # --- Session Reuse Logic ---
         if "parent_front_side_uid" in self.gen_data:
             self.log.info("Reusing existing parent composite for session action.")
-            parent_front_uid = self.gen_data["parent_front_uid"]
             parent_front_side_uid = self.gen_data["parent_front_side_uid"]
-            parent_front_side_url = image_cache.get_cached_image_proxy_url(parent_front_side_uid)
+            mom_front_dad_front_uid = self.gen_data["mom_front_dad_front_uid"]
+            mom_front_dad_side_uid = self.gen_data["mom_front_dad_side_uid"]
+            dad_front_mom_side_uid = self.gen_data["dad_front_mom_side_uid"]
             
             output = await self._prepare_styled_pair_prompts(parent_front_side_url, selected_style_id)
-            output.metadata["parent_front_uid"] = parent_front_uid
+            output.metadata["mom_front_dad_front_uid"] = mom_front_dad_front_uid
+            output.metadata["mom_front_dad_side_uid"] = mom_front_dad_side_uid
+            output.metadata["dad_front_mom_side_uid"] = dad_front_mom_side_uid
             output.metadata["parent_front_side_uid"] = parent_front_side_uid
             output.metadata["processed_uids"] = [ parent_front_side_uid ]
             return output
@@ -170,10 +173,20 @@ class PairPhotoPipeline(BasePipeline):
         dad_profile_uid = f"dad_profile_{request_id_str}"
         await image_cache.cache_image_bytes(dad_profile_uid, dad_profile_bytes, "image/jpeg", self.cache_pool)
 
-        parent_front_bytes = photo_processing.stack_two_images_hor(mom_front_bytes, dad_front_bytes)
-        parent_front_uid = f"parent_front_{request_id_str}"
-        await image_cache.cache_image_bytes(parent_front_uid, parent_front_bytes, "image/jpeg", self.cache_pool)
-        parent_front_url = image_cache.get_cached_image_proxy_url(parent_front_uid)
+        mom_front_dad_front_bytes = photo_processing.stack_images_horizontally(mom_front_bytes, dad_front_bytes)
+        mom_front_dad_front_uid = f"mom_front_dad_front_{request_id_str}"
+        await image_cache.cache_image_bytes(mom_front_dad_front_uid, mom_front_dad_front_bytes, "image/jpeg", self.cache_pool)
+        mom_front_dad_front_url = image_cache.get_cached_image_proxy_url(mom_front_dad_front_uid)
+
+        mom_front_dad_side_bytes = photo_processing.stack_images_horizontally(mom_front_bytes, dad_side_bytes)
+        mom_front_dad_side_uid = f"mom_front_dad_side_{request_id_str}"
+        await image_cache.cache_image_bytes(mom_front_dad_side_uid, mom_front_dad_side_bytes, "image/jpeg", self.cache_pool)
+        mom_front_dad_side_url = image_cache.get_cached_image_proxy_url(mom_front_dad_side_uid)
+
+        dad_front_mom_side_bytes = photo_processing.stack_images_horizontally(dad_front_bytes, mom_side_bytes)
+        dad_front_mom_side_uid = f"dad_front_mom_side_{request_id_str}"
+        await image_cache.cache_image_bytes(dad_front_mom_side_uid, dad_front_mom_side_bytes, "image/jpeg", self.cache_pool)
+        dad_front_mom_side_url = image_cache.get_cached_image_proxy_url(dad_front_mom_side_uid)
 
         parent_front_side_bytes = photo_processing.stack_two_images(mom_profile_bytes, dad_profile_bytes)
         parent_front_side_uid = f"parent_front_side_{request_id_str}"
@@ -187,7 +200,9 @@ class PairPhotoPipeline(BasePipeline):
             "mom_profile_uid": mom_profile_uid,
             "dad_collage_uid": dad_collage_uid,
             "dad_profile_uid": dad_profile_uid,
-            "parent_front_uid": parent_front_uid,
+            "mom_front_dad_front_uid": mom_front_dad_front_uid,
+            "mom_front_dad_side_uid": mom_front_dad_side_uid,
+            "dad_front_mom_side_uid": dad_front_mom_side_uid,
             "parent_front_side_uid": parent_front_side_uid,
             "processed_uids": [ parent_front_side_uid ]
         })
