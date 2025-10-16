@@ -231,7 +231,7 @@ async def process_photo_batch(
             best_photos = await photo_manager.sort_and_filter_by_identity(photos_with_bytes, target_count=MIN_PHOTOS_PER_PARENT)
             
             best_photos_bytes = [p['bytes'] for p in best_photos]
-            collage_bytes = await asyncio.to_thread(photo_processing.create_portrait_collage_from_bytes, best_photos_bytes)
+            collage_bytes = await photo_manager.create_portrait_collage(best_photos_bytes)
             
             collage_uid = f"collage_{role_str}_proc_{request_id}"
             await image_cache.cache_image_bytes(collage_uid, collage_bytes, "image/jpeg", cache_pool)

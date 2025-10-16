@@ -11,6 +11,7 @@ from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.services import image_generation_service as ai_service
 from aiogram_bot_template.services.clients import factory as ai_client_factory
 from aiogram_bot_template.data.constants import GenerationType
+from aiogram_bot_template.services.photo_processing_manager import PhotoProcessingManager
 
 
 class PipelineOutput(BaseModel):
@@ -30,12 +31,14 @@ class BasePipeline(ABC):
         log: structlog.typing.FilteringBoundLogger,
         update_status_func: callable,
         cache_pool: Redis,
+        photo_manager: PhotoProcessingManager,
     ) -> None:
         self.bot = bot
         self.gen_data = gen_data
         self.log = log
         self.update_status_func = update_status_func
         self.cache_pool = cache_pool
+        self.photo_manager = photo_manager
 
     @abstractmethod
     async def prepare_data(self) -> PipelineOutput:

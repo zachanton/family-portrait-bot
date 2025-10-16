@@ -279,12 +279,6 @@ def _analyze_and_process_one_photo(
     return PhotoAnalysisResult((processed_bytes, float(final_score), file_unique_id, file_id))
 
 
-async def select_best_photos_and_process(
-    photo_inputs: List[Tuple[bytes, str, str]],
-) -> Optional[List[Tuple[str, str, bytes]]]:
-    """Async wrapper for the synchronous processing function."""
-    return await asyncio.to_thread(select_best_photos_and_process_sync, photo_inputs)
-
 def select_best_photos_and_process_sync(
     photo_inputs: List[Tuple[bytes, str, str]],
 ) -> Optional[List[Tuple[str, str, bytes]]]:
@@ -327,7 +321,10 @@ def select_best_photos_and_process_sync(
 # --- Robust Identity Centroid and Sorting Logic ---
 
 def _extract_face_features_sync(img_bytes: bytes) -> Optional[dict]:
-    """Synchronous version of _extract_face_features."""
+    """
+    Synchronous version of face feature extraction.
+    This function is designed to be run in a worker process.
+    """
     key = _sha1_bytes(img_bytes)
     if (cached := _EMB_CACHE.get(key)) is not None: return cached
     app = _get_face_analysis_app()
@@ -342,10 +339,6 @@ def _extract_face_features_sync(img_bytes: bytes) -> Optional[dict]:
               "det_score": float(best_face.det_score), "image_sha1": key}
     _EMB_CACHE.put(key, result)
     return result
-
-async def _extract_face_features(img_bytes: bytes) -> Optional[dict]:
-    """Async wrapper for the synchronous feature extraction."""
-    return await asyncio.to_thread(_extract_face_features_sync, img_bytes)
 
 def _cosine_sim_matrix(embs: np.ndarray) -> np.ndarray: return embs @ embs.T
 
@@ -405,10 +398,6 @@ def _build_robust_centroid(embs: np.ndarray) -> np.ndarray:
     log.info("Robust centroid refinement steps")
     return _geometric_median(final_inliers)
 
-async def calculate_identity_centroid(image_bytes_list: List[bytes]) -> Optional[np.ndarray]:
-    """Async wrapper for the synchronous centroid calculation."""
-    return await asyncio.to_thread(calculate_identity_centroid_sync, image_bytes_list)
-
 def calculate_identity_centroid_sync(image_bytes_list: List[bytes]) -> Optional[np.ndarray]:
     """
     Synchronous version of identity centroid calculation for worker processes.
@@ -437,12 +426,6 @@ def calculate_identity_centroid_sync(image_bytes_list: List[bytes]) -> Optional[
 
     return _build_robust_centroid(inlier_embs)
 
-
-async def sort_and_filter_by_identity(
-    photos_data: List[dict], target_count: int
-) -> List[dict]:
-    """Async wrapper for the synchronous sorting/filtering function."""
-    return await asyncio.to_thread(sort_and_filter_by_identity_sync, photos_data, target_count)
 
 def sort_and_filter_by_identity_sync(
     photos_data: List[dict], target_count: int

@@ -11,6 +11,7 @@ from aiogram_bot_template.services import similarity_scorer, photo_processing, i
 from aiogram_bot_template.services.clients import factory as client_factory
 from aiogram_bot_template.services.enhancers import identity_feedback_enhancer
 from aiogram_bot_template.services.enhancers.identity_feedback_enhancer import IdentityFeedbackResponse
+from aiogram_bot_template.services.photo_processing_manager import PhotoProcessingManager
 
 
 logger = structlog.get_logger(__name__)
@@ -170,7 +171,8 @@ async def _get_identity_feedback_and_score(
     reference_url: str,
     generated_bytes: bytes,
     cache_pool,
-    log: structlog.typing.FilteringBoundLogger
+    log: structlog.typing.FilteringBoundLogger,
+    photo_manager: PhotoProcessingManager
 ) -> tuple[float | None, IdentityFeedbackResponse | None]:
     """
     Runs the identity feedback enhancer and returns the score and full response.
@@ -208,11 +210,15 @@ async def get_parent_visual_representation(
     role: str = "mother",
     identity_centroid: Optional[np.ndarray] = None,
     cache_pool: Optional[object] = None,
+    photo_manager: Optional[PhotoProcessingManager] = None,
 ) -> Optional[bytes]:
     """
     Generates a consolidated visual representation (front and side view) of a parent,
     iteratively refining it to meet a similarity threshold.
     """
+    if not photo_manager:
+        raise ValueError("PhotoProcessingManager is required for parent visual representation.")
+
     visual_config = settings.visual_enhancer
     text_config = settings.text_enhancer
 
@@ -308,15 +314,15 @@ async def get_parent_visual_representation(
             # --- Evaluate the generated image ---
             embedding_score = 0.0
             if identity_centroid is not None:
-                front_bytes, _ = photo_processing.split_and_stack_image_bytes(current_candidate_bytes)
+                front_bytes, _ = await photo_manager.split_and_stack_image(current_candidate_bytes)
                 if front_bytes:
-                    features = await similarity_scorer._extract_face_features(front_bytes)
+                    features = await photo_manager.extract_face_features(front_bytes)
                     if features and features.get("embedding") is not None:
                         generated_embedding = features["embedding"]
                         embedding_score = float(np.dot(generated_embedding, identity_centroid))
 
             llm_score, feedback_for_next_iteration = await _get_identity_feedback_and_score(
-                image_url, current_candidate_bytes, cache_pool, attempt_log
+                image_url, current_candidate_bytes, cache_pool, attempt_log, photo_manager
             )
             llm_score = llm_score or 0.0
 

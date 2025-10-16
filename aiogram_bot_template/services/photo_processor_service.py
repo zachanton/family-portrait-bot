@@ -68,3 +68,40 @@ def sort_and_filter_by_identity_worker(
         A list of 'target_count' photos, sorted by identity similarity.
     """
     return similarity_scorer.sort_and_filter_by_identity_sync(photos_data, target_count)
+
+# --- NEW WORKER FUNCTIONS ---
+
+def extract_face_features_worker(image_bytes: bytes) -> Optional[dict]:
+    """
+    Worker function to extract face features from a single image's bytes.
+    Designed to run in a separate process.
+    """
+    return similarity_scorer._extract_face_features_sync(image_bytes)
+
+def create_portrait_collage_worker(tiles_bytes: List[bytes]) -> Optional[bytes]:
+    """
+    Worker function to create a 2x2 collage from processed tiles.
+    Designed to run in a separate process.
+    """
+    return photo_processing.create_portrait_collage_from_bytes(tiles_bytes)
+
+def split_and_stack_image_worker(image_bytes: bytes) -> tuple[bytes | None, bytes | None]:
+    """
+    Worker function to split a composite image into its front and side views.
+    Designed to run in a separate process.
+    """
+    return photo_processing.split_and_stack_image_bytes(image_bytes)
+
+def stack_images_horizontally_worker(img_left_bytes: bytes, img_right_bytes: bytes) -> Optional[bytes]:
+    """
+    Worker function to stack two images horizontally.
+    Designed to run in a separate process.
+    """
+    return photo_processing.stack_images_horizontally(img_left_bytes, img_right_bytes)
+
+def stack_two_images_worker(img_top_bytes: bytes, img_bottom_bytes: bytes) -> Optional[bytes]:
+    """
+    Worker function to stack two images vertically.
+    Designed to run in a separate process.
+    """
+    return photo_processing.stack_two_images(img_top_bytes, img_bottom_bytes)

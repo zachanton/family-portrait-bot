@@ -28,7 +28,7 @@ class PhotoProcessingManager:
         without blocking the event loop.
         """
         loop = asyncio.get_running_loop()
-        # Use to_thread to run the blocking get() call in a separate thread
+        # Use run_in_executor to run the blocking get() call in a separate thread
         return await loop.run_in_executor(
             None, lambda: self._pool.apply(func, args=args)
         )
@@ -92,4 +92,73 @@ class PhotoProcessingManager:
             photo_processor_service.sort_and_filter_by_identity_worker,
             photos_data,
             target_count
+        )
+
+    async def extract_face_features(self, image_bytes: bytes) -> Optional[dict]:
+        """
+        Offloads face feature extraction for a single image to a worker process.
+
+        Args:
+            image_bytes: The byte string of the image.
+
+        Returns:
+            A dictionary containing the face features, or None.
+        """
+        from . import photo_processor_service
+        return await self._run_in_worker(
+            photo_processor_service.extract_face_features_worker,
+            image_bytes
+        )
+
+    async def create_portrait_collage(self, tiles_bytes: List[bytes]) -> Optional[bytes]:
+        """
+        Offloads the creation of a 2x2 collage to a worker process.
+
+        Args:
+            tiles_bytes: A list of 4 byte strings for the pre-processed tiles.
+
+        Returns:
+            The final collage image as JPEG bytes, or None.
+        """
+        logger.info("Offloading collage creation to worker.")
+        from . import photo_processor_service
+        return await self._run_in_worker(
+            photo_processor_service.create_portrait_collage_worker,
+            tiles_bytes
+        )
+
+    async def split_and_stack_image(self, image_bytes: bytes) -> tuple[bytes | None, bytes | None]:
+        """
+        Offloads splitting a composite image to a worker process.
+
+        Args:
+            image_bytes: The byte string of the composite image.
+
+        Returns:
+            A tuple containing the bytes of the front and side views.
+        """
+        from . import photo_processor_service
+        return await self._run_in_worker(
+            photo_processor_service.split_and_stack_image_worker,
+            image_bytes
+        )
+
+    async def stack_images_horizontally(self, img_left_bytes: bytes, img_right_bytes: bytes) -> Optional[bytes]:
+        """
+        Offloads horizontal image stacking to a worker process.
+        """
+        from . import photo_processor_service
+        return await self._run_in_worker(
+            photo_processor_service.stack_images_horizontally_worker,
+            img_left_bytes, img_right_bytes
+        )
+
+    async def stack_two_images(self, img_top_bytes: bytes, img_bottom_bytes: bytes) -> Optional[bytes]:
+        """
+        Offloads vertical image stacking to a worker process.
+        """
+        from . import photo_processor_service
+        return await self._run_in_worker(
+            photo_processor_service.stack_two_images_worker,
+            img_top_bytes, img_bottom_bytes
         )

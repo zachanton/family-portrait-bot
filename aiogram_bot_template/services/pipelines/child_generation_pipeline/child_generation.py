@@ -29,8 +29,7 @@ class ChildGenerationPipeline(BasePipeline):
     """
     
     def __init__(self, *args, photo_manager: PhotoProcessingManager, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.photo_manager = photo_manager
+        super().__init__(*args, photo_manager=photo_manager, **kwargs)
 
     async def _prepare_child_prompts(self, mom_front_dad_front_url: str, mom_front_dad_side_url: str, dad_front_mom_side_url: str) -> PipelineOutput:
         """
@@ -189,10 +188,10 @@ class ChildGenerationPipeline(BasePipeline):
 
         visual_tasks = [
             parent_visual_enhancer.get_parent_visual_representation(
-                mom_collage_url, role="mother", identity_centroid=mom_centroid, cache_pool=self.cache_pool
+                mom_collage_url, role="mother", identity_centroid=mom_centroid, cache_pool=self.cache_pool, photo_manager=self.photo_manager
             ),
             parent_visual_enhancer.get_parent_visual_representation(
-                dad_collage_url, role="father", identity_centroid=dad_centroid, cache_pool=self.cache_pool
+                dad_collage_url, role="father", identity_centroid=dad_centroid, cache_pool=self.cache_pool, photo_manager=self.photo_manager
             ),
         ]
         mom_profile_bytes, dad_profile_bytes = await asyncio.gather(*visual_tasks)
@@ -204,25 +203,25 @@ class ChildGenerationPipeline(BasePipeline):
         dad_profile_uid = f"dad_profile_{request_id_str}"
         await image_cache.cache_image_bytes(dad_profile_uid, dad_profile_bytes, "image/jpeg", self.cache_pool)
 
-        mom_front_bytes, mom_side_bytes = photo_processing.split_and_stack_image_bytes(mom_profile_bytes)
-        dad_front_bytes, dad_side_bytes = photo_processing.split_and_stack_image_bytes(dad_profile_bytes)
+        mom_front_bytes, mom_side_bytes = await self.photo_manager.split_and_stack_image(mom_profile_bytes)
+        dad_front_bytes, dad_side_bytes = await self.photo_manager.split_and_stack_image(dad_profile_bytes)
 
-        mom_front_dad_front_bytes = photo_processing.stack_images_horizontally(mom_front_bytes, dad_front_bytes)
+        mom_front_dad_front_bytes = await self.photo_manager.stack_images_horizontally(mom_front_bytes, dad_front_bytes)
         mom_front_dad_front_uid = f"mom_front_dad_front_{request_id_str}"
         await image_cache.cache_image_bytes(mom_front_dad_front_uid, mom_front_dad_front_bytes, "image/jpeg", self.cache_pool)
         mom_front_dad_front_url = image_cache.get_cached_image_proxy_url(mom_front_dad_front_uid)
 
-        mom_front_dad_side_bytes = photo_processing.stack_images_horizontally(mom_front_bytes, dad_side_bytes)
+        mom_front_dad_side_bytes = await self.photo_manager.stack_images_horizontally(mom_front_bytes, dad_side_bytes)
         mom_front_dad_side_uid = f"mom_front_dad_side_{request_id_str}"
         await image_cache.cache_image_bytes(mom_front_dad_side_uid, mom_front_dad_side_bytes, "image/jpeg", self.cache_pool)
         mom_front_dad_side_url = image_cache.get_cached_image_proxy_url(mom_front_dad_side_uid)
 
-        dad_front_mom_side_bytes = photo_processing.stack_images_horizontally(dad_front_bytes, mom_side_bytes)
+        dad_front_mom_side_bytes = await self.photo_manager.stack_images_horizontally(dad_front_bytes, mom_side_bytes)
         dad_front_mom_side_uid = f"dad_front_mom_side_{request_id_str}"
         await image_cache.cache_image_bytes(dad_front_mom_side_uid, dad_front_mom_side_bytes, "image/jpeg", self.cache_pool)
         dad_front_mom_side_url = image_cache.get_cached_image_proxy_url(dad_front_mom_side_uid)
 
-        parent_front_side_bytes = photo_processing.stack_two_images(mom_profile_bytes, dad_profile_bytes)
+        parent_front_side_bytes = await self.photo_manager.stack_two_images(mom_profile_bytes, dad_profile_bytes)
         parent_front_side_uid = f"parent_front_side_{request_id_str}"
         await image_cache.cache_image_bytes(parent_front_side_uid, parent_front_side_bytes, "image/jpeg", self.cache_pool)
 
