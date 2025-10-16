@@ -16,21 +16,13 @@ logger = structlog.get_logger(__name__)
 
 class ParentalFeatureAnalysis(BaseModel):
     """Stores the analyzed hair, eye color, skin tone, and ethnicity for both parents and the derived child."""
-    mother_hair_color: str = Field(..., description="A detailed, descriptive string of the mother's hair color.")
-    mother_eye_color: str = Field(..., description="A detailed, descriptive string of the mother's biological eye color. Must not mention glasses.")
-    father_hair_color: str = Field(..., description="A detailed, descriptive string of the father's hair color.")
-    father_eye_color: str = Field(..., description="A detailed, descriptive string of the father's biological eye color. Must not mention glasses.")
+    mother_hair_color: str = Field(..., description="A short, descriptive string of the mother's hair color. Must not mention hair style.")
+    mother_eye_color: str = Field(..., description="A short, descriptive string of the mother's biological eye color. Must not mention glasses.")
+    father_hair_color: str = Field(..., description="A short, descriptive string of the father's hair color. Must not mention hair style.")
+    father_eye_color: str = Field(..., description="A short, descriptive string of the father's biological eye color. Must not mention glasses.")
     child_skin_tone_and_ethnicity_description: str = Field(
         ...,
-        description="A detailed, descriptive string describing a plausible genetic blend of the parents' skin tones and undertones. This field must NOT mention hair or eye color or facial traits."
-    )
-    mother_resemblance_features: str = Field(
-        ...,
-        description="A detailed, prescriptive paragraph on how to clone the mother's key facial features for the child, while applying age-appropriate scaling. Should be 70-100 words. Ignore glasses, reconstruct true facial geometry."
-    )
-    father_resemblance_features: str = Field(
-        ...,
-        description="A detailed, prescriptive paragraph on how to clone the father's key facial features for the child, while applying age-appropriate scaling. Should be 70-100 words. Ignore glasses, reconstruct true facial geometry."
+        description="A short, descriptive string describing a plausible genetic blend of the parents' skin tones and undertones. This field must NOT mention hair or eye color or facial traits."
     )
 
 class ChildCreativeVariation(BaseModel):
@@ -69,13 +61,6 @@ Produce a single, valid JSON object that strictly adheres to the schema. The obj
 - **`hairstyle_description`:**
     - Do **NOT** mention hair color. Focus only on style, texture, and cut.
     - Ensure the style is unique for each variation and is appropriate for the child's age and gender.
-
-**PART 3: Resemblance Feature Blocks (High-Fidelity Cloning Instructions)**
-- For `mother_resemblance_features` and `father_resemblance_features`, write a dense, prescriptive paragraph (70-100 words each) detailing exactly which features to clone from that parent onto the child's face.
-- **Crucially**, you must instruct the model to apply **age-appropriate scaling** to these features (e.g., slightly shorter lower facial third, softer jaw angle, rounder chin for a 6-year-old).
-- Analyze the specific parent and write instructions to clone their **periorbital complex (eye shape, color, brows), nose structure (bridge, tip, width), mouth (philtrum, lip shape), and jawline/chin structure**.
-- Explicitly mention preserving natural asymmetries.
-- The goal is to create a universal set of instructions based on the provided image, not to use generic examples.
 
 **OUTPUT FORMAT:**
 - Respond with **JSON ONLY**. No extra text, explanations, or markdown.

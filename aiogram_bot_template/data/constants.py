@@ -26,8 +26,8 @@ class ChildGender(str, Enum):
 
 class ChildAge(str, Enum):
     INFANT = "2"
-    CHILD = "6"
-    PRETEEN = "10"
+    CHILD = "5"
+    PRETEEN = "9"
 
 class ChildResemblance(str, Enum):
     MOM = "Mother"

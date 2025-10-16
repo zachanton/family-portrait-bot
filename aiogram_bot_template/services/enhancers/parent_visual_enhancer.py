@@ -268,7 +268,7 @@ async def get_parent_visual_representation(
                 "prompt": "",
                 "image_urls": [],
                 "temperature": 0.1,
-                "aspect_ratio":'9:16',
+                "aspect_ratio":'5:4',
                 "role": role 
             }
 

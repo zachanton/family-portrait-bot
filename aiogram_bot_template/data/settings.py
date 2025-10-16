@@ -96,6 +96,8 @@ class Settings(BaseSettings):
     proxy: ProxyConfig
     api_urls: ApiUrls = Field(default_factory=ApiUrls)
 
+    google: GoogleConfig
+
     child_generation: GenerationConfig
     family_photo: GenerationConfig
     pair_photo: GenerationConfig

@@ -10,7 +10,8 @@ PRIORITY: IDENTITY > framing > style.
 IDENTITY — lock from the two views per person:
 • Use only these two photos per person to reconstruct 3D face + hairline.
 • Match: skull/jaw contour, nose shape & width, philtrum/lip volume, eye shape/spacing, eyebrow thickness/arch, hairline/part, ear shape/attachment.
-• Keep natural asymmetry, freckles/moles/pores. Keep glasses, earrings.
+• Keep natural asymmetry, freckles/moles/pores.
+• Strictly preserve prescription glasses from the reference. Keep existing prescription glasses; **do not add new ones if absent.**
 • Don’t change age/weight; don’t beautify; don’t smooth skin; don’t alter head-size ratio between people.
 
 FRAMING — {{STYLE_NAME}} “{{SCENE_NAME}}” (single frame)
@@ -18,15 +19,12 @@ FRAMING — {{STYLE_NAME}} “{{SCENE_NAME}}” (single frame)
 
 STYLE — {{STYLE_DEFINITION}}, {{SCENE_NAME}}
 {{STYLE_OPTIONS}}
-Glasses(if exist): raise key +12° or rotate head +8° toward key; add small warm bounce below lens line; optional on-axis soft fill −1 EV; allow pantoscopic tilt ~10°; micro-dodge under rim +0.15 EV (keep skin texture).
-
 
 HARD NEGATIVES:
 • Do not render a collage/diptych/grid/split screen. Ignore the INPUT LAYOUT for composition — it is for identity locking only.
 • No face swap/averaging. No slimming, geometry changes, or skin smoothing that removes micro-texture.
 • Render hands naturally; strictly forbid finger interlacing/interlocking between individuals.
 • No heavy HDR, teal-orange overgrade, strong vignette, or visible brand logos/signage.
-• No under-rim or nose-pad shadows on faces; no frame-cast shadows across eyes.
 • Identity overrides style in every conflict.
 
 GENERATION ORDER:

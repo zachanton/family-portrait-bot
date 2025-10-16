@@ -1,6 +1,6 @@
 # aiogram_bot_template/services/pipelines/pair_photo_pipeline/styles/golden_hour_meadow.py
 STYLE_NAME = "Golden Hour Meadow"
-STYLE_DEFINITION = "A warm, candid couple's portrait in a sunlit meadow during the golden hour."
+STYLE_DEFINITION = "A sunlit meadow during the golden hour."
 
 FRAMING_OPTIONS = {
   "Candid Embrace Close-Up": """Single, unbroken frame. Tight waist-up to chest-up crop, faces occupying significant frame area.

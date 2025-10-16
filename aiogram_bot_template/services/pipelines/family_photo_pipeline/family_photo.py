@@ -21,7 +21,7 @@ class FamilyPhotoPipeline(BasePipeline):
         if not selected_style_id:
             raise ValueError("Family photo style ID is missing from FSM data.")
 
-        await self.update_status_func(_("Preparing your family portrait... 👨‍👩‍👧"))
+        await self.update_status_func(_("Assembling the family for the portrait... 👨‍👩‍👧"))
         
         photos_collected = self.gen_data.get("photos_collected", [])
         if len(photos_collected) < 3:
@@ -48,8 +48,6 @@ class FamilyPhotoPipeline(BasePipeline):
 
         if not all([mother_bytes, father_bytes, child_bytes]):
             raise ValueError("Could not retrieve all necessary image bytes from cache.")
-
-        await self.update_status_func(_("Creating family composite for the AI... 🖼️"))
         
         request_id_str = self.gen_data.get('request_id', uuid.uuid4().hex)
         
@@ -81,6 +79,7 @@ class FamilyPhotoPipeline(BasePipeline):
         selected_scenes = random.choices(framing_keys, k=num_generations)
         
         completed_prompts = []
+        image_reference_list = []
         for scene_name in selected_scenes:
             framing_block = framing_options.get(scene_name, framing_options[framing_keys[0]])
             style_block = style_options.get(scene_name, style_options[framing_keys[0]])
@@ -92,6 +91,7 @@ class FamilyPhotoPipeline(BasePipeline):
             final_prompt = final_prompt.replace("{{FRAMING_OPTIONS}}", framing_block)
             final_prompt = final_prompt.replace("{{STYLE_OPTIONS}}", style_block)
             completed_prompts.append(final_prompt)
+            image_reference_list.append(composite_url)
 
         request_payload = {
             "model": tier_config.model,
@@ -104,6 +104,7 @@ class FamilyPhotoPipeline(BasePipeline):
         
         metadata = { 
             "processed_uids": [ composite_uid ],
+            "image_reference_list": image_reference_list,
             "completed_prompts": completed_prompts
         }
 

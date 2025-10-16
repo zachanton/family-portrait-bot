@@ -17,7 +17,7 @@ class StatusMessageManager:
         bot: Bot,
         chat_id: int,
         message_id: int,
-        min_duration: float = 2.0,
+        min_duration: float = 1.5,
     ) -> None:
         self.bot = bot
         self.chat_id = chat_id

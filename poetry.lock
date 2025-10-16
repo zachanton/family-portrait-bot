@@ -2313,14 +2313,14 @@ testing = ["pytest"]
 
 [[package]]
 name = "google-genai"
-version = "1.31.0"
+version = "1.44.0"
 description = "GenAI Python SDK"
 optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 files = [
-    {file = "google_genai-1.31.0-py3-none-any.whl", hash = "sha256:5c6959bcf862714e8ed0922db3aaf41885bacf6318751b3421bf1e459f78892f"},
-    {file = "google_genai-1.31.0.tar.gz", hash = "sha256:8572b47aa684357c3e5e10d290ec772c65414114939e3ad2955203e27cd2fcbc"},
+    {file = "google_genai-1.44.0-py3-none-any.whl", hash = "sha256:4732ffd56e5f7c89f2440e0baf9a78b91b01a2a22db1b451a60b4417b3bcfd74"},
+    {file = "google_genai-1.44.0.tar.gz", hash = "sha256:7df8c42505900714fea98ed0d03c06ed18323368ef9dceff74645631fd7a7650"},
 ]
 
 [package.dependencies]
@@ -2335,6 +2335,7 @@ websockets = ">=13.0.0,<15.1.0"
 
 [package.extras]
 aiohttp = ["aiohttp (<4.0.0)"]
+local-tokenizer = ["protobuf", "sentencepiece (>=0.2.0)"]
 
 [[package]]
 name = "google-resumable-media"

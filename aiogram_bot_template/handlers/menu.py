@@ -73,7 +73,7 @@ async def send_welcome_message(msg: Message, state: FSMContext, is_restart: bool
         )
     else:
         text = _(
-            "<b>Welcome! I can create a beautiful AI-powered portrait.</b>\n\n"
+            "👋 Welcome! I can create a beautiful AI-powered portrait.\n\n"
             "What would you like to do?"
         )
     await msg.answer(text, reply_markup=start_scenario_kb())

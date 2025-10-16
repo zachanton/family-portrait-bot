@@ -18,7 +18,7 @@ logger = structlog.get_logger(__name__)
 _ASSETS_DIR = Path(__file__).parent.parent.parent / "assets"/ "pair0"
 _MOCK_FAMILY_IMAGE_PATH = _ASSETS_DIR / "mock_family.jpg"
 _MOCK_PAIR_IMAGE_PATH = _ASSETS_DIR / "mock_pair.png"
-_MOCK_CHILD_IMAGE_PATH = _ASSETS_DIR / "mock_daughter.jpg"
+_MOCK_CHILD_IMAGE_PATH = _ASSETS_DIR / "mock_son1.png"
 
 _MOCK_MOM_VISUAL_IMAGE_PATH = _ASSETS_DIR / "mock_mom_front_side.png"
 _MOCK_DAD_VISUAL_IMAGE_PATH = _ASSETS_DIR / "mock_dad_front_side.png"

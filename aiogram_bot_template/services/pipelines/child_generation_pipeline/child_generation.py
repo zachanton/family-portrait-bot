@@ -66,27 +66,29 @@ class ChildGenerationPipeline(BasePipeline):
         child_role = "daughter" if self.gen_data["child_gender"].lower() == "girl" else "son"
         parental_analysis = feature_details.parental_analysis
         
+        hair_colors = { ChildResemblance.MOM.value: parental_analysis.mother_hair_color, ChildResemblance.DAD.value: parental_analysis.father_hair_color}
+        eye_colors = { ChildResemblance.MOM.value: parental_analysis.mother_eye_color, ChildResemblance.DAD.value: parental_analysis.father_eye_color}
         for i in range(generation_count):
             creative_variation = feature_details.child_variations[i]
             resemblance_parent = resemblance_list[i]
             non_resemblance_parent = (
                 ChildResemblance.DAD.value if resemblance_parent == ChildResemblance.MOM.value else ChildResemblance.MOM.value
             )
+
+            if random.random()<0.66:
+                selected_hair_color = hair_colors[resemblance_parent]
+            else:
+                selected_hair_color = hair_colors[non_resemblance_parent]
+
+            if random.random()<0.66:
+                selected_eye_color = eye_colors[resemblance_parent]
+            else:
+                selected_eye_color = eye_colors[non_resemblance_parent]
             
-            if resemblance_parent == ChildResemblance.MOM.value:
-                resemblance_block = parental_analysis.mother_resemblance_features
-            else:
-                resemblance_block = parental_analysis.father_resemblance_features
-
-            random.seed(i)
-            selected_hair_color = random.choice([parental_analysis.mother_hair_color, parental_analysis.father_hair_color])
-            random.seed(i)
-            selected_eye_color = random.choice([parental_analysis.mother_eye_color, parental_analysis.father_eye_color])
-
             if selected_hair_color == parental_analysis.mother_hair_color:
-                selected_hair_color = f"5-10 shades lighter than the mothers' {selected_hair_color.lower()}"
+                selected_hair_color = f"10 shades lighter than the mothers' {selected_hair_color.lower()}"
             else:
-                selected_hair_color = f"5-10 shades lighter than the fathers' {selected_hair_color.lower()}"
+                selected_hair_color = f"10 shades lighter than the fathers' {selected_hair_color.lower()}"
 
             if selected_eye_color == parental_analysis.mother_eye_color:
                 selected_eye_color = f"mothers' {selected_eye_color.lower()}"
@@ -103,7 +105,6 @@ class ChildGenerationPipeline(BasePipeline):
             final_prompt = final_prompt.replace("{{HAIRSTYLE_DESCRIPTION}}", creative_variation.hairstyle_description)
             final_prompt = final_prompt.replace("{{HAIR_COLOR_DESCRIPTION}}", selected_hair_color)
             final_prompt = final_prompt.replace("{{EYE_COLOR_DESCRIPTION}}", selected_eye_color)
-            final_prompt = final_prompt.replace("{{RESEMBLANCE_FEATURES_BLOCK}}", resemblance_block)
             
             completed_prompts.append(final_prompt)
 
@@ -115,7 +116,8 @@ class ChildGenerationPipeline(BasePipeline):
             "image_urls": image_reference_list[0],
             "generation_type": GenerationType.CHILD_GENERATION.value,
             "prompt": completed_prompts[0], # Base prompt for logging
-            "temperature": 0.3,
+            "temperature": 0.9,
+            "aspect_ratio":'9:16',
         }
         
         metadata = { "completed_prompts": completed_prompts, 'image_reference_list': image_reference_list }
@@ -169,8 +171,6 @@ class ChildGenerationPipeline(BasePipeline):
             similarity_scorer.calculate_identity_centroid(mother_bytes_list),
             similarity_scorer.calculate_identity_centroid(father_bytes_list)
         )
-
-        await self.update_status_func(_("Preparing parent portraits... 🖼️"))
         
         collage_tasks = [
             asyncio.to_thread(photo_processing.create_portrait_collage_from_bytes, mother_bytes_list[:4]),
@@ -187,7 +187,7 @@ class ChildGenerationPipeline(BasePipeline):
         await image_cache.cache_image_bytes(dad_collage_uid, dad_collage_bytes, "image/jpeg", self.cache_pool)
         dad_collage_url = image_cache.get_cached_image_proxy_url(dad_collage_uid)
 
-        await self.update_status_func(_("Creating visual representations of parents... 🧑‍🎨"))
+        await self.update_status_func(_("Creating visual identities for the AI... 🧑‍🎨"))
 
         visual_tasks = [
             parent_visual_enhancer.get_parent_visual_representation(

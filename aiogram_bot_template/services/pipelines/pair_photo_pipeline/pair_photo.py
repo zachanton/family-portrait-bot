@@ -56,6 +56,7 @@ class PairPhotoPipeline(BasePipeline):
         self.log.info("selected_scenes: ", selected_scenes=selected_scenes)      
 
         completed_prompts = []
+        image_reference_list = []
         for scene_name in selected_scenes:
             framing_block = framing_options.get(scene_name)
             style_block = style_options.get(scene_name)
@@ -76,6 +77,8 @@ class PairPhotoPipeline(BasePipeline):
             final_prompt = final_prompt.replace("{{STYLE_OPTIONS}}", style_block)
             completed_prompts.append(final_prompt)
 
+            image_reference_list.append(parent_front_side_url)
+
         request_payload = {
             "model": tier_config.model,
             "image_urls": [ parent_front_side_url ],
@@ -85,7 +88,7 @@ class PairPhotoPipeline(BasePipeline):
             "aspect_ratio": '9:16',
         }
 
-        metadata = {"completed_prompts": completed_prompts}
+        metadata = {"completed_prompts": completed_prompts, "image_reference_list": image_reference_list}
         return PipelineOutput(request_payload=request_payload, caption=None, metadata=metadata)
 
     async def prepare_data(self) -> PipelineOutput:
@@ -103,6 +106,8 @@ class PairPhotoPipeline(BasePipeline):
             mom_front_dad_front_uid = self.gen_data["mom_front_dad_front_uid"]
             mom_front_dad_side_uid = self.gen_data["mom_front_dad_side_uid"]
             dad_front_mom_side_uid = self.gen_data["dad_front_mom_side_uid"]
+
+            parent_front_side_url = image_cache.get_cached_image_proxy_url(parent_front_side_uid)
             
             output = await self._prepare_styled_pair_prompts(parent_front_side_url, selected_style_id)
             output.metadata["mom_front_dad_front_uid"] = mom_front_dad_front_uid
@@ -114,7 +119,7 @@ class PairPhotoPipeline(BasePipeline):
         
         # --- This block runs only on the first generation in a session ---
         self.log.info("No session data found. Performing full initial setup for pair photo.")
-        await self.update_status_func(_("Analyzing facial features... 🧬"))
+        await self.update_status_func(_("Analyzing your photos and preparing portraits... 🧬"))
 
         photos_collected = self.gen_data.get("photos_collected", [])
         mom_photos = [p for p in photos_collected if p.get("role") == ImageRole.MOTHER.value]
@@ -136,7 +141,6 @@ class PairPhotoPipeline(BasePipeline):
             similarity_scorer.calculate_identity_centroid(father_bytes_list)
         )
 
-        await self.update_status_func(_("Preparing portraits for the AI... 🖼️"))
 
         collage_tasks = [
             asyncio.to_thread(photo_processing.create_portrait_collage_from_bytes, mother_bytes_list[:4]),
@@ -153,7 +157,7 @@ class PairPhotoPipeline(BasePipeline):
         await image_cache.cache_image_bytes(dad_collage_uid, dad_collage_bytes, "image/jpeg", self.cache_pool)
         dad_collage_url = image_cache.get_cached_image_proxy_url(dad_collage_uid)
         
-        await self.update_status_func(_("Creating visual identities... 🧑‍🎨"))
+        await self.update_status_func(_("Creating unique visual identities for the AI... 🧑‍🎨"))
 
         visual_tasks = [
             parent_visual_enhancer.get_parent_visual_representation(
