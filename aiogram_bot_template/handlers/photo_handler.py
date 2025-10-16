@@ -15,12 +15,11 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram_bot_template.data.constants import GenerationType, ImageRole
 from aiogram_bot_template.db.db_api.storages import PostgresConnection
 from aiogram_bot_template.db.repo import generations as generations_repo
-from aiogram_bot_template.services import image_cache
+from aiogram_bot_template.services import image_cache, photo_processing
 from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.keyboards.inline.gender import gender_kb
 from aiogram_bot_template.services.pipelines.pair_photo_pipeline import styles as pair_styles
 from aiogram_bot_template.keyboards.inline.style_selection import get_style_selection_button_kb
-# --- NEW IMPORT ---
 from aiogram_bot_template.services.photo_processing_manager import PhotoProcessingManager
 
 router = Router(name="photo-handler")
@@ -95,25 +94,12 @@ async def proceed_to_style_selection(
     message: Message,
     state: FSMContext,
     bot: Bot,
-    db_pool: asyncpg.Pool,
     business_logger: structlog.typing.FilteringBoundLogger
 ) -> None:
     """
     After collecting photos for a pair portrait, proceeds to style selection.
+    This function NO LONGER interacts with the database.
     """
-    user_data = await state.get_data()
-    user_id = message.from_user.id
-    
-    photos = user_data.get("photos_collected", [])
-    source_images_dto = [(p["file_unique_id"], p["file_id"], p["role"]) for p in photos]
-    
-    db = PostgresConnection(db_pool, logger=business_logger)
-    draft = generations_repo.GenerationRequestDraft(
-        user_id=user_id, status="params_collected", source_images=source_images_dto
-    )
-    request_id = await generations_repo.create_generation_request(db, draft)
-    await state.update_data(request_id=request_id)
-    
     await state.set_state(Generation.choosing_pair_photo_style)
     
     sent_msg = await message.answer(
@@ -150,12 +136,14 @@ async def process_photo_batch(
     messages: List[Message], state: FSMContext, bot: Bot, db_pool: asyncpg.Pool, cache_pool: Redis, photo_manager: PhotoProcessingManager
 ):
     """
-    Handles processing a batch of photos, validation, and routing to the next step.
+    Handles processing a batch of photos, validation, collage creation, and routing to the next step.
     This now offloads heavy work to the PhotoProcessingManager.
     """
     message = messages[0]
-    log = structlog.get_logger(__name__).bind(user_id=message.from_user.id)
+    user_id = message.from_user.id
+    log = structlog.get_logger(__name__).bind(user_id=user_id)
     status_msg = await message.answer(_("Analyzing your photos... ⏳"))
+    db = PostgresConnection(db_pool, logger=log)
 
     try:
         uid_to_msg_id = {
@@ -174,9 +162,7 @@ async def process_photo_batch(
             await status_msg.edit_text(_("I couldn't process these photos. Please try sending them again."))
             return
         
-        # --- DELEGATION TO WORKER PROCESS ---
         processed_photos_info = await photo_manager.process_photo_batch(photo_inputs)
-        # --- END DELEGATION ---
         
         if not processed_photos_info:
             rejection_text = _(
@@ -228,20 +214,48 @@ async def process_photo_batch(
         
         if parent_to_sort:
             photos_list, role_str, state_flag = parent_to_sort
+            
+            request_id = data.get("request_id")
+            if not request_id:
+                draft = generations_repo.GenerationRequestDraft(
+                    user_id=user_id, status="photos_collected", source_images=[]
+                )
+                request_id = await generations_repo.create_generation_request(db, draft)
+                await state.update_data(request_id=request_id)
+                log.info("Created new GenerationRequest in DB.", request_id=request_id)
+
             bytes_tasks = [image_cache.get_cached_image_bytes(p['file_unique_id'], cache_pool) for p in photos_list]
             cached_results = await asyncio.gather(*bytes_tasks)
             photos_with_bytes = [{**photos_list[i], 'bytes': b} for i, (b, _) in enumerate(cached_results) if b]
             
-            # --- DELEGATION TO WORKER PROCESS ---
             best_photos = await photo_manager.sort_and_filter_by_identity(photos_with_bytes, target_count=MIN_PHOTOS_PER_PARENT)
-            # --- END DELEGATION ---
+            
+            best_photos_bytes = [p['bytes'] for p in best_photos]
+            collage_bytes = await asyncio.to_thread(photo_processing.create_portrait_collage_from_bytes, best_photos_bytes)
+            
+            collage_uid = f"collage_{role_str}_proc_{request_id}"
+            await image_cache.cache_image_bytes(collage_uid, collage_bytes, "image/jpeg", cache_pool)
+            
+            state_update_payload = {state_flag: True, f"{role_str}_collage_uid": collage_uid}
+            await state.update_data(**state_update_payload)
+            log.info("Created and cached parent collage.", role=role_str, collage_uid=collage_uid)
 
             for p in best_photos: p.pop('bytes', None)
             other_parent_photos = [p for p in photos_collected if p['role'] != role_str]
             updated_photos_collected = other_parent_photos + best_photos
             
-            await state.update_data(photos_collected=updated_photos_collected, **{state_flag: True})
+            await state.update_data(photos_collected=updated_photos_collected)
             log.info("Filtered and sorted photos for parent.", role=role_str, final_count=len(best_photos))
+
+            source_images_dto = [(p["file_unique_id"], p["file_id"], p["role"]) for p in best_photos]
+            sql_insert_image = """
+                INSERT INTO generation_source_images (request_id, file_unique_id, file_id, role)
+                VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING;
+            """
+            images_data = [(request_id, uid, fid, role) for uid, fid, role in source_images_dto]
+            await db.execute(sql_insert_image, images_data)
+            log.info("Saved parent source images to DB.", role=role_str, count=len(images_data))
+
 
         await status_msg.delete()
 
@@ -255,7 +269,7 @@ async def process_photo_batch(
             if generation_type == GenerationType.CHILD_GENERATION:
                 await proceed_to_child_params(message, state)
             elif generation_type == GenerationType.PAIR_PHOTO:
-                await proceed_to_style_selection(message, state, bot, db_pool, log)
+                await proceed_to_style_selection(message, state, bot, log)
             else:
                 log.error("Unhandled generation type after photo collection", type=generation_type)
                 await message.answer(_("An unexpected error occurred. Please /start over."))

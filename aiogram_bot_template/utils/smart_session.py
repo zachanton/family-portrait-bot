@@ -81,22 +81,6 @@ class StructLogAiogramAiohttpSessions(AiohttpSession):
 class SmartAiogramAiohttpSession(StructLogAiogramAiohttpSessions):
     MAX_RETRY_THRESHOLD: int = 6
 
-    async def _forward_log_message(self, bot: Bot, response: types.Message) -> None:
-        """Safely forwards a message to the log chat."""
-        # Make sure log_chat_id exists before using it
-        if not settings.bot.log_chat_id:
-            return
-
-        try:
-            await bot.forward_message(
-                chat_id=settings.bot.log_chat_id,
-                from_chat_id=response.chat.id,
-                message_id=response.message_id,
-                disable_notification=True,
-            )
-        except Exception:
-            self._logger.exception("Failed to forward response to log chat")
-
     async def make_request(
         self,
         bot: Bot,
@@ -118,14 +102,4 @@ class SmartAiogramAiohttpSession(StructLogAiogramAiohttpSessions):
             except Exception:
                 raise
             else:
-                # Check if logging is enabled and if the response is a message
-                if (
-                    settings.bot.log_chat_id
-                    and isinstance(response, types.Message)
-                    and response.chat.id != settings.bot.log_chat_id
-                    and (response.photo or response.document)
-                ):
-                    # Use create_task for background sending
-                    _ = asyncio.create_task(self._forward_log_message(bot, response))
-
                 return response

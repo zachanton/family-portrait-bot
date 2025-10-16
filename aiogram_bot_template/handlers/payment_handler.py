@@ -21,6 +21,8 @@ from aiogram_bot_template.db.repo import (
 )
 from aiogram_bot_template.services import generation_worker
 from aiogram_bot_template.states.user import Generation
+from aiogram_bot_template.services.photo_processing_manager import PhotoProcessingManager
+
 
 router = Router(name="payment-handler")
 
@@ -36,9 +38,7 @@ async def send_stars_invoice(
     """
     Sends a Telegram Stars invoice, dynamically getting the price based on the generation type.
     """
-    # --- DYNAMIC CONFIGURATION LOOKUP ---
     try:
-        # Gets the correct config section, e.g., settings.family_photo
         generation_config = getattr(settings, generation_type.value)
         tier_config = generation_config.tiers.get(quality)
     except (AttributeError, KeyError):
@@ -61,7 +61,7 @@ async def send_stars_invoice(
 
     sent_message = await msg.bot.send_invoice(
         chat_id=msg.chat.id,
-        title=_("🖼️ Portrait Generation"), # Generic title for all types
+        title=_("🖼️ Portrait Generation"),
         description=description,
         payload=payload,
         currency="XTR",
@@ -88,6 +88,7 @@ async def successful_payment(
     business_logger: structlog.typing.FilteringBoundLogger,
     bot: Bot,
     scheduler: aiojobs.Scheduler,
+    photo_manager: PhotoProcessingManager,
 ) -> None:
     """
     Handles a successful payment, logs it, and spawns the generation worker.
@@ -140,5 +141,6 @@ async def successful_payment(
             cache_pool=cache_pool,
             business_logger=business_logger,
             state=state,
+            photo_manager=photo_manager,
         )
     )

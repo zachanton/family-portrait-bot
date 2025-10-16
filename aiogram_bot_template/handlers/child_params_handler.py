@@ -66,8 +66,8 @@ async def process_resemblance_selection(
     business_logger: structlog.typing.FilteringBoundLogger,
 ) -> None:
     """
-    Finalizes parameter collection, creates a request in the DB with correct roles,
-    and proceeds to quality selection.
+    Finalizes parameter collection and proceeds to quality selection.
+    The generation_request is now created in the photo_handler.
     """
     await cb.answer()
     await state.update_data(child_resemblance=callback_data.resemblance)
@@ -75,23 +75,22 @@ async def process_resemblance_selection(
     user_data = await state.get_data()
     db = PostgresConnection(db_pool, logger=business_logger)
     user_id = cb.from_user.id
+    request_id = user_data.get("request_id")
 
-    photos = user_data.get("photos_collected", [])
-    source_images_dto = [
-        (p["file_unique_id"], p["file_id"], p["role"]) for p in photos
-    ]
-    
-    draft = generations_repo.GenerationRequestDraft(
-        user_id=user_id, status="params_collected", source_images=source_images_dto
-    )
-    request_id = await generations_repo.create_generation_request(db, draft)
+    # The request is already created, we just update its status
+    if request_id:
+        await generations_repo.update_generation_request_status(db, request_id, "params_collected")
+    else:
+        # This is a fallback, but ideally should not happen in the new flow
+        business_logger.error("request_id not found in state during resemblance selection.")
+        await cb.message.edit_text(_("An error occurred. Please /start over."))
+        await state.clear()
+        return
+
     await state.update_data(
-        request_id=request_id,
         generation_type=GenerationType.CHILD_GENERATION.value
     )
 
-    # --- UPDATED LOGIC ---
-    # Check for free trial (whitelist only) and live queue availability
     is_in_whitelist = user_id in settings.free_trial_whitelist
     has_used_queue = await users_repo.get_user_live_queue_status(db, user_id)
 

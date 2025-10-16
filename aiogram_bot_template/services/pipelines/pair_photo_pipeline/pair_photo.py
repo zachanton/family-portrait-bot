@@ -6,7 +6,6 @@ import numpy as np
 from aiogram.utils.i18n import gettext as _
 
 from aiogram_bot_template.services import image_cache, photo_processing
-# This import stays, as it has the sync versions we need now
 from aiogram_bot_template.services import similarity_scorer
 from aiogram_bot_template.services.enhancers import parent_visual_enhancer
 from aiogram_bot_template.data.settings import settings
@@ -14,7 +13,6 @@ from aiogram_bot_template.data.constants import GenerationType, ImageRole
 from ..base import BasePipeline, PipelineOutput
 from .pair_default import PROMPT_PAIR_DEFAULT
 from . import styles
-# --- NEW IMPORT ---
 from aiogram_bot_template.services.photo_processing_manager import PhotoProcessingManager
 
 
@@ -24,7 +22,6 @@ class PairPhotoPipeline(BasePipeline):
     Supports session reuse by checking for a pre-existing parent composite image.
     """
 
-    # --- ADD photo_manager to __init__ ---
     def __init__(self, *args, photo_manager: PhotoProcessingManager, **kwargs):
         super().__init__(*args, **kwargs)
         self.photo_manager = photo_manager
@@ -119,6 +116,9 @@ class PairPhotoPipeline(BasePipeline):
             output.metadata["dad_front_mom_side_uid"] = dad_front_mom_side_uid
             output.metadata["parent_front_side_uid"] = parent_front_side_uid
             output.metadata["processed_uids"] = [ parent_front_side_uid ]
+            # Also pass collage UIDs for session consistency
+            output.metadata["mother_collage_uid"] = self.gen_data.get("mother_collage_uid")
+            output.metadata["father_collage_uid"] = self.gen_data.get("father_collage_uid")
             return output
         
         self.log.info("No session data found. Performing full initial setup for pair photo.")
@@ -127,10 +127,19 @@ class PairPhotoPipeline(BasePipeline):
         photos_collected = self.gen_data.get("photos_collected", [])
         mom_photos = [p for p in photos_collected if p.get("role") == ImageRole.MOTHER.value]
         dad_photos = [p for p in photos_collected if p.get("role") == ImageRole.FATHER.value]
+        
+        # --- SIMPLIFIED: Get collage UIDs from state ---
+        mom_collage_uid = self.gen_data.get("mother_collage_uid")
+        dad_collage_uid = self.gen_data.get("father_collage_uid")
 
-        if not mom_photos or not dad_photos:
-            raise ValueError("Could not identify photos for both partners.")
-
+        if not mom_collage_uid or not dad_collage_uid:
+            raise ValueError("Could not find parent collage UIDs in state.")
+        
+        mom_collage_url = image_cache.get_cached_image_proxy_url(mom_collage_uid)
+        dad_collage_url = image_cache.get_cached_image_proxy_url(dad_collage_uid)
+        # --- END SIMPLIFICATION ---
+        
+        # Calculate centroids (still needed for visual enhancer)
         async def get_all_processed_bytes(photos):
             tasks = [image_cache.get_cached_image_bytes(p["file_unique_id"], self.cache_pool) for p in photos]
             results = await asyncio.gather(*tasks)
@@ -138,28 +147,11 @@ class PairPhotoPipeline(BasePipeline):
 
         mother_bytes_list = await get_all_processed_bytes(mom_photos)
         father_bytes_list = await get_all_processed_bytes(dad_photos)
-
-        # --- DELEGATION TO WORKER PROCESS ---
+        
         mom_centroid, dad_centroid = await asyncio.gather(
             self.photo_manager.calculate_identity_centroid(mother_bytes_list),
             self.photo_manager.calculate_identity_centroid(father_bytes_list)
         )
-        # --- END DELEGATION ---
-
-        collage_tasks = [
-            asyncio.to_thread(photo_processing.create_portrait_collage_from_bytes, mother_bytes_list[:4]),
-            asyncio.to_thread(photo_processing.create_portrait_collage_from_bytes, father_bytes_list[:4]),
-        ]
-        mom_collage_bytes, dad_collage_bytes = await asyncio.gather(*collage_tasks)
-
-        request_id_str = self.gen_data.get("request_id", uuid.uuid4().hex)
-        mom_collage_uid = f"collage_mom_proc_{request_id_str}"
-        await image_cache.cache_image_bytes(mom_collage_uid, mom_collage_bytes, "image/jpeg", self.cache_pool)
-        mom_collage_url = image_cache.get_cached_image_proxy_url(mom_collage_uid)
-
-        dad_collage_uid = f"collage_dad_proc_{request_id_str}"
-        await image_cache.cache_image_bytes(dad_collage_uid, dad_collage_bytes, "image/jpeg", self.cache_pool)
-        dad_collage_url = image_cache.get_cached_image_proxy_url(dad_collage_uid)
         
         await self.update_status_func(_("Creating unique visual identities for the AI... 🧑‍🎨"))
 
@@ -172,29 +164,28 @@ class PairPhotoPipeline(BasePipeline):
             ),
         ]
         mom_profile_bytes, dad_profile_bytes = await asyncio.gather(*visual_tasks)
-
-        mom_front_bytes, mom_side_bytes = photo_processing.split_and_stack_image_bytes(mom_profile_bytes)
-        dad_front_bytes, dad_side_bytes = photo_processing.split_and_stack_image_bytes(dad_profile_bytes)
+        
+        request_id_str = self.gen_data.get("request_id", uuid.uuid4().hex)
 
         mom_profile_uid = f"mom_profile_{request_id_str}"
         await image_cache.cache_image_bytes(mom_profile_uid, mom_profile_bytes, "image/jpeg", self.cache_pool)
         dad_profile_uid = f"dad_profile_{request_id_str}"
         await image_cache.cache_image_bytes(dad_profile_uid, dad_profile_bytes, "image/jpeg", self.cache_pool)
 
+        mom_front_bytes, mom_side_bytes = photo_processing.split_and_stack_image_bytes(mom_profile_bytes)
+        dad_front_bytes, dad_side_bytes = photo_processing.split_and_stack_image_bytes(dad_profile_bytes)
+
         mom_front_dad_front_bytes = photo_processing.stack_images_horizontally(mom_front_bytes, dad_front_bytes)
         mom_front_dad_front_uid = f"mom_front_dad_front_{request_id_str}"
         await image_cache.cache_image_bytes(mom_front_dad_front_uid, mom_front_dad_front_bytes, "image/jpeg", self.cache_pool)
-        mom_front_dad_front_url = image_cache.get_cached_image_proxy_url(mom_front_dad_front_uid)
 
         mom_front_dad_side_bytes = photo_processing.stack_images_horizontally(mom_front_bytes, dad_side_bytes)
         mom_front_dad_side_uid = f"mom_front_dad_side_{request_id_str}"
         await image_cache.cache_image_bytes(mom_front_dad_side_uid, mom_front_dad_side_bytes, "image/jpeg", self.cache_pool)
-        mom_front_dad_side_url = image_cache.get_cached_image_proxy_url(mom_front_dad_side_uid)
 
         dad_front_mom_side_bytes = photo_processing.stack_images_horizontally(dad_front_bytes, mom_side_bytes)
         dad_front_mom_side_uid = f"dad_front_mom_side_{request_id_str}"
         await image_cache.cache_image_bytes(dad_front_mom_side_uid, dad_front_mom_side_bytes, "image/jpeg", self.cache_pool)
-        dad_front_mom_side_url = image_cache.get_cached_image_proxy_url(dad_front_mom_side_uid)
 
         parent_front_side_bytes = photo_processing.stack_two_images(mom_profile_bytes, dad_profile_bytes)
         parent_front_side_uid = f"parent_front_side_{request_id_str}"
@@ -204,9 +195,9 @@ class PairPhotoPipeline(BasePipeline):
         output = await self._prepare_styled_pair_prompts(parent_front_side_url, selected_style_id)
         
         output.metadata.update({
-            "mom_collage_uid": mom_collage_uid,
-            "mom_profile_uid": mom_profile_uid,
+            "mother_collage_uid": mom_collage_uid,
             "dad_collage_uid": dad_collage_uid,
+            "mom_profile_uid": mom_profile_uid,
             "dad_profile_uid": dad_profile_uid,
             "mom_front_dad_front_uid": mom_front_dad_front_uid,
             "mom_front_dad_side_uid": mom_front_dad_side_uid,
