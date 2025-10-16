@@ -29,6 +29,9 @@ from aiogram_bot_template.services.pipelines.family_photo_pipeline.family_photo 
 from aiogram_bot_template.services.pipelines.pair_photo_pipeline.pair_photo import PairPhotoPipeline
 from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.utils.status_manager import StatusMessageManager
+# --- NEW IMPORT ---
+from aiogram_bot_template.services.photo_processing_manager import PhotoProcessingManager
+
 
 PIPELINE_MAP: dict[str, Type[BasePipeline]] = {
     GenerationType.CHILD_GENERATION.value: ChildGenerationPipeline,
@@ -63,6 +66,8 @@ async def run_generation_worker(
     business_logger: structlog.typing.FilteringBoundLogger,
     cache_pool: Redis,
     state: FSMContext,
+    # --- ADD photo_manager to arguments ---
+    photo_manager: PhotoProcessingManager,
 ) -> None:
     user_data = await state.get_data()
     request_id = user_data.get("request_id")
@@ -99,7 +104,10 @@ async def run_generation_worker(
 
         gen_data = {**user_data, **db_data, 'type': generation_type}
         
-        pipeline = pipeline_class(bot, gen_data, log, status.update, cache_pool)
+        # --- PASS photo_manager to the pipeline's constructor ---
+        pipeline = pipeline_class(
+            bot, gen_data, log, status.update, cache_pool, photo_manager=photo_manager
+        )
         pipeline_output = await pipeline.prepare_data()
 
         if "mom_profile_uid" not in user_data:
@@ -235,10 +243,8 @@ async def run_generation_worker(
         new_photo_ids = [m["message_id"] for m in sent_photo_messages]
         all_photo_ids = existing_photo_ids + new_photo_ids
         
-        # 1. Update state with message IDs
         await state.update_data(photo_message_ids=all_photo_ids)
         
-        # 2. Send the session actions message and store its ID
         session_actions_msg = await bot.send_message(
             chat_id, 
             _("✨ Your portraits are ready!\n\n"
@@ -247,7 +253,6 @@ async def run_generation_worker(
         )
         await state.update_data(next_step_message_id=session_actions_msg.message_id)
         
-        # 3. Set the single, correct state for this phase
         await state.set_state(Generation.waiting_for_next_action)
 
     except Exception:
@@ -259,7 +264,6 @@ async def run_generation_worker(
         if request_id:
             await generations_repo.update_generation_request_status(db, request_id, "failed_internal")
     finally:
-        # We need to ensure the state isn't cleared if we are in one of the final action states
         current_state = await state.get_state()
         if current_state and current_state not in [
             Generation.waiting_for_next_action, 

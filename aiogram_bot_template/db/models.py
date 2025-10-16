@@ -22,6 +22,7 @@ class User(Base):
     )
     referral_source = Column(String(100), nullable=True)
     has_used_free_trial = Column(Boolean, default=False, nullable=False, server_default=text("false"))
+    has_used_live_queue = Column(Boolean, default=False, nullable=False, server_default=text("false")) # <-- NEW
 
     requests = relationship("GenerationRequest", back_populates="user")
     payments = relationship("Payment", back_populates="user")

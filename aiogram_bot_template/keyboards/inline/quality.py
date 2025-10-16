@@ -2,7 +2,6 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.i18n import gettext as _, ngettext
 
-# --- NEW: Import GenerationType to know which settings to use ---
 from aiogram_bot_template.data.constants import GenerationType
 from aiogram_bot_template.data.settings import settings
 
@@ -21,33 +20,39 @@ def _get_translated_tier_name(q: int, count: int) -> str:
         count
     ).format(count=count)
 
-# --- REFACTORED: The function now accepts a generation_type ---
-def quality_kb(generation_type: GenerationType, is_trial_available: bool) -> InlineKeyboardMarkup:
+# --- REFACTORED: The function now accepts two availability flags ---
+def quality_kb(
+    generation_type: GenerationType, 
+    is_trial_available: bool,
+    is_live_queue_available: bool
+) -> InlineKeyboardMarkup:
     """
     Creates a keyboard for selecting a generation package.
-    Dynamically loads tiers based on the provided generation_type.
-    Conditionally shows the Tier 0 (Free Trial) button.
+    Dynamically loads tiers and conditionally shows special options.
     """
     rows: list[list[InlineKeyboardButton]] = []
     
-    # --- DYNAMIC LOGIC: Get the correct config section (e.g., settings.child_generation) ---
     try:
         generation_config = getattr(settings, generation_type.value)
     except AttributeError:
-        # Fallback or error handling if the config section doesn't exist
-        # This prevents the bot from crashing on a config error.
         return InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=_("Error: Tiers not configured"), callback_data="config_error")]
         ])
 
-    for q, tier in sorted(generation_config.tiers.items()):
+    # --- UPDATED: Tier 0 (Free Trial) is now handled first ---
+    if is_trial_available and 0 in generation_config.tiers:
+        tier_0 = generation_config.tiers[0]
+        label = _get_translated_tier_name(0, tier_0.count)
+        rows.append([InlineKeyboardButton(text=label, callback_data="quality:0")])
         
-        if q == 0:
-            if not is_trial_available:
-                continue
-            label = _get_translated_tier_name(q, tier.count)
-            rows.append([InlineKeyboardButton(text=label, callback_data=f"quality:{q}")])
-        else:
+    # --- NEW: Tier 1 (Live Queue) button ---
+    if is_live_queue_available and 1 in generation_config.tiers:
+        label = _("🕒 Join Live Queue (Free)")
+        rows.append([InlineKeyboardButton(text=label, callback_data="quality:1")])
+
+    # --- UPDATED: Loop for paid tiers (q > 1) ---
+    for q, tier in sorted(generation_config.tiers.items()):
+        if q > 1: # Only show paid tiers here
             tier_name = _get_translated_tier_name(q, tier.count)
             label = f"{tier_name}  •  {tier.price} ⭐"
             rows.append([InlineKeyboardButton(text=label, callback_data=f"quality:{q}")])

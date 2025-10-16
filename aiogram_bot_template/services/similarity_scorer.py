@@ -28,9 +28,11 @@ _FACE_APP_LOCK = threading.Lock() # Lock for thread-safe access to app.get()
 def _get_face_analysis_app() -> FaceAnalysis:
     """Initializes and returns a singleton FaceAnalysis instance."""
     global _face_analysis_app
+    # The lock here is crucial for multi-threaded web servers, but also good practice.
+    # For multiprocessing, the initializer in the worker service will call this.
     with _FACE_APP_LOCK:
         if _face_analysis_app is None:
-            logger.info("Initializing InsightFace model for the first time...")
+            logger.info("Initializing InsightFace model for the first time in this process...")
             app = FaceAnalysis(name="buffalo_l", providers=['CPUExecutionProvider'])
             app.prepare(ctx_id=0, det_size=(640, 640))
             _face_analysis_app = app
@@ -280,19 +282,32 @@ def _analyze_and_process_one_photo(
 async def select_best_photos_and_process(
     photo_inputs: List[Tuple[bytes, str, str]],
 ) -> Optional[List[Tuple[str, str, bytes]]]:
+    """Async wrapper for the synchronous processing function."""
+    return await asyncio.to_thread(select_best_photos_and_process_sync, photo_inputs)
+
+def select_best_photos_and_process_sync(
+    photo_inputs: List[Tuple[bytes, str, str]],
+) -> Optional[List[Tuple[str, str, bytes]]]:
+    """
+    Synchronous version of photo processing, designed to be run in a worker process.
+    """
     if not photo_inputs: return None
     MIN_ACCEPTABLE_SCORE = 0.55
-    tasks = [asyncio.to_thread(_analyze_and_process_one_photo, load_image_bgr_from_bytes(b), uid, fid)
-             for b, uid, fid in photo_inputs if load_image_bgr_from_bytes(b) is not None]
     
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    results = []
+    for b, uid, fid in photo_inputs:
+        img = load_image_bgr_from_bytes(b)
+        if img is not None:
+            try:
+                result = _analyze_and_process_one_photo(img, uid, fid)
+                results.append(result)
+            except Exception as e:
+                logger.warning("Photo processing failed for one image", file_unique_id=uid, exc_info=e)
+                results.append(None) # Keep list length consistent
     
     all_scores, valid_photos = [], []
     for i, res in enumerate(results):
         unique_id = photo_inputs[i][1]
-        if isinstance(res, Exception):
-            logger.warning("Photo processing failed", file_unique_id=unique_id, exc_info=res)
-            continue
         if res:
             processed_bytes, score, _, file_id = res
             all_scores.append(round(score, 4))
@@ -311,23 +326,26 @@ async def select_best_photos_and_process(
 
 # --- Robust Identity Centroid and Sorting Logic ---
 
+def _extract_face_features_sync(img_bytes: bytes) -> Optional[dict]:
+    """Synchronous version of _extract_face_features."""
+    key = _sha1_bytes(img_bytes)
+    if (cached := _EMB_CACHE.get(key)) is not None: return cached
+    app = _get_face_analysis_app()
+    img = load_image_bgr_from_bytes(img_bytes)
+    if img is None: return None
+    with _FACE_APP_LOCK: faces = app.get(img)
+    if not faces: return None
+    best_face = max(faces, key=lambda f: (f.bbox[2]-f.bbox[0])*(f.bbox[3]-f.bbox[1]))
+    if best_face.normed_embedding is None: return None
+    result = {"embedding": best_face.normed_embedding.astype(np.float32), "bbox": tuple(map(float, best_face.bbox)),
+              "kps": best_face.kps.astype(np.float32) if best_face.kps is not None else None,
+              "det_score": float(best_face.det_score), "image_sha1": key}
+    _EMB_CACHE.put(key, result)
+    return result
+
 async def _extract_face_features(img_bytes: bytes) -> Optional[dict]:
-    def sync_extract():
-        key = _sha1_bytes(img_bytes)
-        if (cached := _EMB_CACHE.get(key)) is not None: return cached
-        app = _get_face_analysis_app()
-        img = load_image_bgr_from_bytes(img_bytes)
-        if img is None: return None
-        with _FACE_APP_LOCK: faces = app.get(img)
-        if not faces: return None
-        best_face = max(faces, key=lambda f: (f.bbox[2]-f.bbox[0])*(f.bbox[3]-f.bbox[1]))
-        if best_face.normed_embedding is None: return None
-        result = {"embedding": best_face.normed_embedding.astype(np.float32), "bbox": tuple(map(float, best_face.bbox)),
-                  "kps": best_face.kps.astype(np.float32) if best_face.kps is not None else None,
-                  "det_score": float(best_face.det_score), "image_sha1": key}
-        _EMB_CACHE.put(key, result)
-        return result
-    return await asyncio.to_thread(sync_extract)
+    """Async wrapper for the synchronous feature extraction."""
+    return await asyncio.to_thread(_extract_face_features_sync, img_bytes)
 
 def _cosine_sim_matrix(embs: np.ndarray) -> np.ndarray: return embs @ embs.T
 
@@ -365,17 +383,13 @@ def _geometric_median(pts: np.ndarray, eps: float=1e-6) -> np.ndarray:
 def _build_robust_centroid(embs: np.ndarray) -> np.ndarray:
     """
     Calculates a robust centroid from a pre-filtered set of embeddings.
-    This version assumes the input 'embs' is already a cohesive group and
-    focuses on finding a stable geometric center, resistant to mild in-group variations.
     """
     if embs.shape[0] <= 1: return embs[0]
     log = logger.bind(initial_count=embs.shape[0])
     
-    # Start with the mean as a good initial guess for the center
     c = embs.mean(axis=0); c /= max(np.linalg.norm(c), 1e-12)
     final_inliers = embs
 
-    # Iteratively refine the centroid by trimming the 20% least similar embeddings
     for i in range(2):
         sims = embs @ c
         quantile_threshold = np.quantile(sims, 0.20)
@@ -389,15 +403,19 @@ def _build_robust_centroid(embs: np.ndarray) -> np.ndarray:
         log = log.bind(**{f"after_trim_iter_{i+1}": trimmed_embs.shape[0]})
     
     log.info("Robust centroid refinement steps")
-    # The geometric median is the final step for a stable center
     return _geometric_median(final_inliers)
 
 async def calculate_identity_centroid(image_bytes_list: List[bytes]) -> Optional[np.ndarray]:
+    """Async wrapper for the synchronous centroid calculation."""
+    return await asyncio.to_thread(calculate_identity_centroid_sync, image_bytes_list)
+
+def calculate_identity_centroid_sync(image_bytes_list: List[bytes]) -> Optional[np.ndarray]:
+    """
+    Synchronous version of identity centroid calculation for worker processes.
+    """
     if not image_bytes_list: return None
-    sem = asyncio.Semaphore(6)
-    async def _guarded_extract(b: bytes):
-        async with sem: return await _extract_face_features(b)
-    feats = await asyncio.gather(*[_guarded_extract(b) for b in image_bytes_list])
+    
+    feats = [_extract_face_features_sync(b) for b in image_bytes_list]
     embs = [f["embedding"] for f in feats if f and f.get("embedding") is not None]
     if not embs:
         logger.warning("Could not extract any valid face embeddings for centroid."); return None
@@ -405,7 +423,6 @@ async def calculate_identity_centroid(image_bytes_list: List[bytes]) -> Optional
     embeddings_stack = np.stack(embs)
     log = logger.bind(initial_count=embeddings_stack.shape[0])
     
-    # Step 1: Find the largest group of similar faces
     inlier_indices = _largest_component_by_threshold(embeddings_stack)
     if inlier_indices.size == 0:
         log.warning("No cohesive identity group found, falling back to all embeddings.")
@@ -424,27 +441,20 @@ async def calculate_identity_centroid(image_bytes_list: List[bytes]) -> Optional
 async def sort_and_filter_by_identity(
     photos_data: List[dict], target_count: int
 ) -> List[dict]:
+    """Async wrapper for the synchronous sorting/filtering function."""
+    return await asyncio.to_thread(sort_and_filter_by_identity_sync, photos_data, target_count)
+
+def sort_and_filter_by_identity_sync(
+    photos_data: List[dict], target_count: int
+) -> List[dict]:
     """
-    Filters a list of photos to find a cohesive identity group, sorts them by
-    similarity to a robust centroid of that group, and ensures the list has
-    'target_count' items by duplicating the best ones if necessary.
-
-    Args:
-        photos_data: A list of dictionaries, each with at least a 'bytes' key.
-        target_count: The desired number of photos in the output list.
-
-    Returns:
-        A list of 'target_count' photos, sorted by identity similarity.
+    Synchronous version of identity filtering, designed for worker processes.
     """
     if not photos_data: return []
     log = logger.bind(initial_count=len(photos_data), target_count=target_count)
     log.info("Starting identity filtering and sorting...")
     
-    # 1. Extract features from all provided photos
-    sem = asyncio.Semaphore(6)
-    async def _guarded_extract(p: dict):
-        async with sem: return await _extract_face_features(p['bytes'])
-    feats = await asyncio.gather(*[_guarded_extract(p) for p in photos_data])
+    feats = [_extract_face_features_sync(p['bytes']) for p in photos_data]
     
     valid_data = [(p, f) for p, f in zip(photos_data, feats) if f and f.get("embedding") is not None]
     if not valid_data:
@@ -454,13 +464,10 @@ async def sort_and_filter_by_identity(
     all_photos, all_embs_list = zip(*[(p, f["embedding"]) for p, f in valid_data])
     all_embs = np.stack(all_embs_list)
 
-    # 2. Filter to find the core identity group (inliers)
-    # Step 2a: Find the largest connected component
     inlier_indices = _largest_component_by_threshold(all_embs)
     if inlier_indices.size < len(all_photos):
         log.info("Filtered by largest component", before=len(all_photos), after=inlier_indices.size)
 
-    # Step 2b: Remove MAD outliers from this component
     component_embs = all_embs[inlier_indices]
     mad_outlier_indices_in_component = _mad_outliers_by_mean_similarity(component_embs)
     
@@ -476,10 +483,7 @@ async def sort_and_filter_by_identity(
         inlier_photos = [all_photos[i] for i in final_inlier_indices]
         inlier_embs = all_embs[final_inlier_indices]
 
-    # 3. Build a robust centroid from the clean, inlier embeddings
     centroid = _build_robust_centroid(inlier_embs)
-    
-    # 4. Score all inlier photos against the centroid and sort them
     similarities = inlier_embs @ centroid
     
     sorted_photos = sorted(
@@ -487,7 +491,6 @@ async def sort_and_filter_by_identity(
         key=lambda x: x['similarity_score'], reverse=True
     )
 
-    # 5. Select the best photos and duplicate if necessary
     source_for_final_list = sorted_photos
     if not source_for_final_list:
         log.error("No photos remaining after filtering. Cannot proceed.")
@@ -495,10 +498,8 @@ async def sort_and_filter_by_identity(
         
     final_photos = list(source_for_final_list[:target_count])
     
-    # If we don't have enough photos, duplicate the best ones to reach target_count
     if len(final_photos) < target_count:
         num_needed = target_count - len(final_photos)
-        # Use modulo to cycle through the available best photos
         duplicates_to_add = [
             dict(source_for_final_list[i % len(source_for_final_list)]) for i in range(num_needed)
         ]

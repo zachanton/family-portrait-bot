@@ -28,7 +28,11 @@ family_bot/
 *.zip
 
 google-credentials.json
+credentials.json
+token.json
 aider_keys.sh
+
+token.json
 
 models/
 ollama_data/

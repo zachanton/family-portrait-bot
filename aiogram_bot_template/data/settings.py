@@ -7,8 +7,10 @@ class BotConfig(BaseModel):
     token: SecretStr
     admin_id: int | None = None
     log_chat_id: int | None = None
+    live_queue_channel_url: str | None = None
     max_updates_in_queue: int = 100
     support_email: str = "support@example.com"
+    workers: int | None = None  # <-- NEW: Number of worker processes for photo processing
 
     @computed_field
     @property

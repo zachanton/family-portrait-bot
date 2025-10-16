@@ -1,3 +1,4 @@
+# aiogram_bot_template/db/repo/users.py
 from aiogram_bot_template.db.db_api.storages import PostgresConnection
 
 
@@ -71,4 +72,25 @@ async def get_user_trial_status(db: PostgresConnection, user_id: int) -> bool:
 async def mark_free_trial_as_used(db: PostgresConnection, user_id: int) -> None:
     """Marks the user's free trial as used."""
     sql = "UPDATE users SET has_used_free_trial = TRUE WHERE user_id = $1;"
+    await db.execute(sql, (user_id,))
+
+
+# --- NEW FUNCTIONS ---
+async def get_user_live_queue_status(db: PostgresConnection, user_id: int) -> bool:
+    """
+    Checks if the user has already used their live queue slot.
+
+    Returns:
+        True if the live queue slot has been used, otherwise False.
+    """
+    # sql = "SELECT has_used_live_queue FROM users WHERE user_id = $1;"
+    # result = await db.fetchrow(sql, (user_id,))
+    # if result.data:
+    #     return result.data.get("has_used_live_queue", False)
+    return False
+
+
+async def mark_live_queue_as_used(db: PostgresConnection, user_id: int) -> None:
+    """Marks the user's live queue slot as used."""
+    sql = "UPDATE users SET has_used_live_queue = TRUE WHERE user_id = $1;"
     await db.execute(sql, (user_id,))

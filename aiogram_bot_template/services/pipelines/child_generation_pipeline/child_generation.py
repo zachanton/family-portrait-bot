@@ -5,7 +5,9 @@ import random
 import numpy as np
 from typing import List
 from aiogram.utils.i18n import gettext as _
-from aiogram_bot_template.services import image_cache, photo_processing, similarity_scorer
+from aiogram_bot_template.services import image_cache, photo_processing
+# This import stays, as it has the sync versions we need now
+from aiogram_bot_template.services import similarity_scorer
 from aiogram_bot_template.services.enhancers import (
     parent_visual_enhancer,
     child_prompt_enhancer,
@@ -18,6 +20,8 @@ from aiogram_bot_template.data.constants import (
 )
 from ..base import BasePipeline, PipelineOutput
 from aiogram_bot_template.services.pipelines import PROMPT_CHILD_DEFAULT
+# --- NEW IMPORT ---
+from aiogram_bot_template.services.photo_processing_manager import PhotoProcessingManager
 
 
 class ChildGenerationPipeline(BasePipeline):
@@ -25,6 +29,11 @@ class ChildGenerationPipeline(BasePipeline):
     Pipeline for generating a portrait of a potential child.
     Supports session reuse by checking for a pre-existing parent composite image.
     """
+    
+    # --- ADD photo_manager to __init__ ---
+    def __init__(self, *args, photo_manager: PhotoProcessingManager, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.photo_manager = photo_manager
 
     async def _prepare_child_prompts(self, mom_front_dad_front_url: str, mom_front_dad_side_url: str, dad_front_mom_side_url: str) -> PipelineOutput:
         """
@@ -138,9 +147,7 @@ class ChildGenerationPipeline(BasePipeline):
             mom_front_dad_side_url = image_cache.get_cached_image_proxy_url(mom_front_dad_side_uid)
             dad_front_mom_side_url = image_cache.get_cached_image_proxy_url(dad_front_mom_side_uid)
             
-            # Jump directly to the child-specific prompt generation
             output = await self._prepare_child_prompts(mom_front_dad_front_url, mom_front_dad_side_url, dad_front_mom_side_url)
-            # Add the reused UID to metadata so the worker can find it for debug logs
             output.metadata["mom_front_dad_front_uid"] = mom_front_dad_front_uid
             output.metadata["mom_front_dad_side_uid"] = mom_front_dad_side_uid
             output.metadata["dad_front_mom_side_uid"] = dad_front_mom_side_uid
@@ -148,7 +155,6 @@ class ChildGenerationPipeline(BasePipeline):
             output.metadata["processed_uids"] = [ mom_front_dad_front_uid, mom_front_dad_side_uid, dad_front_mom_side_uid ]
             return output
 
-        # --- This block runs only on the first generation in a session ---
         self.log.info("No session data found. Performing full initial setup for child generation.")
         await self.update_status_func(_("Analyzing parental features... 🧬"))
 
@@ -167,11 +173,15 @@ class ChildGenerationPipeline(BasePipeline):
         mother_bytes_list = await get_all_processed_bytes(mom_photos)
         father_bytes_list = await get_all_processed_bytes(dad_photos)
 
+        # --- DELEGATION TO WORKER PROCESS ---
         mom_centroid, dad_centroid = await asyncio.gather(
-            similarity_scorer.calculate_identity_centroid(mother_bytes_list),
-            similarity_scorer.calculate_identity_centroid(father_bytes_list)
+            self.photo_manager.calculate_identity_centroid(mother_bytes_list),
+            self.photo_manager.calculate_identity_centroid(father_bytes_list)
         )
+        # --- END DELEGATION ---
         
+        # This part is still CPU-heavy, but let's keep it in the main thread for now
+        # as it's less intensive than the ML model calls.
         collage_tasks = [
             asyncio.to_thread(photo_processing.create_portrait_collage_from_bytes, mother_bytes_list[:4]),
             asyncio.to_thread(photo_processing.create_portrait_collage_from_bytes, father_bytes_list[:4]),
@@ -228,7 +238,6 @@ class ChildGenerationPipeline(BasePipeline):
 
         output = await self._prepare_child_prompts(mom_front_dad_front_url, mom_front_dad_side_url, dad_front_mom_side_url)
         
-        # Add all intermediate UIDs to metadata for debugging and session saving
         output.metadata.update({
             "mom_collage_uid": mom_collage_uid,
             "mom_profile_uid": mom_profile_uid,

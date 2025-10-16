@@ -1,6 +1,8 @@
 # aiogram_bot_template/bot.py
 import asyncio
 import sys
+import os
+import multiprocessing
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
@@ -18,7 +20,6 @@ from aiogram_bot_template import utils
 from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.middlewares.i18n import I18nMiddleware
 from aiogram_bot_template.middlewares import StructLoggingMiddleware
-from aiogram_bot_template.middlewares.debug_forwarding import DebugForwardingMiddleware
 from aiogram_bot_template.web_handlers.file_cache_server import (
     routes as file_cache_routes,
 )
@@ -35,6 +36,8 @@ from aiogram_bot_template.handlers import (
     utility,
     child_params_handler,
 )
+from aiogram_bot_template.services.photo_processor_service import initialize_worker
+from aiogram_bot_template.services.photo_processing_manager import PhotoProcessingManager
 
 
 if TYPE_CHECKING:
@@ -111,7 +114,6 @@ def setup_handlers(dp: Dispatcher) -> None:
 
 
 def setup_middlewares(dp: Dispatcher) -> None:
-    dp.update.outer_middleware(DebugForwardingMiddleware())
     dp.update.outer_middleware(StructLoggingMiddleware(logger=dp["aiogram_logger"]))
 
 
@@ -151,6 +153,30 @@ async def aiohttp_on_shutdown(app: web.Application) -> None:
 
 
 async def aiogram_on_startup(dispatcher: Dispatcher, bot: Bot) -> None:
+    logger = dispatcher["aiogram_logger"]
+    
+    # --- UPDATED LOGIC FOR WORKER COUNT ---
+    # 1. Try to get the number from settings.
+    # 2. If not set, fall back to the number of CPU cores.
+    # 3. If CPU count can't be determined, use a safe default of 2.
+    num_workers = settings.bot.workers or os.cpu_count() or 2
+    logger.info(
+        "Initializing photo processing pool...",
+        workers=num_workers,
+        source="config" if settings.bot.workers else "cpu_count_fallback"
+    )
+    # --- END UPDATED LOGIC ---
+    
+    try:
+        multiprocessing.set_start_method("spawn", force=True)
+    except RuntimeError:
+        logger.warning("multiprocessing start method already set.")
+        
+    photo_pool = multiprocessing.Pool(processes=num_workers, initializer=initialize_worker)
+    dispatcher["photo_processor_pool"] = photo_pool
+    dispatcher["photo_manager"] = PhotoProcessingManager(pool=photo_pool)
+    logger.info("Photo processing pool and manager created.")
+    
     await setup_aiogram(dispatcher)
     webhook_logger = dispatcher["aiogram_logger"].bind(
         webhook_url=str(settings.webhook.address),
@@ -169,6 +195,15 @@ async def aiogram_on_startup(dispatcher: Dispatcher, bot: Bot) -> None:
 
 async def aiogram_on_shutdown(dispatcher: Dispatcher) -> None:
     dispatcher["aiogram_logger"].debug("Stopping webhook")
+    
+    if "photo_processor_pool" in dispatcher.workflow_data:
+        logger = dispatcher["aiogram_logger"]
+        logger.info("Closing photo processing pool...")
+        pool: multiprocessing.Pool = dispatcher["photo_processor_pool"]
+        pool.close()
+        pool.join()
+        logger.info("Photo processing pool closed.")
+
     await close_db_connections(dispatcher)
     await dispatcher.storage.close()
     dispatcher["aiogram_logger"].info("Stopped webhook")
@@ -228,12 +263,14 @@ def main() -> None:
     dp["aiogram_session_logger"] = aiogram_session_logger
     dp.startup.register(aiogram_on_startup)
     dp.shutdown.register(aiogram_on_shutdown)
-    web.run_app(
-        asyncio.run(setup_aiohttp_app(bot, dp)),
-        handle_signals=True,
-        host=settings.webhook.listening_host,
-        port=settings.webhook.listening_port,
-    )
+    
+    if __name__ == "__main__":
+        web.run_app(
+            asyncio.run(setup_aiohttp_app(bot, dp)),
+            handle_signals=True,
+            host=settings.webhook.listening_host,
+            port=settings.webhook.listening_port,
+        )
 
 
 if __name__ == "__main__":

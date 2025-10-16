@@ -15,13 +15,13 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram_bot_template.data.constants import GenerationType, ImageRole
 from aiogram_bot_template.db.db_api.storages import PostgresConnection
 from aiogram_bot_template.db.repo import generations as generations_repo
-from aiogram_bot_template.services import image_cache, similarity_scorer
+from aiogram_bot_template.services import image_cache
 from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.keyboards.inline.gender import gender_kb
-# --- UPDATED IMPORTS ---
 from aiogram_bot_template.services.pipelines.pair_photo_pipeline import styles as pair_styles
 from aiogram_bot_template.keyboards.inline.style_selection import get_style_selection_button_kb
-
+# --- NEW IMPORT ---
+from aiogram_bot_template.services.photo_processing_manager import PhotoProcessingManager
 
 router = Router(name="photo-handler")
 
@@ -41,13 +41,6 @@ async def send_style_previews(
     """
     Sends a series of messages, each with a style preview image and a selection button.
     Stores the message IDs in FSM context for later cleanup.
-
-    Args:
-        bot: The Bot instance.
-        chat_id: The chat ID to send messages to.
-        state: The FSM context.
-        logger: The bound logger.
-        styles_registry: The dictionary of styles to display (e.g., pair_styles.STYLES).
     """
     assets_path = Path(__file__).parent.parent / "assets" / "style_previews"
     sent_message_ids = []
@@ -72,7 +65,6 @@ async def send_style_previews(
         except TelegramBadRequest as e:
             logger.error("Failed to send style preview photo", style_id=style_id, error=e)
 
-    # Send the final call-to-action message
     if sent_message_ids:
         cta_msg = await bot.send_message(
             chat_id=chat_id,
@@ -80,7 +72,6 @@ async def send_style_previews(
         )
         sent_message_ids.append(cta_msg.message_id)
 
-    # Get existing IDs and merge them to avoid overwriting
     data = await state.get_data()
     existing_ids = data.get("style_preview_message_ids", [])
     await state.update_data(style_preview_message_ids=existing_ids + sent_message_ids)
@@ -135,7 +126,7 @@ async def proceed_to_style_selection(
         chat_id=message.chat.id,
         state=state,
         logger=business_logger,
-        styles_registry=pair_styles.STYLES  # Pass the correct style registry
+        styles_registry=pair_styles.STYLES
     )
 
 
@@ -156,16 +147,22 @@ async def _download_one_photo(
         return None
 
 async def process_photo_batch(
-    messages: List[Message], state: FSMContext, bot: Bot, db_pool: asyncpg.Pool, cache_pool: Redis
+    messages: List[Message], state: FSMContext, bot: Bot, db_pool: asyncpg.Pool, cache_pool: Redis, photo_manager: PhotoProcessingManager
 ):
     """
     Handles processing a batch of photos, validation, and routing to the next step.
+    This now offloads heavy work to the PhotoProcessingManager.
     """
     message = messages[0]
     log = structlog.get_logger(__name__).bind(user_id=message.from_user.id)
     status_msg = await message.answer(_("Analyzing your photos... ⏳"))
 
     try:
+        uid_to_msg_id = {
+            max(msg.photo, key=lambda p: p.width * p.height).file_unique_id: msg.message_id
+            for msg in messages if msg.photo
+        }
+
         download_tasks = [
             _download_one_photo(max(msg.photo, key=lambda p: p.width * p.height), bot)
             for msg in messages if msg.photo
@@ -176,8 +173,10 @@ async def process_photo_batch(
         if not photo_inputs:
             await status_msg.edit_text(_("I couldn't process these photos. Please try sending them again."))
             return
-
-        processed_photos_info = await similarity_scorer.select_best_photos_and_process(photo_inputs)
+        
+        # --- DELEGATION TO WORKER PROCESS ---
+        processed_photos_info = await photo_manager.process_photo_batch(photo_inputs)
+        # --- END DELEGATION ---
         
         if not processed_photos_info:
             rejection_text = _(
@@ -203,7 +202,12 @@ async def process_photo_batch(
         current_role = ImageRole.MOTHER if mom_photos_count < MIN_PHOTOS_PER_PARENT else ImageRole.FATHER
 
         photos_collected.extend([
-            {"file_id": file_id, "file_unique_id": uid, "role": current_role.value}
+            {
+                "file_id": file_id,
+                "file_unique_id": uid,
+                "role": current_role.value,
+                "message_id": uid_to_msg_id.get(uid)
+            }
             for uid, file_id, _ in processed_photos_info
         ])
         await state.update_data(photos_collected=photos_collected)
@@ -228,7 +232,10 @@ async def process_photo_batch(
             cached_results = await asyncio.gather(*bytes_tasks)
             photos_with_bytes = [{**photos_list[i], 'bytes': b} for i, (b, _) in enumerate(cached_results) if b]
             
-            best_photos = await similarity_scorer.sort_and_filter_by_identity(photos_with_bytes, target_count=MIN_PHOTOS_PER_PARENT)
+            # --- DELEGATION TO WORKER PROCESS ---
+            best_photos = await photo_manager.sort_and_filter_by_identity(photos_with_bytes, target_count=MIN_PHOTOS_PER_PARENT)
+            # --- END DELEGATION ---
+
             for p in best_photos: p.pop('bytes', None)
             other_parent_photos = [p for p in photos_collected if p['role'] != role_str]
             updated_photos_collected = other_parent_photos + best_photos
@@ -243,7 +250,6 @@ async def process_photo_batch(
         final_mom_count = sum(1 for p in final_photos if p['role'] == ImageRole.MOTHER.value)
         final_dad_count = sum(1 for p in final_photos if p['role'] == ImageRole.FATHER.value)
 
-        # --- ROUTING LOGIC ---
         if final_mom_count >= MIN_PHOTOS_PER_PARENT and final_dad_count >= MIN_PHOTOS_PER_PARENT:
             generation_type = GenerationType(final_data["generation_type"])
             if generation_type == GenerationType.CHILD_GENERATION:
@@ -272,7 +278,7 @@ async def process_photo_batch(
             await status_msg.edit_text(_("I ran into an issue. Please try sending another photo or use /cancel to start over."))
 
 async def delayed_batch_processor(
-    user_id: int, state: FSMContext, bot: Bot, db_pool: asyncpg.Pool, cache_pool: Redis
+    user_id: int, state: FSMContext, bot: Bot, db_pool: asyncpg.Pool, cache_pool: Redis, photo_manager: PhotoProcessingManager
 ):
     """
     Waits for the debounce delay, then processes all cached photos for the user.
@@ -283,14 +289,15 @@ async def delayed_batch_processor(
     
     if messages:
         messages.sort(key=lambda m: m.message_id)
-        await process_photo_batch(messages, state, bot, db_pool, cache_pool)
+        await process_photo_batch(messages, state, bot, db_pool, cache_pool, photo_manager)
 
 @router.message(Generation.collecting_photos, F.photo)
 async def process_photo_input(
-    message: Message, state: FSMContext, bot: Bot, db_pool: asyncpg.Pool, cache_pool: Redis
+    message: Message, state: FSMContext, bot: Bot, db_pool: asyncpg.Pool, cache_pool: Redis, photo_manager: PhotoProcessingManager
 ) -> None:
     """
     Catches all incoming photos and uses a debounce mechanism to group them.
+    The photo_manager is now passed in from the dispatcher.
     """
     if not message.from_user: return
     user_id = message.from_user.id
@@ -305,5 +312,5 @@ async def process_photo_input(
         user_batch_cache[user_id].append(message)
     
     user_batch_tasks[user_id] = asyncio.create_task(
-        delayed_batch_processor(user_id, state, bot, db_pool, cache_pool)
+        delayed_batch_processor(user_id, state, bot, db_pool, cache_pool, photo_manager)
     )

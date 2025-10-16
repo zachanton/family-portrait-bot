@@ -76,9 +76,7 @@ async def process_resemblance_selection(
     db = PostgresConnection(db_pool, logger=business_logger)
     user_id = cb.from_user.id
 
-    # Create a DB record for this generation request
     photos = user_data.get("photos_collected", [])
-    # Use the roles assigned in the photo_handler
     source_images_dto = [
         (p["file_unique_id"], p["file_id"], p["role"]) for p in photos
     ]
@@ -89,20 +87,21 @@ async def process_resemblance_selection(
     request_id = await generations_repo.create_generation_request(db, draft)
     await state.update_data(
         request_id=request_id,
-        generation_type=GenerationType.CHILD_GENERATION.value # Store the type for the worker
+        generation_type=GenerationType.CHILD_GENERATION.value
     )
 
-    # Check for free trial availability
+    # --- UPDATED LOGIC ---
+    # Check for free trial (whitelist only) and live queue availability
     is_in_whitelist = user_id in settings.free_trial_whitelist
-    has_used_trial = await users_repo.get_user_trial_status(db, user_id)
-    is_trial_available = is_in_whitelist or not has_used_trial
+    has_used_queue = await users_repo.get_user_live_queue_status(db, user_id)
 
     with suppress(TelegramBadRequest):
         await cb.message.edit_text(
             _("Excellent! All parameters are set. Please choose a generation package:"),
             reply_markup=quality_kb(
-                generation_type=GenerationType.CHILD_GENERATION, # Explicitly pass the type
-                is_trial_available=is_trial_available
+                generation_type=GenerationType.CHILD_GENERATION,
+                is_trial_available=is_in_whitelist,
+                is_live_queue_available=not has_used_queue
             ),
         )
 
