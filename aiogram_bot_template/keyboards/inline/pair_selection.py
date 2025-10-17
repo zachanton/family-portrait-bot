@@ -1,7 +1,7 @@
 # aiogram_bot_template/keyboards/inline/pair_selection.py
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.i18n import gettext as _
-from .callbacks import ContinueWithPairPhotoCallback, EditImageCallback
+from .callbacks import ContinueWithPairPhotoCallback, EditImageCallback, ReframeImageCallback
 
 
 def continue_with_pair_photo_kb(
@@ -47,6 +47,11 @@ def post_pair_photo_selection_kb(generation_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 text=_("✏️ Edit This Portrait"),
                 callback_data=EditImageCallback(generation_id=generation_id).pack(),
+            ),
+            # --- NEW BUTTON ---
+            InlineKeyboardButton(
+                text=_("🖼️ Reframe"),
+                callback_data=ReframeImageCallback(generation_id=generation_id).pack(),
             )
         ],
         [

@@ -33,10 +33,18 @@ class CreateFamilyPhotoCallback(CallbackData, prefix="create_family"):
     child_generation_id: int
     parent_request_id: int
 
-# --- NEW CALLBACK ---
 class EditImageCallback(CallbackData, prefix="edit_img"):
     """Callback to start the image editing flow for a specific generation."""
     generation_id: int
+
+class ReframeImageCallback(CallbackData, prefix="reframe_img"):
+    """Callback to start the aspect ratio change flow for a specific generation."""
+    generation_id: int
+
+class SelectAspectRatioCallback(CallbackData, prefix="select_ratio", sep="|"):
+    """Callback for selecting a new aspect ratio."""
+    generation_id: int
+    ratio: str
 
 class StyleCallback(CallbackData, prefix="style"):
     """Callback for selecting a generation style."""

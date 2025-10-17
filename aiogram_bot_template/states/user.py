@@ -25,7 +25,8 @@ class Generation(StatesGroup):
 
     # --- States for image editing ---
     waiting_for_edit_prompt = State()
-    waiting_for_edit_quality = State() # <-- NEW
+    choosing_aspect_ratio = State() # <-- NEW
+    waiting_for_edit_quality = State()
 
     # --- Common states for all pipelines ---
     waiting_for_quality = State()

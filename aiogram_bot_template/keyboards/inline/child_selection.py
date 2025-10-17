@@ -5,7 +5,8 @@ from .callbacks import (
     ContinueWithImageCallback,
     CreateFamilyPhotoCallback,
     RetryGenerationCallback,
-    EditImageCallback,  # <-- NEW
+    EditImageCallback,
+    ReframeImageCallback,
 )
 
 
@@ -63,6 +64,11 @@ def post_child_selection_kb(
             InlineKeyboardButton(
                 text=_("✏️ Edit This Portrait"),
                 callback_data=EditImageCallback(generation_id=generation_id).pack(),
+            ),
+            # --- NEW BUTTON ---
+            InlineKeyboardButton(
+                text=_("🖼️ Reframe"),
+                callback_data=ReframeImageCallback(generation_id=generation_id).pack(),
             )
         ],
         [
