@@ -8,6 +8,8 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.utils.i18n import gettext as _
 from contextlib import suppress
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.types import LinkPreviewOptions
+
 
 from aiogram_bot_template.data.constants import GenerationType
 from aiogram_bot_template.db.db_api.storages import PostgresConnection
@@ -69,14 +71,20 @@ async def send_welcome_message(msg: Message, state: FSMContext, is_restart: bool
 
     if is_restart:
         text = _(
-            "Let's start over! What would you like to create?"
+            "Alright, let's start fresh! What would you like to create?"
         )
     else:
         text = _(
-            "👋 Welcome! I can create a beautiful AI-powered portrait.\n\n"
-            "What would you like to do?"
+            "👋 Welcome! I use the magic of AI to create beautiful portraits.\n\n"
+            "🖼️ See examples of my work: @pairfuse\n\n"
+            '📖 <a href="https://telegra.ph/Guide-How-to-Create-Your-Magical-AI-Portrait-10-16">Instructions</a> — how to use the bot\n\n'
+            "What would you like to create today?"
         )
-    await msg.answer(text, reply_markup=start_scenario_kb())
+    await msg.answer(
+        text,
+        reply_markup=start_scenario_kb(),
+        link_preview_options=LinkPreviewOptions(is_disabled=True)
+    )
 
 
 @router.message(Command("start", "menu"), StateFilter("*"))
@@ -130,10 +138,10 @@ async def process_scenario_selection(
     
     if callback_data.type == GenerationType.CHILD_GENERATION.value:
         text = _("Great! Let's imagine your future child.\n\n"
-                 "To begin, please send one or more photos of the Mother.")
+                 "To begin, please send 5-10 photos of the mother.")
     elif callback_data.type == GenerationType.PAIR_PHOTO.value:
         text = _("Excellent! Let's create a stunning couple portrait.\n\n"
-                 "Please start by sending one or more photos of the first person.")
+                 "Please start by sending 5-10 photos of the first person.")
     else:
         text = _("Sorry, something went wrong. Please /start again.")
         await state.clear()

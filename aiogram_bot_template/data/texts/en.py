@@ -3,15 +3,16 @@ from .dto import LocaleTexts, BotCommandInfo, BotInfo
 
 texts = LocaleTexts(
     commands=[
-        BotCommandInfo(command="start", description="✨ Create a new portrait"),
-        BotCommandInfo(command="cancel", description="↩️ Start over"),
-        BotCommandInfo(command="language", description="🌐 Change language"),
-        BotCommandInfo(command="help", description="❓ Get help"),
+        BotCommandInfo(command="start", description="✨ Create a New Portrait"),
+        BotCommandInfo(command="cancel", description="↩️ Start Over"),
+        BotCommandInfo(command="language", description="🌐 Change Language"),
+        BotCommandInfo(command="help", description="❓ Support & Contact"),
     ],
     bot_info=BotInfo(
-        short_description="AI Portraits ✨ Child & Couple Photos!",
+        short_description="Create AI Portraits ✨ Child & Couple!",
         description=(
-            "Welcome! I can create a beautiful portrait of your future child or a stylish couple portrait. ✨\n\n"
+            "Welcome! I use the magic of AI to create beautiful portraits. ✨\n\n"
+            "Imagine your future child or a stunning couple's portrait. Let's create something wonderful together!\n\n"
             "Choose an option below to begin.\n\n"
             "By starting, you agree to our /terms and /privacy policy."
         )

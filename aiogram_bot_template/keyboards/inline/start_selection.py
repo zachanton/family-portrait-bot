@@ -11,7 +11,7 @@ def start_scenario_kb() -> InlineKeyboardMarkup:
     buttons = [
         [
             InlineKeyboardButton(
-                text=_("👶 Generate Future Child"),
+                text=_("👶 Imagine Your Future Child"),
                 callback_data=StartScenarioCallback(
                     type=GenerationType.CHILD_GENERATION.value
                 ).pack(),

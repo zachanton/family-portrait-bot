@@ -29,7 +29,6 @@ from aiogram_bot_template.services.pipelines.family_photo_pipeline.family_photo 
 from aiogram_bot_template.services.pipelines.pair_photo_pipeline.pair_photo import PairPhotoPipeline
 from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.utils.status_manager import StatusMessageManager
-# --- NEW IMPORT ---
 from aiogram_bot_template.services.photo_processing_manager import PhotoProcessingManager
 
 
@@ -66,7 +65,6 @@ async def run_generation_worker(
     business_logger: structlog.typing.FilteringBoundLogger,
     cache_pool: Redis,
     state: FSMContext,
-    # --- ADD photo_manager to arguments ---
     photo_manager: PhotoProcessingManager,
 ) -> None:
     user_data = await state.get_data()
@@ -104,7 +102,6 @@ async def run_generation_worker(
 
         gen_data = {**user_data, **db_data, 'type': generation_type}
         
-        # --- PASS photo_manager to the pipeline's constructor ---
         pipeline = pipeline_class(
             bot, gen_data, log, status.update, cache_pool, photo_manager=photo_manager
         )
@@ -160,7 +157,7 @@ async def run_generation_worker(
             current_iteration = i + 1
             log_task = log.bind(sequence=f"{current_iteration}/{generation_count}")
             
-            await status.update(_("🎨 Creating portrait {current} of {total}...").format(
+            await status.update(_("🎨 Painting portrait {current} of {total}...").format(
                 current=current_iteration, total=generation_count
             ))
 
@@ -227,7 +224,7 @@ async def run_generation_worker(
         await status.delete()
 
         if not sent_photo_messages:
-            await bot.send_message(chat_id, _("Unfortunately, I couldn't create an image this time. Please /start over to try again."))
+            await bot.send_message(chat_id, _("Oh dear, the AI seems to be having a creative block! I couldn't create an image this time. Please use /start to try again."))
             await generations_repo.update_generation_request_status(db, request_id, "failed")
             await state.clear()
             return
@@ -248,7 +245,7 @@ async def run_generation_worker(
         session_actions_msg = await bot.send_message(
             chat_id, 
             _("✨ Your portraits are ready!\n\n"
-              "Select your favorite one from the images above, or choose another action below."),
+              "Which one is your favorite? Tap the button below your chosen image, or select another action."),
             reply_markup=session_actions.session_actions_kb(generated_in_session)
         )
         await state.update_data(next_step_message_id=session_actions_msg.message_id)
@@ -260,7 +257,7 @@ async def run_generation_worker(
         if status_message_id:
             with suppress(TelegramBadRequest):
                 await status.delete()
-        await bot.send_message(chat_id, _("😔 An unexpected error occurred. Please try again with /start."))
+        await bot.send_message(chat_id, _("😔 An unexpected error occurred on our end. Please try again with /start."))
         if request_id:
             await generations_repo.update_generation_request_status(db, request_id, "failed_internal")
     finally:

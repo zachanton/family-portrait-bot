@@ -70,13 +70,13 @@ async def _process_session_action_async(
     if action_type == GenerationType.CHILD_GENERATION:
         await state.set_state(Generation.choosing_child_gender)
         await cb.message.answer(
-            _("Let's create another child portrait! Please choose the desired gender:"),
+            _("Let's create a child portrait! Please choose the desired gender:"),
             reply_markup=gender_kb()
         )
     elif action_type == GenerationType.PAIR_PHOTO:
         await state.set_state(Generation.choosing_pair_photo_style)
         sent_msg = await cb.message.answer(
-            _("Great! Let's create another couple portrait.")
+            _("Great! Let's create a couple portrait.")
         )
         await state.update_data(style_preview_message_ids=[sent_msg.message_id])
         await send_style_previews(

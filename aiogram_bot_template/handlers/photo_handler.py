@@ -67,7 +67,7 @@ async def send_style_previews(
     if sent_message_ids:
         cta_msg = await bot.send_message(
             chat_id=chat_id,
-            text=_("⬆️ Please select a style by clicking a button below one of the images.")
+            text=_("⬆️ Please select a style by tapping a button below one of the images.")
         )
         sent_message_ids.append(cta_msg.message_id)
 
@@ -83,9 +83,8 @@ async def proceed_to_child_params(message: Message, state: FSMContext) -> None:
     """
     await state.set_state(Generation.choosing_child_gender)
     await message.answer(
-        _("Excellent! I have enough high-quality photos for both parents. "
-          "Now, let's imagine your future child.\n\n"
-          "First, what is the desired gender?"),
+        _("Wonderful! I have enough high-quality photos for both parents.👫\n\n"
+          "Now, let's bring your future child to life.\n\nFirst, what is the desired gender?"),
         reply_markup=gender_kb()
     )
 
@@ -103,7 +102,7 @@ async def proceed_to_style_selection(
     await state.set_state(Generation.choosing_pair_photo_style)
     
     sent_msg = await message.answer(
-        _("Perfect, all photos are collected! Now for the fun part.")
+        _("Perfect, all photos are ready! Now for the creative part...")
     )
     await state.update_data(style_preview_message_ids=[sent_msg.message_id])
     
@@ -159,19 +158,19 @@ async def process_photo_batch(
         photo_inputs = [res for res in downloaded_results if res is not None]
 
         if not photo_inputs:
-            await status_msg.edit_text(_("I couldn't process these photos. Please try sending them again."))
+            await status_msg.edit_text(_("Hmm, I had trouble with those photos. Could you please try sending them again?"))
             return
         
         processed_photos_info = await photo_manager.process_photo_batch(photo_inputs)
         
         if not processed_photos_info:
             rejection_text = _(
-                "Unfortunately, none of the photos you sent were suitable.\n\n"
-                "I'm looking for photos with:\n"
-                "• <b>Exactly one person</b> in the frame.\n"
-                "• A clear, relatively large view of the face.\n"
-                "• No major obstructions like sunglasses or hands.\n\n"
-                "Please try sending another photo or two. Thank you! 😊"
+                "Unfortunately, these photos weren't quite right for the magic to work. 🪄\n\n"
+                "For the best results, I need photos with:\n"
+                "• <b>Just one person</b> in the picture.\n"
+                "• A clear, well-lit view of the face.\n"
+                "• No sunglasses, heavy shadows, or obstructions.\n\n"
+                "Please try sending a few more photos. Thank you! 😊"
             )
             await status_msg.edit_text(rejection_text)
             return
@@ -207,10 +206,10 @@ async def process_photo_batch(
         parent_to_sort = None
         if len(mom_photos) >= MIN_PHOTOS_PER_PARENT and not data.get("mom_photos_sorted"):
             parent_to_sort = (mom_photos, ImageRole.MOTHER.value, "mom_photos_sorted")
-            await status_msg.edit_text(_("Great! Checking consistency of photos... ✨"))
         elif len(dad_photos) >= MIN_PHOTOS_PER_PARENT and not data.get("dad_photos_sorted"):
             parent_to_sort = (dad_photos, ImageRole.FATHER.value, "dad_photos_sorted")
-            await status_msg.edit_text(_("Perfect! Checking consistency of photos... ✨"))
+        
+        await status_msg.edit_text(_("Ensuring photos are consistent... ✨"))
         
         if parent_to_sort:
             photos_list, role_str, state_flag = parent_to_sort
@@ -274,22 +273,23 @@ async def process_photo_batch(
                 log.error("Unhandled generation type after photo collection", type=generation_type)
                 await message.answer(_("An unexpected error occurred. Please /start over."))
         elif final_mom_count < MIN_PHOTOS_PER_PARENT:
-            person_name = _("the Mother") if final_data["generation_type"] == GenerationType.CHILD_GENERATION.value else _("the first person")
-            next_prompt = _("Got it! I now have <b>{count}/{min_count}</b> good photos of {person}. Please send a few more photos of them.").format(count=final_mom_count, min_count=MIN_PHOTOS_PER_PARENT, person=person_name)
+            person_name = _("the mother") if final_data["generation_type"] == GenerationType.CHILD_GENERATION.value else _("the first person")
+            next_prompt = _("Got it! I have <b>{count}/{min_count}</b> great photos of {person}. A few more would be perfect!").format(count=final_mom_count, min_count=MIN_PHOTOS_PER_PARENT, person=person_name)
             await message.answer(next_prompt)
         else:
-            person_name = _("the Dad") if final_data["generation_type"] == GenerationType.CHILD_GENERATION.value else _("the second person")
+            first_person_name = _("the mother") if final_data["generation_type"] == GenerationType.CHILD_GENERATION.value else _("the first person")
+            second_person_name = _("the father") if final_data["generation_type"] == GenerationType.CHILD_GENERATION.value else _("the second person")
             is_first_request = (final_dad_count == 0)
             if is_first_request:
-                next_prompt = _("Perfect, that's enough for the first person! Now I need photos of the second person. Please send at least {min_count} high-quality photos of them.").format(min_count=MIN_PHOTOS_PER_PARENT)
+                next_prompt = _("Perfect, that's enough for {first_person_name}! 📸\n\nNow, please send 5-10 clear photos of {second_person_name}.").format(first_person_name=first_person_name, second_person_name=second_person_name, min_count=MIN_PHOTOS_PER_PARENT)
             else:
-                next_prompt = _("Thanks! I now have <b>{count}/{min_count}</b> good photos of {person}. Please send a few more of them.").format(count=final_dad_count, min_count=MIN_PHOTOS_PER_PARENT, person=person_name)
+                next_prompt = _("Thanks! I have <b>{count}/{min_count}</b> great photos of {person}. A few more would be perfect!").format(count=final_dad_count, min_count=MIN_PHOTOS_PER_PARENT, person=second_person_name)
             await message.answer(next_prompt)
 
     except Exception as e:
         log.error("Error processing photo batch", exc_info=e)
         with suppress(TelegramBadRequest):
-            await status_msg.edit_text(_("I ran into an issue. Please try sending another photo or use /cancel to start over."))
+            await status_msg.edit_text(_("I ran into an issue processing those photos. Please try sending another one, or use /cancel to start over."))
 
 async def delayed_batch_processor(
     user_id: int, state: FSMContext, bot: Bot, db_pool: asyncpg.Pool, cache_pool: Redis, photo_manager: PhotoProcessingManager

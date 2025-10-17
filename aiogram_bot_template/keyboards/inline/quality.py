@@ -14,13 +14,13 @@ def _get_translated_tier_name(q: int, count: int) -> str:
             count
         ).format(count=count)
     
+    # Using a more appealing name like "Studio Portrait"
     return ngettext(
-        "✨ {count} Portrait",
-        "✨ {count} Portraits",
+        "✨ {count} Studio Portrait",
+        "✨ {count} Studio Portraits",
         count
     ).format(count=count)
 
-# --- REFACTORED: The function now accepts two availability flags ---
 def quality_kb(
     generation_type: GenerationType, 
     is_trial_available: bool,
@@ -39,18 +39,18 @@ def quality_kb(
             [InlineKeyboardButton(text=_("Error: Tiers not configured"), callback_data="config_error")]
         ])
 
-    # --- UPDATED: Tier 0 (Free Trial) is now handled first ---
+    # Tier 0 (Free Trial) is handled first
     if is_trial_available and 0 in generation_config.tiers:
         tier_0 = generation_config.tiers[0]
         label = _get_translated_tier_name(0, tier_0.count)
         rows.append([InlineKeyboardButton(text=label, callback_data="quality:0")])
         
-    # --- NEW: Tier 1 (Live Queue) button ---
+    # Tier 1 (Live Queue) button with more context
     if is_live_queue_available and 1 in generation_config.tiers:
-        label = _("🕒 Join Live Queue (Free)")
+        label = _("🕒 Join the Live Queue (Free & Public)")
         rows.append([InlineKeyboardButton(text=label, callback_data="quality:1")])
 
-    # --- UPDATED: Loop for paid tiers (q > 1) ---
+    # Loop for paid tiers (q > 1)
     for q, tier in sorted(generation_config.tiers.items()):
         if q > 1: # Only show paid tiers here
             tier_name = _get_translated_tier_name(q, tier.count)

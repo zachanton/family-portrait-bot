@@ -36,7 +36,7 @@ async def process_gender_selection(
     
     with suppress(TelegramBadRequest):
         await cb.message.edit_text(
-            _("Next, choose an age category:"),
+            _("Great! Now, let's choose an age for your child:"),
             reply_markup=age_kb()
         )
 
@@ -53,7 +53,7 @@ async def process_age_selection(
 
     with suppress(TelegramBadRequest):
         await cb.message.edit_text(
-            _("Finally, who should the child take after?"),
+            _("Almost there! Who should the child resemble more?"),
             reply_markup=resemblance_kb()
         )
 
@@ -96,7 +96,7 @@ async def process_resemblance_selection(
 
     with suppress(TelegramBadRequest):
         await cb.message.edit_text(
-            _("Excellent! All parameters are set. Please choose a generation package:"),
+            _("✨ Excellent! Everything is set. \n\nNow, please choose a package:"),
             reply_markup=quality_kb(
                 generation_type=GenerationType.CHILD_GENERATION,
                 is_trial_available=is_in_whitelist,

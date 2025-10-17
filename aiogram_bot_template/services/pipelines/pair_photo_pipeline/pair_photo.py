@@ -152,7 +152,7 @@ class PairPhotoPipeline(BasePipeline):
             self.photo_manager.calculate_identity_centroid(father_bytes_list)
         )
         
-        await self.update_status_func(_("Creating unique visual identities for the AI... 🧑‍🎨"))
+        await self.update_status_func(_("Creating visual identities for the AI... 🧑‍🎨"))
 
         visual_tasks = [
             parent_visual_enhancer.get_parent_visual_representation(
