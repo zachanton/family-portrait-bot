@@ -11,7 +11,7 @@ from aiogram.filters import StateFilter
 from aiogram.utils.i18n import gettext as _, ngettext
 from contextlib import suppress
 from aiogram.exceptions import TelegramBadRequest
-from typing import Set 
+from typing import Set
 
 from aiogram_bot_template.data.constants import GenerationType, ImageRole, ChildAge
 from aiogram_bot_template.db.db_api.storages import PostgresConnection
@@ -22,7 +22,7 @@ from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.services import generation_worker, image_cache
 from aiogram_bot_template.keyboards.inline.quality import quality_kb
 from aiogram_bot_template.keyboards.inline.callbacks import StyleCallback
-from aiogram_bot_template.keyboards.inline import session_actions as session_actions_kb  # <-- NEW IMPORT
+from aiogram_bot_template.keyboards.inline import session_actions as session_actions_kb
 from aiogram_bot_template.services.photo_processing_manager import PhotoProcessingManager
 from aiogram_bot_template.services.pipelines.pair_photo_pipeline import styles as pair_styles
 from aiogram_bot_template.services.pipelines.family_photo_pipeline import styles as family_styles
@@ -140,9 +140,17 @@ async def _proceed_to_payment_or_worker(
     tier_config = generation_config.tiers.get(quality_val)
 
     with suppress(TelegramBadRequest):
+        # We delete the message with the quality keyboard
         await cb.message.delete()
+        # For edits, we also delete the original image message that had the prompt request
+        if generation_type == GenerationType.IMAGE_EDIT:
+            original_message_id = user_data.get("edit_source_message_id")
+            if original_message_id:
+                await bot.delete_message(chat_id=cb.message.chat.id, message_id=original_message_id)
 
-    await generations_repo.update_generation_request_status(db, request_id, "quality_selected")
+    # For edits, the request status is 'editing', we update it. For others, 'quality_selected'.
+    new_status = "quality_selected_edit" if generation_type == GenerationType.IMAGE_EDIT else "quality_selected"
+    await generations_repo.update_generation_request_status(db, request_id, new_status)
     
     if quality_val == 0:
         if user_id not in settings.free_trial_whitelist:
@@ -171,17 +179,20 @@ async def _proceed_to_payment_or_worker(
         "Confirm payment to create your {count} unique portraits!",
         tier_config.count
     ).format(count=tier_config.count)
+    if generation_type == GenerationType.IMAGE_EDIT:
+        description = _("Confirm payment to edit your portrait.")
+
 
     status_msg = await cb.message.answer(_("✅ Got it! Preparing your payment..."))
     
-    if tier_config.price <= 0:
+    if not tier_config or tier_config.price <= 0:
         await status_msg.edit_text(_("A price configuration error occurred. Please try again later."))
         return
 
     await generations_repo.update_generation_request_status(db, request_id, "awaiting_payment")
     invoice_message = await payment_handler.send_stars_invoice(
         msg=cb.message, request_id=request_id, generation_type=generation_type, 
-        quality=quality, description=description
+        quality=quality_val, description=description
     )
     if invoice_message:
         await state.update_data(invoice_message_id=invoice_message.message_id, status_message_id=status_msg.message_id)
@@ -208,7 +219,6 @@ async def process_pair_style_selection(
         for msg_id in message_ids_to_delete:
             with suppress(TelegramBadRequest):
                 await bot.delete_message(chat_id=cb.message.chat.id, message_id=msg_id)
-        # --- FIX: Clear the message IDs from state after deleting them ---
         await state.update_data(style_preview_message_ids=[])
 
     db = PostgresConnection(db_pool, logger=business_logger)
@@ -249,7 +259,6 @@ async def process_family_style_selection(
         for msg_id in message_ids_to_delete:
             with suppress(TelegramBadRequest):
                 await bot.delete_message(chat_id=cb.message.chat.id, message_id=msg_id)
-        # --- FIX: Clear the message IDs from state after deleting them ---
         await state.update_data(style_preview_message_ids=[])
 
     db = PostgresConnection(db_pool, logger=business_logger)
@@ -271,7 +280,8 @@ async def process_family_style_selection(
 
 
 @router.callback_query(
-    StateFilter(Generation.waiting_for_quality), F.data.startswith("quality:")
+    StateFilter(Generation.waiting_for_quality, Generation.waiting_for_edit_quality),  # <-- UPDATED
+    F.data.startswith("quality:")
 )
 async def process_quality_selection(
     cb: CallbackQuery,
@@ -295,7 +305,11 @@ async def process_quality_selection(
         await cb.message.answer(_("An error occurred. Please start over with /cancel."))
         return
     
-    if quality_val == 1:
+    user_data = await state.get_data()
+    generation_type = user_data.get("generation_type")
+
+    # The Live Queue option should not be presented or processed for edits
+    if quality_val == 1 and generation_type != GenerationType.IMAGE_EDIT.value:
         db = PostgresConnection(db_pool, logger=business_logger)
         user_id = cb.from_user.id
         
@@ -311,13 +325,9 @@ async def process_quality_selection(
         
         await _forward_collages_to_log_chat(bot, state, cache_pool, user_id, business_logger)
 
-        # --- NEW LOGIC: Continue session instead of clearing state ---
-        
-        # 1. Delete the quality selection keyboard message
         with suppress(TelegramBadRequest):
             await cb.message.delete()
         
-        # 2. Send the success confirmation message
         channel_url = settings.bot.live_queue_channel_url
         success_text = (
             _("✅ Success! You've been added to the live queue.\n\n"
@@ -327,11 +337,7 @@ async def process_quality_selection(
         )
         await cb.message.answer(success_text)
 
-        # 3. Prepare and send the "next step" keyboard
-        user_data = await state.get_data()
         generated_in_session: Set[str] = set(user_data.get("generated_in_session", []))
-        
-        generation_type = user_data.get("generation_type")
         if generation_type:
             generated_in_session.add(generation_type)
         await state.update_data(generated_in_session=list(generated_in_session))
@@ -342,7 +348,6 @@ async def process_quality_selection(
             reply_markup=session_actions_kb.session_actions_kb(generated_in_session)
         )
 
-        # 4. Transition to the correct state
         await state.set_state(Generation.waiting_for_next_action)
         await state.update_data(next_step_message_id=session_actions_msg.message_id)
         return

@@ -1,7 +1,7 @@
 # aiogram_bot_template/keyboards/inline/pair_selection.py
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.i18n import gettext as _
-from .callbacks import ContinueWithPairPhotoCallback
+from .callbacks import ContinueWithPairPhotoCallback, EditImageCallback
 
 
 def continue_with_pair_photo_kb(
@@ -31,15 +31,24 @@ def continue_with_pair_photo_kb(
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def post_pair_photo_selection_kb() -> InlineKeyboardMarkup:
+def post_pair_photo_selection_kb(generation_id: int) -> InlineKeyboardMarkup:
     """
     Creates a keyboard for the final action after selecting a pair portrait.
     The 'Start a New Generation' button is replaced with 'Return to Menu'.
+
+    Args:
+        generation_id: The ID of the selected generation to enable editing.
 
     Returns:
         An inline keyboard with the next action step.
     """
     buttons = [
+        [
+            InlineKeyboardButton(
+                text=_("✏️ Edit This Portrait"),
+                callback_data=EditImageCallback(generation_id=generation_id).pack(),
+            )
+        ],
         [
             InlineKeyboardButton(
                 text=_("↩️ Return to Menu"), callback_data="return_to_session_menu"

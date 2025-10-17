@@ -10,15 +10,26 @@ from contextlib import suppress
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import LinkPreviewOptions
 
-
 from aiogram_bot_template.data.constants import GenerationType
 from aiogram_bot_template.db.db_api.storages import PostgresConnection
 from aiogram_bot_template.db.repo.users import add_or_update_user
 from aiogram_bot_template.keyboards.inline.callbacks import StartScenarioCallback
 from aiogram_bot_template.keyboards.inline.start_selection import start_scenario_kb
 from aiogram_bot_template.states.user import Generation
+from aiogram_bot_template.handlers import photo_handler
 
 router = Router(name="menu-handlers")
+
+
+async def _cancel_pending_photo_tasks(user_id: int) -> None:
+    """
+    Cancels any pending photo processing task for a given user.
+    """
+    if user_id in photo_handler.user_batch_tasks:
+        with suppress(Exception):
+            photo_handler.user_batch_tasks[user_id].cancel()
+        photo_handler.user_batch_tasks.pop(user_id, None)
+        photo_handler.user_batch_cache.pop(user_id, None)
 
 
 async def _cleanup_session_menu(bot: Bot, chat_id: int, state: FSMContext) -> None:
@@ -64,6 +75,10 @@ async def _cleanup_full_session(bot: Bot, chat_id: int, state: FSMContext) -> No
 
 async def send_welcome_message(msg: Message, state: FSMContext, is_restart: bool = False):
     """Sends the welcome/restart message and prompts for scenario selection."""
+    # --- FIX: Cancel pending tasks before clearing state ---
+    if msg.from_user:
+        await _cancel_pending_photo_tasks(msg.from_user.id)
+        
     await _cleanup_full_session(msg.bot, msg.chat.id, state)
     
     await state.clear()

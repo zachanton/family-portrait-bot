@@ -7,6 +7,7 @@ class GenerationType(str, Enum):
     CHILD_GENERATION = "child_generation"
     PAIR_PHOTO = "pair_photo"
     FAMILY_PHOTO = "family_photo"
+    IMAGE_EDIT = "image_edit"
 
 
 class ImageRole(str, Enum):

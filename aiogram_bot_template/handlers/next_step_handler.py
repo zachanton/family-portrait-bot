@@ -17,10 +17,11 @@ from aiogram_bot_template.db.db_api.storages import PostgresConnection
 from aiogram_bot_template.db.repo import generations as generations_repo, users as users_repo
 from aiogram_bot_template.keyboards.inline.callbacks import (
     RetryGenerationCallback, ContinueWithImageCallback, CreateFamilyPhotoCallback,
-    ContinueWithFamilyPhotoCallback, ContinueWithPairPhotoCallback, SessionActionCallback
+    ContinueWithFamilyPhotoCallback, ContinueWithPairPhotoCallback, SessionActionCallback,
+    EditImageCallback
 )
 from aiogram_bot_template.keyboards.inline import (
-    child_selection as child_selection_kb, 
+    child_selection as child_selection_kb,
     family_selection as family_selection_kb,
     pair_selection as pair_selection_kb,
     session_actions as session_actions_kb,
@@ -29,7 +30,6 @@ from aiogram_bot_template.keyboards.inline.gender import gender_kb
 from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.data.settings import settings
 from .menu import _cleanup_session_menu, _cleanup_full_session
-# --- UPDATED IMPORTS ---
 from .photo_handler import send_style_previews
 from aiogram_bot_template.services.pipelines.family_photo_pipeline import styles as family_styles
 from aiogram_bot_template.services.pipelines.pair_photo_pipeline import styles as pair_styles
@@ -47,7 +47,7 @@ async def _process_session_action_async(
 ):
     # This background task handles the slow logic for session actions.
     await _cleanup_session_menu(bot, cb.message.chat.id, state)
-    
+
     status_msg = await cb.message.answer(_("Got it! Preparing the new generation..."))
 
     user_data = await state.get_data()
@@ -59,13 +59,13 @@ async def _process_session_action_async(
         user_id=user_id, status="params_collected_session", source_images=[]
     )
     new_request_id = await generations_repo.create_generation_request(db, draft)
-    
+
     await state.update_data(
         request_id=new_request_id,
         generation_type=action_type.value,
         next_step_message_id=None
     )
-    
+
     await status_msg.delete()
     if action_type == GenerationType.CHILD_GENERATION:
         await state.set_state(Generation.choosing_child_gender)
@@ -120,7 +120,7 @@ async def return_to_session_menu(
 
     with suppress(TelegramBadRequest):
         await cb.message.delete()
-    
+
     user_data = await state.get_data()
     generated_in_session: Set[str] = set(user_data.get("generated_in_session", []))
 
@@ -139,16 +139,16 @@ async def start_new_generation(
     state: FSMContext,
 ):
     await callback.answer()
-    
+
     if not callback.message:
         await menu.send_welcome_message(callback.message, state, is_restart=True)
         return
 
     await _cleanup_full_session(callback.bot, callback.message.chat.id, state)
-    
+
     with suppress(TelegramBadRequest):
         await callback.message.delete()
-            
+
     await menu.send_welcome_message(callback.message, state, is_restart=True)
 
 
@@ -164,7 +164,7 @@ async def _process_retry_generation_async(
     await _cleanup_full_session(bot, cb.message.chat.id, state)
     with suppress(TelegramBadRequest):
         await cb.message.delete()
-    
+
     db = PostgresConnection(db_pool, logger=business_logger)
     original_request = await generations_repo.get_request_details_with_sources(
         db, callback_data.request_id
@@ -213,7 +213,7 @@ async def process_retry_generation(
     await cb.answer()
     if not cb.message:
         return
-    
+
     asyncio.create_task(_process_retry_generation_async(
         cb, callback_data, state, db_pool, business_logger, bot
     ))
@@ -233,7 +233,7 @@ async def _process_continue_with_image_async(
     db = PostgresConnection(db_pool, logger=business_logger)
     sql = "SELECT result_file_id FROM generations WHERE id = $1"
     result = await db.fetchrow(sql, (callback_data.generation_id,))
-    
+
     if not result or not result.data or not result.data.get("result_file_id"):
         await cb.message.answer(_("I couldn't find the selected image. Please start over with /start."))
         await state.clear()
@@ -250,7 +250,7 @@ async def _process_continue_with_image_async(
             request_id=callback_data.request_id
         )
     )
-    
+
     await state.update_data(
         selected_child_generation_id=callback_data.generation_id,
         next_step_message_id=sent_message.message_id
@@ -268,7 +268,7 @@ async def process_continue_with_image(
     await cb.answer()
     if not cb.message:
         return
-    
+
     asyncio.create_task(_process_continue_with_image_async(
         cb, callback_data, state, db_pool, business_logger, bot
     ))
@@ -284,7 +284,7 @@ async def _process_continue_with_family_photo_async(
 ):
     # This background task handles the slow logic for selecting a family photo.
     await _cleanup_session_menu(bot, cb.message.chat.id, state)
-    
+
     db = PostgresConnection(db_pool, logger=business_logger)
     sql = "SELECT result_file_id FROM generations WHERE id = $1"
     result = await db.fetchrow(sql, (callback_data.generation_id,))
@@ -299,7 +299,9 @@ async def _process_continue_with_family_photo_async(
         chat_id=cb.message.chat.id,
         photo=selected_file_id,
         caption=_("A wonderful choice! \n\nWhat would you like to do next?"),
-        reply_markup=family_selection_kb.post_family_photo_selection_kb()
+        reply_markup=family_selection_kb.post_family_photo_selection_kb(
+            generation_id=callback_data.generation_id
+        )
     )
     await state.update_data(next_step_message_id=sent_message.message_id)
 
@@ -315,7 +317,7 @@ async def process_continue_with_family_photo(
     await cb.answer()
     if not cb.message:
         return
-    
+
     asyncio.create_task(_process_continue_with_family_photo_async(
         cb, callback_data, state, db_pool, business_logger, bot
     ))
@@ -341,12 +343,14 @@ async def _process_continue_with_pair_photo_async(
         return
 
     selected_file_id = result.data["result_file_id"]
-    
+
     sent_message = await bot.send_photo(
         chat_id=cb.message.chat.id,
         photo=selected_file_id,
         caption=_("An excellent choice! \n\nWhat would you like to do next?"),
-        reply_markup=pair_selection_kb.post_pair_photo_selection_kb()
+        reply_markup=pair_selection_kb.post_pair_photo_selection_kb(
+            generation_id=callback_data.generation_id
+        )
     )
     await state.update_data(next_step_message_id=sent_message.message_id)
 
@@ -362,7 +366,7 @@ async def process_continue_with_pair_photo(
     await cb.answer()
     if not cb.message:
         return
-    
+
     asyncio.create_task(_process_continue_with_pair_photo_async(
         cb, callback_data, state, db_pool, business_logger, bot
     ))
@@ -379,7 +383,7 @@ async def _process_create_family_photo_async(
     # This background task handles the slow logic for creating a family photo.
     with suppress(TelegramBadRequest):
         await cb.message.delete()
-        
+
     status_msg = await bot.send_message(
         chat_id=cb.message.chat.id,
         text=_("Got it! Preparing the family photoshoot...")
@@ -388,7 +392,7 @@ async def _process_create_family_photo_async(
     db = PostgresConnection(db_pool, logger=business_logger)
     user_id = cb.from_user.id
     user_data = await state.get_data()
-    
+
     try:
         mom_profile_uid = user_data.get("mom_profile_uid")
         dad_profile_uid = user_data.get("dad_profile_uid")
@@ -399,12 +403,12 @@ async def _process_create_family_photo_async(
             {"file_unique_id": mom_profile_uid, "file_id": f"vr_mom_{mom_profile_uid}", "role": ImageRole.MOTHER.value},
             {"file_unique_id": dad_profile_uid, "file_id": f"vr_dad_{dad_profile_uid}", "role": ImageRole.FATHER.value},
         ]
-        
+
         sql_child = "SELECT result_image_unique_id, result_file_id FROM generations WHERE id = $1"
         child_res = await db.fetchrow(sql_child, (callback_data.child_generation_id,))
         if not child_res.data:
             raise ValueError("Could not find the selected child's image data.")
-        
+
         child_source = {
             "file_unique_id": child_res.data["result_image_unique_id"],
             "file_id": child_res.data["result_file_id"],
@@ -418,7 +422,7 @@ async def _process_create_family_photo_async(
             user_id=user_id, status="params_collected", source_images=source_images_dto
         )
         new_request_id = await generations_repo.create_generation_request(db, draft)
-        
+
         await state.update_data(
             request_id=new_request_id,
             generation_type=GenerationType.FAMILY_PHOTO.value,
@@ -431,11 +435,11 @@ async def _process_create_family_photo_async(
         await state.set_state(Generation.choosing_family_photo_style)
         sent_msg = await bot.send_message(
             chat_id=cb.message.chat.id,
-            text=_("The family is all here! Now, let's pick a style for your family portrait.")
+            text=_("The family is all here!\n\nNow, let's pick a style for your family portrait.")
         )
         # Store message ID for future cleanup
         await state.update_data(style_preview_message_ids=[sent_msg.message_id])
-        
+
         await send_style_previews(
             bot=bot,
             chat_id=cb.message.chat.id,
@@ -461,7 +465,55 @@ async def process_create_family_photo(
     await cb.answer()
     if not cb.message:
         return
-    
+
     asyncio.create_task(_process_create_family_photo_async(
         cb, callback_data, state, db_pool, business_logger, bot
     ))
+
+
+@router.callback_query(EditImageCallback.filter(), StateFilter(Generation.waiting_for_next_action))
+async def process_edit_image_request(
+    cb: CallbackQuery,
+    callback_data: EditImageCallback,
+    state: FSMContext,
+    db_pool: asyncpg.Pool,
+    business_logger: structlog.typing.FilteringBoundLogger,
+):
+    """
+    Handles the 'Edit Image' button press, sets the state, and asks for a text prompt.
+    """
+    await cb.answer()
+    if not cb.message:
+        return
+
+    db = PostgresConnection(db_pool, logger=business_logger)
+    # --- FIX: We need the `type` of the generation being edited ---
+    sql = "SELECT type FROM generations WHERE id = $1"
+    result = await db.fetchrow(sql, (callback_data.generation_id,))
+
+    if not result or not result.data:
+        await cb.message.answer(_("Sorry, I couldn't find that image to edit. Please /start over."))
+        await state.clear()
+        return
+
+    original_generation_type = result.data['type']
+
+    draft = generations_repo.GenerationRequestDraft(user_id=cb.from_user.id, status="editing", source_images=[])
+    new_request_id = await generations_repo.create_generation_request(db, draft)
+    
+    await state.set_state(Generation.waiting_for_edit_prompt)
+    await state.update_data(
+        source_generation_id=callback_data.generation_id,
+        original_generation_type=original_generation_type, # <-- This is the crucial fix
+        request_id=new_request_id,
+        edit_source_message_id=cb.message.message_id,
+    )
+
+    with suppress(TelegramBadRequest):
+        await cb.message.edit_caption(
+            caption=_(
+                "✍️ Let's get creative! Please send me a message with your desired changes.\n\n"
+                "<i>For example: 'make the hair blonde' or 'add a smile'.</i>"
+            ),
+            reply_markup=None
+        )

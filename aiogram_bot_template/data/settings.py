@@ -10,7 +10,7 @@ class BotConfig(BaseModel):
     live_queue_channel_url: str | None = None
     max_updates_in_queue: int = 100
     support_email: str = "support@example.com"
-    workers: int | None = None  # <-- NEW: Number of worker processes for photo processing
+    workers: int | None = None
 
     @computed_field
     @property
@@ -103,6 +103,7 @@ class Settings(BaseSettings):
     child_generation: GenerationConfig
     family_photo: GenerationConfig
     pair_photo: GenerationConfig
+    image_edit: GenerationConfig
 
     text_enhancer: EnhancerConfig = Field(default_factory=EnhancerConfig)
     visual_enhancer: EnhancerConfig = Field(default_factory=EnhancerConfig)

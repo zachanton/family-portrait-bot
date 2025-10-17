@@ -33,6 +33,11 @@ class CreateFamilyPhotoCallback(CallbackData, prefix="create_family"):
     child_generation_id: int
     parent_request_id: int
 
+# --- NEW CALLBACK ---
+class EditImageCallback(CallbackData, prefix="edit_img"):
+    """Callback to start the image editing flow for a specific generation."""
+    generation_id: int
+
 class StyleCallback(CallbackData, prefix="style"):
     """Callback for selecting a generation style."""
     style_id: str

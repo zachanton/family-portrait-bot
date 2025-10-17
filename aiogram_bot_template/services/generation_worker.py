@@ -27,6 +27,7 @@ from aiogram_bot_template.services.pipelines.base import BasePipeline
 from aiogram_bot_template.services.pipelines.child_generation_pipeline.child_generation import ChildGenerationPipeline
 from aiogram_bot_template.services.pipelines.family_photo_pipeline.family_photo import FamilyPhotoPipeline
 from aiogram_bot_template.services.pipelines.pair_photo_pipeline.pair_photo import PairPhotoPipeline
+from aiogram_bot_template.services.pipelines.image_edit_pipeline.image_edit import ImageEditPipeline
 from aiogram_bot_template.states.user import Generation
 from aiogram_bot_template.utils.status_manager import StatusMessageManager
 from aiogram_bot_template.services.photo_processing_manager import PhotoProcessingManager
@@ -36,6 +37,7 @@ PIPELINE_MAP: dict[str, Type[BasePipeline]] = {
     GenerationType.CHILD_GENERATION.value: ChildGenerationPipeline,
     GenerationType.FAMILY_PHOTO.value: FamilyPhotoPipeline,
     GenerationType.PAIR_PHOTO.value: PairPhotoPipeline,
+    GenerationType.IMAGE_EDIT.value: ImageEditPipeline,
 }
 
 SEND_DEBUG = True
@@ -46,7 +48,7 @@ async def _send_debug_if_enabled(
     """Sends the image to the user if debug mode is enabled in settings."""
     if not SEND_DEBUG or not uid:
         return
-    
+
     try:
         image_bytes, a = await image_cache.get_cached_image_bytes(uid, redis)
         if image_bytes:
@@ -96,62 +98,46 @@ async def run_generation_worker(
         
         await generations_repo.update_generation_request_status(db, request_id, "processing")
 
-        db_data = await generations_repo.get_request_details_with_sources(db, request_id)
-        if not db_data:
-            raise ValueError(f"GenerationRequest id={request_id} not found.")
+        db_data = {}
+        if generation_type != GenerationType.IMAGE_EDIT.value:
+            db_data = await generations_repo.get_request_details_with_sources(db, request_id)
+            if not db_data:
+                raise ValueError(f"GenerationRequest id={request_id} not found.")
 
         gen_data = {**user_data, **db_data, 'type': generation_type}
         
         pipeline = pipeline_class(
-            bot, gen_data, log, status.update, cache_pool, photo_manager=photo_manager
+            bot, gen_data, log, status.update, cache_pool, 
+            photo_manager=photo_manager, db_pool=db_pool
         )
         pipeline_output = await pipeline.prepare_data()
 
-        if "mom_profile_uid" not in user_data:
-            session_uids = {
-                "mom_profile_uid": pipeline_output.metadata.get("mom_profile_uid"),
-                "dad_profile_uid": pipeline_output.metadata.get("dad_profile_uid"),
-                "mom_front_dad_front_uid": pipeline_output.metadata.get("mom_front_dad_front_uid"),
-                "mom_front_dad_side_uid": pipeline_output.metadata.get("mom_front_dad_side_uid"),
-                "dad_front_mom_side_uid": pipeline_output.metadata.get("dad_front_mom_side_uid"),
-                "parent_front_side_uid": pipeline_output.metadata.get("parent_front_side_uid"),
-            }
-            if all(session_uids.values()):
-                await state.update_data(**session_uids)
-                log.info("Saved parent visual UIDs to FSM state for session.", uids=session_uids)
-            elif generation_type != GenerationType.FAMILY_PHOTO.value:
-                 log.warning("Could not find all required session UIDs in pipeline metadata to save.")
+        if generation_type != GenerationType.IMAGE_EDIT.value:
+            if "mom_profile_uid" not in user_data:
+                session_uids = {
+                    "mom_profile_uid": pipeline_output.metadata.get("mom_profile_uid"),
+                    "dad_profile_uid": pipeline_output.metadata.get("dad_profile_uid"),
+                    "mom_front_dad_front_uid": pipeline_output.metadata.get("mom_front_dad_front_uid"),
+                    "mom_front_dad_side_uid": pipeline_output.metadata.get("mom_front_dad_side_uid"),
+                    "dad_front_mom_side_uid": pipeline_output.metadata.get("dad_front_mom_side_uid"),
+                    "parent_front_side_uid": pipeline_output.metadata.get("parent_front_side_uid"),
+                }
+                if all(session_uids.values()):
+                    await state.update_data(**session_uids)
+                    log.info("Saved parent visual UIDs to FSM state for session.", uids=session_uids)
+                elif generation_type != GenerationType.FAMILY_PHOTO.value:
+                     log.warning("Could not find all required session UIDs in pipeline metadata to save.")
 
-        await _send_debug_if_enabled(
-            bot=bot, chat_id=chat_id, redis=cache_pool,
-            uid=pipeline_output.metadata.get("mom_collage_uid"),
-            caption="[DEBUG] mom_collage_uid."
-        )
-        await _send_debug_if_enabled(
-            bot=bot, chat_id=chat_id, redis=cache_pool,
-            uid=pipeline_output.metadata.get("mom_profile_uid"),
-            caption="[DEBUG] mom_profile_uid."
-        )
-        await _send_debug_if_enabled(
-            bot=bot, chat_id=chat_id, redis=cache_pool,
-            uid=pipeline_output.metadata.get("dad_collage_uid"),
-            caption="[DEBUG] dad_collage_uid."
-        )
-        await _send_debug_if_enabled(
-            bot=bot, chat_id=chat_id, redis=cache_pool,
-            uid=pipeline_output.metadata.get("dad_profile_uid"),
-            caption="[DEBUG] dad_profile_uid."
-        )
+            await _send_debug_if_enabled(bot, chat_id, cache_pool, pipeline_output.metadata.get("mom_collage_uid"), "[DEBUG] mom_collage_uid.")
+            await _send_debug_if_enabled(bot, chat_id, cache_pool, pipeline_output.metadata.get("mom_profile_uid"), "[DEBUG] mom_profile_uid.")
+            await _send_debug_if_enabled(bot, chat_id, cache_pool, pipeline_output.metadata.get("dad_collage_uid"), "[DEBUG] dad_collage_uid.")
+            await _send_debug_if_enabled(bot, chat_id, cache_pool, pipeline_output.metadata.get("dad_profile_uid"), "[DEBUG] dad_profile_uid.")
 
-        for i_uid, uid in enumerate(pipeline_output.metadata.get("processed_uids")):
-            await _send_debug_if_enabled(
-                bot=bot, chat_id=chat_id, redis=cache_pool,
-                uid=uid,
-                caption=f"[DEBUG] {i_uid} processed uid (final input to AI)."
-            )
+        for i_uid, uid in enumerate(pipeline_output.metadata.get("processed_uids", [])):
+            await _send_debug_if_enabled(bot, chat_id, cache_pool, uid, f"[DEBUG] {i_uid} processed uid (final input to AI).")
         
-        completed_prompts = pipeline_output.metadata.get("completed_prompts", [])
-        image_reference_list = pipeline_output.metadata.get("image_reference_list", [])
+        completed_prompts = pipeline_output.metadata.get("completed_prompts", [pipeline_output.request_payload.get("prompt")])
+        image_reference_list = pipeline_output.metadata.get("image_reference_list", [pipeline_output.request_payload.get("image_urls", [])[0]])
 
         for i in range(generation_count):
             current_iteration = i + 1
@@ -162,22 +148,16 @@ async def run_generation_worker(
             ))
 
             payload_override = pipeline_output.request_payload.copy()
-
-            if completed_prompts and i < len(completed_prompts):
-                final_prompt = completed_prompts[i]
-            else:
-                log_task.error("Completed prompt missing for this iteration.", gen_type=generation_type)
-                continue
-
-            if image_reference_list and i < len(image_reference_list):
-                image_reference = image_reference_list[i]
-            else:
-                log_task.error("Image reference missing for this iteration.", gen_type=generation_type)
-                continue
-                
+            
+            final_prompt = completed_prompts[i % len(completed_prompts)]
+            image_reference = image_reference_list[i % len(image_reference_list)]
+            
             payload_override["prompt"] = final_prompt
-            payload_override["image_urls"] = [ image_reference ]
+            payload_override["image_urls"] = [image_reference]
             payload_override["seed"] = random.randint(1, 1_000_000)
+
+            if generation_type == GenerationType.IMAGE_EDIT.value:
+                payload_override["original_generation_type"] = user_data.get("original_generation_type")
 
             log.info("Final prompt: ", final_prompt=payload_override["prompt"])
 
@@ -191,23 +171,40 @@ async def run_generation_worker(
 
             photo = BufferedInputFile(result.image_bytes, f"generation_{current_iteration}.png")
 
+            source_gen_id = user_data.get("source_generation_id") if generation_type == GenerationType.IMAGE_EDIT.value else None
+
             log_entry_draft = generations_repo.GenerationLog(
                 request_id=request_id, type=generation_type, status="completed",
                 quality_level=quality_level, trial_type=trial_type, seed=payload_override["seed"],
                 generation_time_ms=result.generation_time_ms,
                 api_request_payload=result.request_payload, api_response_payload=result.response_payload,
                 caption=pipeline_output.caption,
-                enhanced_prompt=final_prompt
+                enhanced_prompt=final_prompt,
+                source_generation_id=source_gen_id,
             )
             generation_id = await generations_repo.create_generation_log(db, log_entry_draft)
 
+            # --- START OF FIX ---
+            # Determine which keyboard to show.
+            # If it's an edit, use the original image type. Otherwise, use the current type.
+            markup_gen_type = generation_type
+            if generation_type == GenerationType.IMAGE_EDIT.value:
+                markup_gen_type = user_data.get("original_generation_type", generation_type)
+            
             reply_markup = None
-            if generation_type == GenerationType.CHILD_GENERATION.value:
-                reply_markup = child_selection.continue_with_image_kb(generation_id=generation_id, request_id=request_id)
-            elif generation_type == GenerationType.FAMILY_PHOTO.value:
-                reply_markup = family_selection.continue_with_family_photo_kb(generation_id=generation_id, request_id=request_id)
-            elif generation_type == GenerationType.PAIR_PHOTO.value:
-                reply_markup = pair_selection.continue_with_pair_photo_kb(generation_id=generation_id, request_id=request_id)
+            if markup_gen_type == GenerationType.CHILD_GENERATION.value:
+                reply_markup = child_selection.continue_with_image_kb(
+                    generation_id=generation_id, request_id=request_id
+                )
+            elif markup_gen_type == GenerationType.FAMILY_PHOTO.value:
+                reply_markup = family_selection.continue_with_family_photo_kb(
+                    generation_id=generation_id, request_id=request_id
+                )
+            elif markup_gen_type == GenerationType.PAIR_PHOTO.value:
+                reply_markup = pair_selection.continue_with_pair_photo_kb(
+                    generation_id=generation_id, request_id=request_id
+                )
+            # --- END OF FIX ---
 
             last_sent_message = await bot.send_photo(
                 chat_id=chat_id, photo=photo, caption=pipeline_output.caption, reply_markup=reply_markup
@@ -233,7 +230,7 @@ async def run_generation_worker(
         
         current_data = await state.get_data()
         generated_in_session: Set[str] = set(current_data.get("generated_in_session", []))
-        generated_in_session.add(generation_type)
+        generated_in_session.add(markup_gen_type)
         await state.update_data(generated_in_session=list(generated_in_session))
         
         existing_photo_ids = current_data.get("photo_message_ids", [])
@@ -265,4 +262,5 @@ async def run_generation_worker(
         if current_state and current_state not in [
             Generation.waiting_for_next_action, 
         ]:
-            await state.clear()
+            if current_state != Generation.waiting_for_edit_prompt:
+                await state.clear()

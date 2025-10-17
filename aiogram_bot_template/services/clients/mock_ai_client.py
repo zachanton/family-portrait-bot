@@ -39,14 +39,24 @@ class _MockImagesNamespace:
         await asyncio.sleep(1)
 
         generation_type = kwargs.get("generation_type")
+        
+        # --- FIX: The logic is now correct ---
+        if generation_type == GenerationType.IMAGE_EDIT.value:
+            # For edits, the "effective" type is the one we're mimicking.
+            effective_gen_type = kwargs.get("original_generation_type")
+            logger.info(
+                "MOCK Images: Detected IMAGE_EDIT, using original type for mock.",
+                original_type=effective_gen_type
+            )
+        else:
+            # For all other generations, the effective type is the generation type itself.
+            effective_gen_type = generation_type
+        
         role = kwargs.get("role")
         
         image_path = None
-        fallback_color = "red" # Default fallback color
+        fallback_color = "red"
 
-        # 1. Prioritize the 'role' parameter to identify parent visual generation,
-        # as this call doesn't use a standard GenerationType. This is more robust
-        # than checking for substrings in the prompt.
         if role == "mother":
             image_path = _MOCK_MOM_VISUAL_IMAGE_PATH
             fallback_color = "purple"
@@ -56,29 +66,28 @@ class _MockImagesNamespace:
             fallback_color = "orange"
             logger.info("MOCK Images: Using mock father visual representation (detected via role).")
         
-        # 2. If it's not a parent visual, use the explicit generation_type.
-        elif generation_type == GenerationType.CHILD_GENERATION.value:
+        elif effective_gen_type == GenerationType.CHILD_GENERATION.value:
             image_path = _MOCK_CHILD_IMAGE_PATH
             fallback_color = "lightblue"
             logger.info("MOCK Images: Using mock child image.")
         
-        elif generation_type in [GenerationType.FAMILY_PHOTO.value]:
+        elif effective_gen_type == GenerationType.FAMILY_PHOTO.value:
             image_path = _MOCK_FAMILY_IMAGE_PATH
             fallback_color = "darkgreen"
-            logger.info("MOCK Images: Using mock family image for this generation type.", type=generation_type)
+            logger.info("MOCK Images: Using mock family image for this generation type.", type=effective_gen_type)
         
-        elif generation_type in [GenerationType.PAIR_PHOTO.value]:
+        elif effective_gen_type == GenerationType.PAIR_PHOTO.value:
             image_path = _MOCK_PAIR_IMAGE_PATH
             fallback_color = "darkblue"
-            logger.info("MOCK Images: Using mock pair image for this generation type.", type=generation_type)
+            logger.info("MOCK Images: Using mock pair image for this generation type.", type=effective_gen_type)
 
-        # 3. Default to the family/group photo as a safe fallback.
         else:
             image_path = _MOCK_FAMILY_IMAGE_PATH
             fallback_color = "gray"
             logger.warning(
                 "MOCK Images: Could not determine specific image. Using default family image.",
                 gen_type=generation_type,
+                effective_type=effective_gen_type,
                 role=role
             )
 
@@ -86,7 +95,6 @@ class _MockImagesNamespace:
             image_bytes = image_path.read_bytes()
         except FileNotFoundError:
             logger.error("Mock image asset not found!", path=str(image_path))
-            # Create a fallback image if the asset is missing
             img = Image.new("RGB", (1024, 1024), fallback_color)
             buffer = io.BytesIO()
             img.save(buffer, format="PNG")

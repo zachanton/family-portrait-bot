@@ -35,6 +35,7 @@ from aiogram_bot_template.handlers import (
     settings as settings_handler,
     utility,
     child_params_handler,
+    edit_handler,  # <-- NEW
 )
 from aiogram_bot_template.services.photo_processor_service import initialize_worker
 from aiogram_bot_template.services.photo_processing_manager import PhotoProcessingManager
@@ -111,6 +112,7 @@ def setup_handlers(dp: Dispatcher) -> None:
     dp.include_router(quality_handler.router)
     dp.include_router(payment_handler.router)
     dp.include_router(next_step_handler.router)
+    dp.include_router(edit_handler.router)  # <-- NEW
 
 
 def setup_middlewares(dp: Dispatcher) -> None:
@@ -154,18 +156,13 @@ async def aiohttp_on_shutdown(app: web.Application) -> None:
 
 async def aiogram_on_startup(dispatcher: Dispatcher, bot: Bot) -> None:
     logger = dispatcher["aiogram_logger"]
-    
-    # --- UPDATED LOGIC FOR WORKER COUNT ---
-    # 1. Try to get the number from settings.
-    # 2. If not set, fall back to the number of CPU cores.
-    # 3. If CPU count can't be determined, use a safe default of 2.
+
     num_workers = settings.bot.workers or os.cpu_count() or 2
     logger.info(
         "Initializing photo processing pool...",
         workers=num_workers,
         source="config" if settings.bot.workers else "cpu_count_fallback"
     )
-    # --- END UPDATED LOGIC ---
     
     try:
         multiprocessing.set_start_method("spawn", force=True)

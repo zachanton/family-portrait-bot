@@ -23,6 +23,10 @@ class Generation(StatesGroup):
     choosing_pair_photo_style = State()
     choosing_family_photo_style = State()
 
+    # --- States for image editing ---
+    waiting_for_edit_prompt = State()
+    waiting_for_edit_quality = State() # <-- NEW
+
     # --- Common states for all pipelines ---
     waiting_for_quality = State()
     waiting_for_payment = State()

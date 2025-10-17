@@ -2,6 +2,7 @@
 from abc import ABC, abstractmethod
 from typing import Any
 import structlog
+import asyncpg  # <-- NEW IMPORT
 from aiogram import Bot
 from pydantic import BaseModel
 from redis.asyncio import Redis
@@ -32,6 +33,7 @@ class BasePipeline(ABC):
         update_status_func: callable,
         cache_pool: Redis,
         photo_manager: PhotoProcessingManager,
+        db_pool: asyncpg.Pool,  # <-- NEW ARGUMENT
     ) -> None:
         self.bot = bot
         self.gen_data = gen_data
@@ -39,6 +41,7 @@ class BasePipeline(ABC):
         self.update_status_func = update_status_func
         self.cache_pool = cache_pool
         self.photo_manager = photo_manager
+        self.db_pool = db_pool  # <-- NEW ATTRIBUTE
 
     @abstractmethod
     async def prepare_data(self) -> PipelineOutput:
