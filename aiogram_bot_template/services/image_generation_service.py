@@ -138,10 +138,12 @@ async def generate_image_with_reference(
             prompt = params_to_log.pop("prompt", "")
             image_urls = params_to_log.pop("image_urls", [])
             model_name = params_to_log.pop("model", "unknown")
+            generation_type = params_to_log.pop("generation_type", "unknown_type")
             asyncio.create_task(
                 local_file_logger.log_generation_to_disk(
                     prompt=prompt,
                     model_name=model_name,
+                    generation_type=generation_type,
                     user_id=user_id,
                     image_urls=image_urls,
                     params=params_to_log,

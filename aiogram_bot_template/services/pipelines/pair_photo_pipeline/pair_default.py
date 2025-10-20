@@ -20,6 +20,8 @@ FRAMING — {{STYLE_NAME}} “{{SCENE_NAME}}” (single frame)
 STYLE — {{STYLE_DEFINITION}}, {{SCENE_NAME}}
 {{STYLE_OPTIONS}}
 
+GAZE — lock precise alignment: for each person both eyes converge to the same target (partner’s eyes or camera), pupils equal size with single mirrored catchlights; forbid divergent/crossed gaze, misaligned irises, or inconsistent catchlight positions.
+
 HARD NEGATIVES:
 • Do not render a collage/diptych/grid/split screen. Ignore the INPUT LAYOUT for composition — it is for identity locking only.
 • No face swap/averaging. No slimming, geometry changes, or skin smoothing that removes micro-texture.

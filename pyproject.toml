@@ -71,6 +71,7 @@ insightface = ">=0.7"
 onnxruntime = "*" # Or a specific version if you prefer
 google-cloud-aiplatform = "^1.114.0"
 google-auth = "^2.40.3"
+google-api-python-client = "^2.185.0"
 
 
 [tool.poetry.group.local-ml]

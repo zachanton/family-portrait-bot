@@ -4,7 +4,7 @@ import uuid
 import structlog
 import numpy as np
 import json
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Any
 
 from aiogram_bot_template.data.settings import settings
 from aiogram_bot_template.services import similarity_scorer, photo_processing, image_cache
@@ -12,13 +12,15 @@ from aiogram_bot_template.services.clients import factory as client_factory
 from aiogram_bot_template.services.enhancers import identity_feedback_enhancer
 from aiogram_bot_template.services.enhancers.identity_feedback_enhancer import IdentityFeedbackResponse
 from aiogram_bot_template.services.photo_processing_manager import PhotoProcessingManager
+# --- NEW IMPORT ---
+from aiogram_bot_template.services import local_file_logger
 
 
 logger = structlog.get_logger(__name__)
 
 # --- NEW: Configuration for the iterative refinement process ---
 MAX_REFINEMENT_ITERATIONS = 2  # Total attempts: 1 initial + (N-1) refinements
-MIN_SIMILARITY_THRESHOLD = 0.8  # The target score for both embedding and LLM feedback
+MIN_SIMILARITY_THRESHOLD = 0.85  # The target score for both embedding and LLM feedback
 
 # --- Textual Feature Extractor Prompt (unchanged) ---
 _TEXTUAL_ENHANCEMENT_SYSTEM_PROMPT = """
@@ -211,10 +213,19 @@ async def get_parent_visual_representation(
     identity_centroid: Optional[np.ndarray] = None,
     cache_pool: Optional[object] = None,
     photo_manager: Optional[PhotoProcessingManager] = None,
+    user_id: Optional[int] = None,  # <-- NEW ARGUMENT
 ) -> Optional[bytes]:
     """
     Generates a consolidated visual representation (front and side view) of a parent,
     iteratively refining it to meet a similarity threshold.
+
+    Args:
+        image_url: The URL to the 2x2 collage of the parent.
+        role: The role of the parent ('mother' or 'father').
+        identity_centroid: The pre-calculated embedding centroid for this parent.
+        cache_pool: An async Redis connection pool.
+        photo_manager: The photo processing manager for worker tasks.
+        user_id: The ID of the user requesting the generation, for logging purposes.
     """
     if not photo_manager:
         raise ValueError("PhotoProcessingManager is required for parent visual representation.")
@@ -230,7 +241,8 @@ async def get_parent_visual_representation(
         visual_model=visual_config.model,
         text_model=text_config.model,
         image_url=image_url,
-        role=role
+        role=role,
+        user_id=user_id, # <-- Bind user_id for all subsequent logs
     )
 
     try:
@@ -266,10 +278,7 @@ async def get_parent_visual_representation(
         for attempt in range(1, MAX_REFINEMENT_ITERATIONS + 1):
             attempt_log = log.bind(attempt=f"{attempt}/{MAX_REFINEMENT_ITERATIONS}")
             
-            image_urls = [image_url]
-            prompt = ""
-            
-            generation_kwargs = {
+            generation_kwargs: dict[str, Any] = {
                 "model": visual_config.model,
                 "prompt": "",
                 "image_urls": [],
@@ -311,6 +320,26 @@ async def get_parent_visual_representation(
                 attempt_log.warning("Visual generator returned no image bytes for this attempt.")
                 continue
 
+            # --- NEW: Log the generation to disk ---
+            if settings.local_logging.enabled:
+                params_to_log = generation_kwargs.copy()
+                prompt_to_log = params_to_log.pop("prompt", "")
+                gen_type = f"parent_visual_{'refine' if attempt > 1 else 'initial'}_{role}"
+                
+                asyncio.create_task(
+                    local_file_logger.log_generation_to_disk(
+                        prompt=prompt_to_log,
+                        model_name=params_to_log.pop("model", "unknown"),
+                        generation_type=gen_type,
+                        user_id=user_id,
+                        image_urls=params_to_log.pop("image_urls", []),
+                        params=params_to_log,
+                        output_image_bytes=current_candidate_bytes,
+                        output_content_type="image/jpeg",
+                        base_dir=settings.local_logging.base_dir,
+                    )
+                )
+
             # --- Evaluate the generated image ---
             embedding_score = 0.0
             if identity_centroid is not None:
@@ -335,7 +364,7 @@ async def get_parent_visual_representation(
                 best_image_bytes = current_candidate_bytes
 
             # Check exit condition
-            if embedding_score >= MIN_SIMILARITY_THRESHOLD or llm_score >= MIN_SIMILARITY_THRESHOLD:
+            if embedding_score >= MIN_SIMILARITY_THRESHOLD and llm_score >= MIN_SIMILARITY_THRESHOLD:
                 attempt_log.info("Similarity thresholds met. Exiting refinement loop.")
                 break
         

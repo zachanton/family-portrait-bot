@@ -132,6 +132,9 @@ class ChildGenerationPipeline(BasePipeline):
         """
         Prepares data for child generation. Checks for existing session data first.
         """
+        # --- NEW: Get user_id for logging ---
+        user_id = self.gen_data.get("user_id")
+
         if "parent_front_side_uid" in self.gen_data:
             self.log.info("Reusing existing parent composite for session action.")
             parent_front_side_uid = self.gen_data["parent_front_side_uid"]
@@ -188,10 +191,10 @@ class ChildGenerationPipeline(BasePipeline):
 
         visual_tasks = [
             parent_visual_enhancer.get_parent_visual_representation(
-                mom_collage_url, role="mother", identity_centroid=mom_centroid, cache_pool=self.cache_pool, photo_manager=self.photo_manager
+                mom_collage_url, role="mother", identity_centroid=mom_centroid, cache_pool=self.cache_pool, photo_manager=self.photo_manager, user_id=user_id
             ),
             parent_visual_enhancer.get_parent_visual_representation(
-                dad_collage_url, role="father", identity_centroid=dad_centroid, cache_pool=self.cache_pool, photo_manager=self.photo_manager
+                dad_collage_url, role="father", identity_centroid=dad_centroid, cache_pool=self.cache_pool, photo_manager=self.photo_manager, user_id=user_id
             ),
         ]
         mom_profile_bytes, dad_profile_bytes = await asyncio.gather(*visual_tasks)
@@ -228,7 +231,7 @@ class ChildGenerationPipeline(BasePipeline):
         output = await self._prepare_child_prompts(mom_front_dad_front_url, mom_front_dad_side_url, dad_front_mom_side_url)
         
         output.metadata.update({
-            "mother_collage_uid": mom_collage_uid,
+            "mom_collage_uid": mom_collage_uid,
             "dad_collage_uid": dad_collage_uid,
             "mom_profile_uid": mom_profile_uid,
             "dad_profile_uid": dad_profile_uid,

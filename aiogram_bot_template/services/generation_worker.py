@@ -94,7 +94,7 @@ async def run_generation_worker(
         if not tier_config:
             raise ValueError(f"Tier config not found for type={generation_type}, quality={quality_level}")
 
-        generation_count = tier_config.count
+        generation_count = 5 #tier_config.count
         
         await generations_repo.update_generation_request_status(db, request_id, "processing")
 

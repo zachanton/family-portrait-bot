@@ -49,7 +49,7 @@ class PairPhotoPipeline(BasePipeline):
         framing_options = style_module.FRAMING_OPTIONS
         style_options = style_module.STYLE_OPTIONS
 
-        num_generations = tier_config.count
+        num_generations = 3# tier_config.count
         
         framing_keys = list(framing_options.keys())
         selected_scenes = random.choices(framing_keys, k=num_generations)
@@ -96,6 +96,9 @@ class PairPhotoPipeline(BasePipeline):
         """
         Prepares data for pair photo generation. Checks for existing session data first.
         """
+        # --- NEW: Get user_id for logging ---
+        user_id = self.gen_data.get("user_id")
+
         selected_style_id = self.gen_data.get("pair_photo_style")
         if not selected_style_id:
             raise ValueError("Pair photo style ID is missing from FSM data.")
@@ -156,10 +159,10 @@ class PairPhotoPipeline(BasePipeline):
 
         visual_tasks = [
             parent_visual_enhancer.get_parent_visual_representation(
-                mom_collage_url, role="mother", identity_centroid=mom_centroid, cache_pool=self.cache_pool, photo_manager=self.photo_manager
+                mom_collage_url, role="mother", identity_centroid=mom_centroid, cache_pool=self.cache_pool, photo_manager=self.photo_manager, user_id=user_id
             ),
             parent_visual_enhancer.get_parent_visual_representation(
-                dad_collage_url, role="father", identity_centroid=dad_centroid, cache_pool=self.cache_pool, photo_manager=self.photo_manager
+                dad_collage_url, role="father", identity_centroid=dad_centroid, cache_pool=self.cache_pool, photo_manager=self.photo_manager, user_id=user_id
             ),
         ]
         mom_profile_bytes, dad_profile_bytes = await asyncio.gather(*visual_tasks)
@@ -194,7 +197,7 @@ class PairPhotoPipeline(BasePipeline):
         output = await self._prepare_styled_pair_prompts(parent_front_side_url, selected_style_id)
         
         output.metadata.update({
-            "mother_collage_uid": mom_collage_uid,
+            "mom_collage_uid": mom_collage_uid,
             "dad_collage_uid": dad_collage_uid,
             "mom_profile_uid": mom_profile_uid,
             "dad_profile_uid": dad_profile_uid,

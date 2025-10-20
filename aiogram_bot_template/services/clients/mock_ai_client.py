@@ -15,7 +15,7 @@ from aiogram_bot_template.data.constants import GenerationType
 
 logger = structlog.get_logger(__name__)
 
-_ASSETS_DIR = Path(__file__).parent.parent.parent / "assets"/ "pair0"
+_ASSETS_DIR = Path(__file__).parent.parent.parent / "assets"/ "pair2"
 _MOCK_FAMILY_IMAGE_PATH = _ASSETS_DIR / "mock_family.jpg"
 _MOCK_PAIR_IMAGE_PATH = _ASSETS_DIR / "mock_pair.png"
 _MOCK_CHILD_IMAGE_PATH = _ASSETS_DIR / "mock_son1.png"
