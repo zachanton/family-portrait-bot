@@ -20,7 +20,7 @@ FRAMING — {{STYLE_NAME}} “{{SCENE_NAME}}” (single frame)
 STYLE — {{STYLE_DEFINITION}}, {{SCENE_NAME}}
 {{STYLE_OPTIONS}}
 
-GAZE — lock precise alignment: for each person both eyes converge to the same target (partner’s eyes or camera), pupils equal size with single mirrored catchlights; forbid divergent/crossed gaze, misaligned irises, or inconsistent catchlight positions.
+GAZE — lock precise alignment: for each person both eyes converge to the same target, pupils equal size with single mirrored catchlights; forbid divergent/crossed gaze, misaligned irises, or inconsistent catchlight positions.
 
 HARD NEGATIVES:
 • Do not render a collage/diptych/grid/split screen. Ignore the INPUT LAYOUT for composition — it is for identity locking only.
@@ -28,6 +28,7 @@ HARD NEGATIVES:
 • Render hands naturally; strictly forbid finger interlacing/interlocking between individuals.
 • No heavy HDR, teal-orange overgrade, strong vignette, or visible brand logos/signage.
 • Identity overrides style in every conflict.
+• No full-tooth smiles; smiles must be closed-lip or at most slightly reveal the upper teeth (never fully visible).
 
 GENERATION ORDER:
 1) Lock identity (front + profile per person).

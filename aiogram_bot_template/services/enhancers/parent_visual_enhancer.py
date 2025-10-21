@@ -21,7 +21,7 @@ logger = structlog.get_logger(__name__)
 MAX_REFINEMENT_ITERATIONS = 2  # Total attempts: 1 initial + (N-1) refinements
 MIN_SIMILARITY_THRESHOLD = 0.85  # The target score for both embedding and LLM feedback
 
-# --- Textual Feature Extractor Prompt (unchanged) ---
+# --- MODIFIED: Enhanced system prompt with strict consistency filter ---
 _TEXTUAL_ENHANCEMENT_SYSTEM_PROMPT = """
 You are an expert AI photo analyst. Your mission is to distill the unique, permanent facial characteristics from a 2x2 photo collage into a concise descriptive paragraph. This description will guide a visual AI to recreate the person with maximum fidelity.
 
@@ -29,6 +29,7 @@ You are an expert AI photo analyst. Your mission is to distill the unique, perma
 1.  **Evidence-Based Analysis:** Your description must be grounded **exclusively** in the visual evidence from the collage. Do not invent, infer, or 'beautify' features.
 2.  **Synthesize a Consensus:** Analyze all four tiles to form a consensus. If features vary (e.g., glasses on/off, hair styled differently), describe the most prevalent version. Your output must be a single, coherent description of one person.
 3.  **Focus on Uniqueness and Identity:** Your primary goal is to capture what makes this person unique. Pay close attention to asymmetries, specific shapes, and distinct marks.
+4.  **Filter for Consistency:** If a minor feature (mole, scar, temporary blemish, shadow, or mark) is not clearly present in the majority (at least 3 out of 4) of the images, you **MUST IGNORE IT**. Your description should only represent permanent, consensus traits.
 
 **Feature Analysis Checklist (Address each point):**
 *   **Overall Face Shape:** Describe the geometric shape of the face (e.g., oval, long, square with a strong jaw).
@@ -38,7 +39,7 @@ You are an expert AI photo analyst. Your mission is to distill the unique, perma
 *   **Nose:** Characterize the bridge, tip, and nostril shape (e.g., 'a straight nasal bridge with a slightly upturned, rounded tip').
 *   **Mouth & Lips:** Note the shape and fullness (e.g., 'thin upper lip with a sharply defined Cupid's bow').
 *   **Chin & Jawline:** Describe the chin's shape and the jaw's definition (e.g., 'a prominent, square chin and a well-defined jawline').
-*   **Distinctive Features:** Mention any prominent asymmetries, scars, moles, or freckle patterns and their locations (e.g., 'a small mole above the right eyebrow; the left corner of the mouth is slightly higher than the right').
+*   **Distinctive Features:** Mention any prominent **and consistent** asymmetries, scars, moles, or freckle patterns and their locations (e.g., 'a small mole above the right eyebrow; the left corner of the mouth is slightly higher than the right'). **Crucially, if a mark is not visible in at least 3 of the 4 tiles, do not mention it.**
 *   **Eyewear:** Describe the consensus frame style only if present in ALL images (e.g., 'wears thin, black rectangular-framed glasses').
 
 **Output Format:**
@@ -49,7 +50,7 @@ You are an expert AI photo analyst. Your mission is to distill the unique, perma
 **Example Output:** "This person has a long, oval face with high cheekbones. Key features to preserve are their deep-set, dark brown eyes and thick, arched eyebrows. The nose is characterized by a straight dorsal bridge and a well-defined tip. They have a prominent square chin. A noticeable feature is a small mole on the left cheek, just beside the nostril. The person does not wear glasses."
 """
 
-# --- Initial Visual Generator Prompt (unchanged) ---
+# --- MODIFIED: Initial Visual Generator Prompt with new smile logic ---
 _PARENT_VISUAL_ENHANCER_SYSTEM_PROMPT = """
 You are Nano Banana (Gemini 2.5 Flash Image) acting as an ID-consolidation module (InstantID / PhotoMaker / ID-Adapter style).
 
@@ -59,8 +60,8 @@ INPUT
 
 GOAL
 Produce ONE photorealistic image with TWO equal-width, full-bleed panels arranged horizontally:
-• LEFT panel — ONE FULL-BLEED NEAR-FRONTAL view (yaw ≤ 10°), eyes open, relaxed expression, gentle smile.
-• RIGHT panel — ONE FULL-BLEED STRICT RIGHT PROFILE (yaw 90° ± 3°), eyes open, natural posture.
+• LEFT panel — ONE FULL-BLEED NEAR-FRONTAL view (yaw ≤ 10°), eyes open, with a natural, gentle, evidence-based smile.
+• RIGHT panel — ONE FULL-BLEED STRICT RIGHT PROFILE (yaw 90° ± 3°), eyes open, natural posture and the same gentle smile expression.
 
 CRITICAL IDENTITY DIRECTIVES (from prior analysis):
 {{ENHANCED_IDENTITY_FEATURES}}
@@ -73,10 +74,16 @@ HARD IDENTITY LOCK — copy EXACTLY and keep natural asymmetries:
 • Philtrum length; lip shape and corner angle.
 • Beard/stubble density pattern (if present).
 • Chin projection, jaw angle; ear helix/antihelix/lobe notches — do NOT simplify.
-• Skin micro-texture (pores, freckles, tiny scars, mild redness): NO beauty smoothing, NO makeup.
+• Skin micro-texture (pores, freckles, tiny scars, mild redness): NO beauty smoothing, NO makeup. Ignore distinctive features not mentioned in CRITICAL IDENTITY DIRECTIVES.
+
+EXPRESSION (EVIDENCE-BASED SMILE) — CRITICAL PRIORITY:
+• Analyze all four tiles. If a natural, gentle, closed-lip or slightly-parted smile is present in **at least one** tile, you MUST reproduce that specific smile as the consensus expression for both the frontal and profile views.
+• The goal is a warm, approachable look, not a neutral passport photo.
+• If all tiles show a strictly neutral expression, then reproduce the most relaxed neutral expression.
+• Do NOT invent a wide, toothy grin or an artificial smile. The expression must be authentic to the person shown in the input collage.
 
 FUSE & CONSENSUS
-• Fuse identity features from ALL four tiles. Resolve disagreements by majority/consensus; do NOT average toward a generic face.
+• Fuse identity features from ALL four tiles. Resolve disagreements by majority/consensus; do NOT average toward a generic face. **The EXPRESSION rule above overrides this for smiles.**
 • Keep age, weight, cheek fullness and mid-face volume unchanged (NO slimming/“beautification”).
 
 AESTHETIC TIE-BREAKERS (NON-INVENTIVE — CHOOSE ONLY FROM WHAT EXISTS IN THE FOUR TILES)

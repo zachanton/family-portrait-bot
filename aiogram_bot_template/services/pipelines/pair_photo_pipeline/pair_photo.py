@@ -49,13 +49,13 @@ class PairPhotoPipeline(BasePipeline):
         framing_options = style_module.FRAMING_OPTIONS
         style_options = style_module.STYLE_OPTIONS
 
-        num_generations = 3# tier_config.count
+        num_generations = tier_config.count
         
         framing_keys = list(framing_options.keys())
         selected_scenes = random.choices(framing_keys, k=num_generations)
         selected_scenes = framing_keys
-        self.log.info("framing_keys: ", framing_keys=framing_keys)
 
+        self.log.info("framing_keys: ", framing_keys=framing_keys)
         self.log.info("selected_scenes: ", selected_scenes=selected_scenes)      
 
         completed_prompts = []

@@ -18,7 +18,7 @@ Framing: vertical 3/4; MAN framed knees-to-head; WOMAN fully seated including fo
 Blocking: WOMAN on LEFT seated sideways on a lounger with knees pointing RIGHT; MAN on RIGHT standing on deck slightly forward of her knees; visible gap (no touch); both heads at similar depth.
 Pose: WOMAN sits upright, legs together, ankles lightly crossed; MAN stands relaxed, weight mostly on left leg, feet hip-width.
 Hands & props: each person holds their OWN pastel milkshake in a tall clear glass with a straw; WOMAN holds hers with both hands at mid-chest; MAN holds his in right hand at sternum level; left hand relaxed at side or in pocket; straws NOT in mouths; no towel or scarf.
-Gazes: WOMAN looks up toward MAN smiling; MAN looks toward WOMAN or camera with calm expression; both faces fully visible and unobstructed by props.
+Gazes: WOMAN looks up toward MAN smiling; MAN looks toward camera with calm expression; both faces fully visible and unobstructed by props.
 Ownership: each drink and each pair of sunglasses belongs to the wearer/holder only.
 Optics: ≈50–85 mm; f/2.8–4; both subjects tack-sharp; soft background; clean oval/round catchlights.""",
 
@@ -76,21 +76,12 @@ Gazes: warm eye contact; faces fully visible and unobstructed by glass, straw, u
 Ownership: the cocktail belongs to WOMAN; currently held only by MAN.
 Optics: ≈50–85 mm; f/2.8–4; subjects tack-sharp; soft background; clean oval/round catchlights; control glare on glass and coping.""",
 
-    "Diner Jukebox Pick v1": """Mid-century diner corner with chrome jukebox; pastel neon glow; checker floor softly blurred; signage unreadable.
-Framing: vertical 9:16 medium close-up; chest-up; faces together ≥40% of frame area; each face ≥18% of frame width; camera at eye level; background soft.
-Blocking: WOMAN on LEFT slightly forward of the jukebox at 3/4 to camera facing RIGHT; MAN on RIGHT at 3/4 to camera facing LEFT; small visible gap (no body contact); both heads at similar distance to camera (same depth).
-Pose: WOMAN raises her right hand to indicate a selection button on the jukebox panel without touching the glass; left hand relaxed at her waist. MAN holds a single coin in his right hand near the coin slot at sternum level; left hand relaxed on his hip or lightly on the jukebox side; hands never touch each other or faces.
-Hands & props: one coin belongs to MAN; jukebox is an environment prop; no drinks, no towels, no sunglasses in hands; no finger interlacing.
-Gazes: they glance warmly at each other (not at the glass); both faces fully visible and unobstructed by reflections or hands.
-Ownership: the coin belongs to MAN; all worn items belong to their wearer.
-Optics: ≈50–85 mm; f/2.8–4; both subjects tack-sharp; soft background; clean oval/round catchlights; control reflections on glass and chrome.""",
-
     "Diner Booth Milkshake Cheer v1": """Mid-century diner booth with pastel vinyl seats and window blinds; napkin dispenser and sugar shaker as soft context; signage unreadable.
 Framing: vertical 9:16 medium; seated chest-to-head; subjects fill ≈60–70% of frame; faces together ≥40% of frame area; each face ≥18% of frame width; camera at eye level from aisle side to keep both heads at same depth (same bench).
 Blocking: WOMAN on LEFT and MAN on RIGHT seated on the same booth bench, shoulders aligned toward camera at slight 3/4; small visible gap (no body contact).
 Pose: each person lifts their OWN tall clear milkshake slightly above table level for a soft "cheer" with a small air gap between glasses (no clink); elbows relaxed; glasses kept below chin line so faces remain unobstructed.
 Hands & props: two pastel milkshakes (clear glasses) with straws; each belongs to and is held by its owner; straws NOT in mouths and angled away from faces; no additional handheld props; no finger interlacing.
-Gazes: they look at each other smiling; both faces fully visible with eyes clear.
+Gazes: WOMAN looks toward camera with calm expression; MAN looks toward camera with calm expression; both faces fully visible with eyes clear.
 Ownership: each drink belongs to its holder; booth items (napkin dispenser, sugar shaker) remain untouched background.
 Optics: ≈50–70 mm; f/2.8–4; both subjects tack-sharp; soft background; clean catchlights; control glass and straw reflections to avoid hotspots on skin.""",
 
@@ -157,7 +148,25 @@ Gazes: bright, excited smiles as they briefly look at each other (not down at th
 Ownership: map belongs to WOMAN; MAN points only above the map.
 Optics: ≈50–85 mm; f/3.2–4; both subjects tack-sharp; controlled speculars on car chrome; clean catchlights; gentle neon/sky reflections on glass.""",
 
+ "Motel Convertible Door Courtesy v1": """Motel exterior curbside with a pastel 1950s convertible (top down); chrome trim; neon glow; license plate and badges unreadable.
+Framing: vertical 9:16 medium-to-3/4; subjects ≈60–70% of frame; faces together ≥40% of frame area; each face ≥18% of frame width; camera at eye level; background softly blurred.
+Blocking: WOMAN on LEFT at the open passenger door, slight 3/4 to camera; MAN on RIGHT outside the car holding the passenger door open; small visible gap (no body contact); both heads at similar depth.
+Pose: WOMAN steps in with one foot on the floorboard and the other on the curb, torso upright; left hand lightly on the door frame; right hand gathers her skirt at hip level. MAN holds the door by the outer handle with his right hand; left hand rests on the upper window frame; he does not touch WOMAN or her garments.
+Hands & props: no handheld items; car is environment only; door edge and frame stay below chin line; no sunglasses in hands.
+Gazes: warm smiles as they look at each other; faces fully visible and unobstructed by the door frame.
+Ownership: all worn items belong to their wearer; car remains environment.
+Optics: ≈50–85 mm; f/3.2–4; both subjects tack-sharp; controlled speculars on chrome; clean oval/round catchlights.
+Negative constraints: no leaning inside so that faces are occluded; no finger interlacing; plates and brand badges unreadable.""",
 
+    "Roof Rack Suitcase Strap v1": """Roadside outside a diner/motel with a pastel 1950s station wagon/sedan and roof rack; license plate and badges unreadable.
+Framing: vertical 9:16 medium; subjects fill ≈60–70% of frame; faces together ≥40% of frame area; each face ≥18% of frame width; camera at eye level.
+Blocking: WOMAN on LEFT stands by the rear door and steadies a single pastel suitcase on the roof rack; MAN on RIGHT stands at the rack’s opposite side tightening the strap; small visible gap (no body contact); both heads at similar depth.
+Pose: WOMAN holds the suitcase side handle with her right hand; left hand rests on the rack rail; she does not touch MAN or the strap. MAN pulls the buckle strap with both hands above the case; strap runs flat across the suitcase; he does not touch WOMAN or her hands.
+Hands & props: one unbranded hard-sided suitcase (belongs to WOMAN); one fabric strap with buckle (handled by MAN); no extra bags or tools.
+Gazes: excited smiles as they look at each other; faces fully visible and unobstructed by the suitcase or strap.
+Ownership: suitcase belongs to WOMAN; strap handled by MAN; car is environment only.
+Optics: ≈50–85 mm; f/3.2–4; subjects tack-sharp; soft background; controlled speculars on car paint/chrome; clean catchlights.
+Negative constraints: no finger interlacing; no readable logos/plates; no faces occluded by luggage or strap.""",
 
 }
 
@@ -216,13 +225,6 @@ Wardrobe: WOMAN—1950s pastel one-piece or playsuit swimsuit, optional light he
 Props: the single cocktail is held ONLY by MAN; no towel, no duplicate drinks, no bottles.
 Finish: micro-cleanup only; retain natural skin texture and fine water droplets; no face slimming; maintain crisp edges on the glass, umbrella, and straw; eyes and catchlights remain tack-sharp.""",
 
-    "Diner Jukebox Pick v1": """Light: golden-hour window fill plus soft pastel neon from the jukebox; cyan/mint bounce from chrome; add mild frontal fill to keep eyes bright; avoid hard speculars on glass.
-Grade: warm skin vs cool mint/rose highlights; restrained pastel saturation; medium contrast; clean blacks; gentle halation on neon; no vignette.
-Atmosphere: quiet hum of diner; reflections controlled; background markings unreadable.
-Wardrobe: WOMAN—1950s pastel day dress or cardigan over a blouse; small earrings; no sunglasses. MAN—bowling shirt or short-sleeve retro shirt, tailored trousers/shorts, slim watch; no sunglasses.
-Props: a single coin (MAN) and the jukebox as environment; no additional handheld props.
-Finish: micro-cleanup only; retain fine skin texture; no face slimming; manage glass/chrome reflections to avoid warping faces.""",
-
     "Diner Booth Milkshake Cheer v1": """Light: soft window key with gentle side direction; cyan bounce from tabletop chrome; subtle warm rim from practicals; mild frontal fill to keep eyes bright; control highlights on glass.
 Grade: warm skin against cool aqua/mint; restrained pastel saturation; medium contrast; clean blacks; gentle halation on highlights; no vignette.
 Atmosphere: calm booth setting; background signage unreadable; no condensation drip trails across faces.
@@ -278,5 +280,19 @@ Atmosphere: quiet parking lot; car license/badges unreadable; diner signage unre
 Wardrobe: WOMAN—pastel summer dress or blouse with light cardigan; no sunglasses. MAN—bowling shirt or short-sleeve button-up; tailored trousers/shorts; slim watch; no sunglasses. Footwear: if worn, left and right shoes for each person must match (identical pair); no mismatched shoes.
 Props: one unbranded road map (belongs to WOMAN); car as environment only; no branded bags or bottles.
 Finish: micro-cleanup only; retain natural skin texture and paper fold detail; no face slimming; crisp map edges and car chrome highlights; eyes and catchlights remain tack-sharp.""",
+
+"Motel Convertible Door Courtesy v1": """Light: golden-hour soft key with gentle neon rim; mint/cyan bounce from chrome; mild frontal fill to keep eyes bright; control reflections on car paint.
+Grade: warm skin vs cool aqua/mint accents; restrained pastel saturation; medium contrast; clean blacks; gentle halation on chrome; no vignette.
+Atmosphere: calm curbside; signage unreadable; no wind-blown hair across eyes.
+Wardrobe: WOMAN—pastel day dress or playsuit with light cardigan; small earrings. MAN—short-sleeve bowling shirt or button-up, tailored trousers/shorts, slim watch. Footwear: if worn, left and right shoes for each person must match (identical pair); no mismatched shoes.
+Props: none handheld; car door as environment only.
+Finish: micro-cleanup only; retain fine skin texture; no face slimming; maintain crisp door/frame edges; eyes and catchlights remain tack-sharp.""",
+
+    "Roof Rack Suitcase Strap v1": """Light: golden-hour soft key; cyan/mint bounce from car and diner façade; gentle warm rim on hair/shoulders; mild fill to keep eyes bright.
+Grade: warm skin vs cool aqua/mint; restrained pastel saturation; medium contrast; clean blacks; gentle halation on chrome/paint; no vignette.
+Atmosphere: calm roadside; signage and plates unreadable; no wind-blown paper/strap across faces.
+Wardrobe: WOMAN—pastel summer dress or blouse with cardigan; MAN—bowling shirt or short-sleeve button-up; no sunglasses. Footwear: if worn, left and right shoes for each person must match (identical pair); no mismatched shoes.
+Props: one unbranded suitcase (WOMAN) and a single roof-strap with buckle (handled by MAN); no extra bags or tools.
+Finish: micro-cleanup only; retain natural skin texture and fabric detail; no face slimming; maintain crisp edges on strap, buckle, and suitcase; eyes and catchlights remain tack-sharp.""",
 
 }

@@ -161,6 +161,7 @@ async def process_photo_batch(
             await status_msg.edit_text(_("Hmm, I had trouble with those photos. Could you please try sending them again?"))
             return
         
+        # This now returns a fully filtered and sorted list of the main person's portraits
         processed_photos_info = await photo_manager.process_photo_batch(photo_inputs)
         
         if not processed_photos_info:
@@ -186,6 +187,7 @@ async def process_photo_batch(
         mom_photos_count = sum(1 for p in photos_collected if p.get("role") == ImageRole.MOTHER.value)
         current_role = ImageRole.MOTHER if mom_photos_count < MIN_PHOTOS_PER_PARENT else ImageRole.FATHER
 
+        # Add the newly processed and sorted photos to the state
         photos_collected.extend([
             {
                 "file_id": file_id,
@@ -203,16 +205,14 @@ async def process_photo_batch(
         mom_photos = [p for p in photos_collected if p['role'] == ImageRole.MOTHER.value]
         dad_photos = [p for p in photos_collected if p['role'] == ImageRole.FATHER.value]
         
-        parent_to_sort = None
+        parent_to_process_collage = None
         if len(mom_photos) >= MIN_PHOTOS_PER_PARENT and not data.get("mom_photos_sorted"):
-            parent_to_sort = (mom_photos, ImageRole.MOTHER.value, "mom_photos_sorted")
+            parent_to_process_collage = (mom_photos, ImageRole.MOTHER.value, "mom_photos_sorted")
         elif len(dad_photos) >= MIN_PHOTOS_PER_PARENT and not data.get("dad_photos_sorted"):
-            parent_to_sort = (dad_photos, ImageRole.FATHER.value, "dad_photos_sorted")
+            parent_to_process_collage = (dad_photos, ImageRole.FATHER.value, "dad_photos_sorted")
         
-        await status_msg.edit_text(_("Ensuring photos are consistent... ✨"))
-        
-        if parent_to_sort:
-            photos_list, role_str, state_flag = parent_to_sort
+        if parent_to_process_collage:
+            photos_list, role_str, state_flag = parent_to_process_collage
             
             request_id = data.get("request_id")
             if not request_id:
@@ -223,13 +223,20 @@ async def process_photo_batch(
                 await state.update_data(request_id=request_id)
                 log.info("Created new GenerationRequest in DB.", request_id=request_id)
 
-            bytes_tasks = [image_cache.get_cached_image_bytes(p['file_unique_id'], cache_pool) for p in photos_list]
+            # --- REFACTORED LOGIC ---
+            # The list is already sorted by identity. Just take the top N photos for the collage.
+            best_photos = photos_list[:MIN_PHOTOS_PER_PARENT]
+            
+            bytes_tasks = [image_cache.get_cached_image_bytes(p['file_unique_id'], cache_pool) for p in best_photos]
             cached_results = await asyncio.gather(*bytes_tasks)
-            photos_with_bytes = [{**photos_list[i], 'bytes': b} for i, (b, _) in enumerate(cached_results) if b]
+            best_photos_bytes = [b for b, _ in cached_results if b]
             
-            best_photos = await photo_manager.sort_and_filter_by_identity(photos_with_bytes, target_count=MIN_PHOTOS_PER_PARENT)
-            
-            best_photos_bytes = [p['bytes'] for p in best_photos]
+            # Ensure we have the correct number of byte arrays for the collage function
+            if len(best_photos_bytes) != MIN_PHOTOS_PER_PARENT:
+                log.error("Mismatch in byte count for collage creation.",
+                          expected=MIN_PHOTOS_PER_PARENT, got=len(best_photos_bytes))
+                raise ValueError("Could not retrieve all necessary bytes for collage.")
+
             collage_bytes = await photo_manager.create_portrait_collage(best_photos_bytes)
             
             collage_uid = f"collage_{role_str}_proc_{request_id}"
@@ -239,12 +246,11 @@ async def process_photo_batch(
             await state.update_data(**state_update_payload)
             log.info("Created and cached parent collage.", role=role_str, collage_uid=collage_uid)
 
-            for p in best_photos: p.pop('bytes', None)
+            # Update the state to only contain the best photos for this parent
             other_parent_photos = [p for p in photos_collected if p['role'] != role_str]
             updated_photos_collected = other_parent_photos + best_photos
-            
             await state.update_data(photos_collected=updated_photos_collected)
-            log.info("Filtered and sorted photos for parent.", role=role_str, final_count=len(best_photos))
+            log.info("Finalized photo selection for parent.", role=role_str, final_count=len(best_photos))
 
             source_images_dto = [(p["file_unique_id"], p["file_id"], p["role"]) for p in best_photos]
             sql_insert_image = """
@@ -254,7 +260,7 @@ async def process_photo_batch(
             images_data = [(request_id, uid, fid, role) for uid, fid, role in source_images_dto]
             await db.execute(sql_insert_image, images_data)
             log.info("Saved parent source images to DB.", role=role_str, count=len(images_data))
-
+            # --- END OF REFACTORED LOGIC ---
 
         await status_msg.delete()
 
