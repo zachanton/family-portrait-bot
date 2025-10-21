@@ -12,7 +12,6 @@ from aiogram_bot_template.services.clients import factory as client_factory
 from aiogram_bot_template.services.enhancers import identity_feedback_enhancer
 from aiogram_bot_template.services.enhancers.identity_feedback_enhancer import IdentityFeedbackResponse
 from aiogram_bot_template.services.photo_processing_manager import PhotoProcessingManager
-# --- NEW IMPORT ---
 from aiogram_bot_template.services import local_file_logger
 
 
@@ -120,33 +119,35 @@ OUTPUT
 
 # --- NEW: Visual Refinement Prompt ---
 _PARENT_VISUAL_REFINEMENT_PROMPT = """
-You are Nano Banana (Gemini 2.5 Flash Image) acting as an advanced ID-refinement module. Your task is to perform targeted, in-place editing on a candidate image to maximize its identity match with a reference.
+Task: Identity refinement with strict layout preservation.
 
-**INPUTS**
-*   **Image A (Reference Collage):** The absolute ground truth for the person's identity. This is a 2x2 collage.
-*   **Image B (Candidate to Refine):** The image you must edit. This is a horizontal image with two panels (front and side view).
+Inputs:
+• Attachment #1 = reference collage of the same person (one or many portraits). This defines the target identity.
+• Attachment #2 = current "front & side" layout (two views on a neutral background). This defines the exact layout to keep.
 
-**GOAL**
-Edit **Image B** *in-place*. Do NOT regenerate it from scratch. Your goal is to modify it to perfectly match the identity in **Image A**, based on the specific feedback provided below. The final output must retain the exact two-panel layout and style of Image B.
+Goal:
+Generate a NEW image by editing/re-rendering Attachment #2 so that BOTH views look like the person in Attachment #1, while preserving the exact layout, framing, and style of Attachment #2.
 
-**DETAILED FEEDBACK FOR REFINEMENT (Apply these changes to Image B):**
-{{DETAILED_FEEDBACK}}
+Hard constraints (must not change):
+1) Keep the layout identical to Attachment #2: exactly two panels, same positions, same background, same aspect ratio, same resolution, same head scale and crop, same camera angles (front + the SAME side as in Attachment #2), same lighting direction and overall tonality.
+2) Keep the pose neutrality and expression neutrality.
+3) Do NOT add or remove panels, borders, text, logos, watermarks, props, accessories, or clothing details not present in Attachment #2.
+4) Keep overall color balance and exposure consistent with Attachment #2 (minor global corrections allowed to match identity only).
 
-**UNCHANGING CONSTRAINTS (These must be preserved from Image B):**
-*   **Layout:** One landscape canvas, aspect ratio 9:8, with two equal-width, full-bleed panels (front view on left, profile on right).
-*   **Background:** Uniform light gray (sRGB ≈ 190,190,190).
-*   **Wardrobe:** White T-shirt.
-*   **Lighting:** Neutral studio lighting.
-*   **Overall Style:** Photorealistic, no beautification.
+Edit scope (what to change to match the identity from Attachment #1):
+• Face identity: skull/face shape, jawline, cheekbone prominence, forehead height, nose shape and bridge width, philtrum length, lips volume/contour, chin shape, eye shape and spacing, eyelids, brow thickness/arch, iris size, ear shape/attachment, and any distinctive asymmetries.
+• Surface cues: skin tone/undertone, freckles/moles/birthmarks/scars if visible in Attachment #1 (place consistently across both views), natural skin texture (avoid over-smoothing).
+• Hair: length, volume, hairline, parting, bangs/fringe, curl/wave pattern, and color, matching Attachment #1 while keeping the silhouette consistent with the head pose of Attachment #2.
+• Age and gender presentation: match perceived age and presentation from Attachment #1.
 
-**REFINEMENT PROCESS:**
-1.  Analyze the `DETAILED_FEEDBACK`.
-2.  For each point of feedback, precisely adjust the corresponding feature in **Image B** to match **Image A**.
-3.  For any features marked as a "Perfect match", do not change them.
-4.  Preserve all natural asymmetries, skin textures (moles, freckles), and unique characteristics from Image A.
+Quality targets:
+• Identity similarity outweighs aesthetics. Resolve conflicts in favor of likeness.
+• Keep photorealism; avoid stylization. Preserve fine detail (pores, eyelashes, hair strands).
+• Avoid artifacts (warping, mismatched ears/eyes, inconsistent moles). Ensure the two views are self-consistent.
 
-**OUTPUT**
-*   Return ONE image only: the edited, refined version of Image B that now has a higher identity similarity to Image A.
+Output:
+• Return exactly ONE image with the same two-view composition as Attachment #2 (front & the SAME side), with improved identity match to Attachment #1.
+
 """
 
 
@@ -156,8 +157,8 @@ def _format_feedback_for_prompt(feedback: IdentityFeedbackResponse) -> str:
         return "No specific feedback available. Perform a general identity enhancement."
     
     lines = [
-        f"The previous attempt had a similarity score of {feedback.similarity_score:.2f}. "
-        "Focus on the following corrections:"
+        # f"The previous attempt had a similarity score of {feedback.similarity_score:.2f}. "
+        # "Focus on the following corrections:"
     ]
     for feature, details in feedback.feedback_details.items():
         if not details.is_match:
@@ -208,19 +209,19 @@ async def _get_identity_feedback_and_score(
 
 
 async def get_parent_visual_representation(
-    image_url: str,
+    image_uid: str,
     role: str = "mother",
     identity_centroid: Optional[np.ndarray] = None,
     cache_pool: Optional[object] = None,
     photo_manager: Optional[PhotoProcessingManager] = None,
-    user_id: Optional[int] = None,  # <-- NEW ARGUMENT
+    user_id: Optional[int] = None,
 ) -> Optional[bytes]:
     """
     Generates a consolidated visual representation (front and side view) of a parent,
     iteratively refining it to meet a similarity threshold.
 
     Args:
-        image_url: The URL to the 2x2 collage of the parent.
+        image_uid: The UID to the 2x2 collage of the parent.
         role: The role of the parent ('mother' or 'father').
         identity_centroid: The pre-calculated embedding centroid for this parent.
         cache_pool: An async Redis connection pool.
@@ -229,6 +230,8 @@ async def get_parent_visual_representation(
     """
     if not photo_manager:
         raise ValueError("PhotoProcessingManager is required for parent visual representation.")
+
+    image_url = image_cache.get_cached_image_proxy_url(image_uid)
 
     visual_config = settings.visual_enhancer
     text_config = settings.text_enhancer

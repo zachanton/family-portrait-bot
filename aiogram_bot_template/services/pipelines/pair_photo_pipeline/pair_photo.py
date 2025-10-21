@@ -130,17 +130,12 @@ class PairPhotoPipeline(BasePipeline):
         mom_photos = [p for p in photos_collected if p.get("role") == ImageRole.MOTHER.value]
         dad_photos = [p for p in photos_collected if p.get("role") == ImageRole.FATHER.value]
         
-        # --- SIMPLIFIED: Get collage UIDs from state ---
         mom_collage_uid = self.gen_data.get("mother_collage_uid")
         dad_collage_uid = self.gen_data.get("father_collage_uid")
 
         if not mom_collage_uid or not dad_collage_uid:
             raise ValueError("Could not find parent collage UIDs in state.")
-        
-        mom_collage_url = image_cache.get_cached_image_proxy_url(mom_collage_uid)
-        dad_collage_url = image_cache.get_cached_image_proxy_url(dad_collage_uid)
-        # --- END SIMPLIFICATION ---
-        
+
         # Calculate centroids (still needed for visual enhancer)
         async def get_all_processed_bytes(photos):
             tasks = [image_cache.get_cached_image_bytes(p["file_unique_id"], self.cache_pool) for p in photos]
@@ -159,10 +154,10 @@ class PairPhotoPipeline(BasePipeline):
 
         visual_tasks = [
             parent_visual_enhancer.get_parent_visual_representation(
-                mom_collage_url, role="mother", identity_centroid=mom_centroid, cache_pool=self.cache_pool, photo_manager=self.photo_manager, user_id=user_id
+                mom_collage_uid, role="mother", identity_centroid=mom_centroid, cache_pool=self.cache_pool, photo_manager=self.photo_manager, user_id=user_id
             ),
             parent_visual_enhancer.get_parent_visual_representation(
-                dad_collage_url, role="father", identity_centroid=dad_centroid, cache_pool=self.cache_pool, photo_manager=self.photo_manager, user_id=user_id
+                dad_collage_uid, role="father", identity_centroid=dad_centroid, cache_pool=self.cache_pool, photo_manager=self.photo_manager, user_id=user_id
             ),
         ]
         mom_profile_bytes, dad_profile_bytes = await asyncio.gather(*visual_tasks)
